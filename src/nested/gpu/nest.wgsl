@@ -27,7 +27,8 @@ struct U {
 
 fn tabLoad(i: u32) -> u32 { return atomicLoad(&tab[i]); }
 
-// ---- ctl: 0 end, 1 refused, 2 free count, 3 pending count, 4 mismatches, 5 table full, 6 -, 7 max cz; free stack at
+// ---- ctl: 0 end, 1 refused, 2 free count, 3 pending count, 4 mismatches, 5 table full, 6 inexact residuals, 7 max cz
+//      of column and residual pages, 8 of TMP pages, 9 of face pages; free stack at
 //      16, pending at 16 + cap
 const CTL_STACK: u32 = 16u;
 
@@ -82,7 +83,11 @@ fn ensurePages(lid: u32, cx: i32, cy: i32, need: u32, birth: f32) {
         // a fresh page's counts are zero: columns a pass leaves alone read as empty (a residual: zero)
         for (var c = 0u; c < 256u; c++) { pgStore(p * PW + c, 0u); }
         if (tInsert(tKey0(cx, cy), tKey1(lid, cz), p, birth)) {
-          atomicMax(&ctl[7], cz);
+          // (the deepest page stack so far: ctl 8 for a pass's scratch, 9 for faces, 7 for the rest; the ops' reserves
+          // use them)
+          var slot = 7u;
+          if (lid >= TMP_ID) { slot = 8u; } else if (lid >= FACE_ID && lid < FACE_ID + 8u) { slot = 9u; }
+          atomicMax(&ctl[slot], cz);
         } else {
           freePage(p);
         }
@@ -99,26 +104,145 @@ fn ensurePages(lid: u32, cx: i32, cy: i32, need: u32, birth: f32) {
     cz++;
   }
 }
-/** e: the footprints word (store.wgsl packE; a residual record: the footprint's residual as f32 bits) */
-fn pgSetIvl(page: u32, c: u32, i: u32, z0: f32, z1: f32, m: u32, e: u32) {
-  let b = page * PW + 256u + (c * K + i) * RW;
+fn pgSetIvl(page: u32, c: u32, i: u32, z0: f32, z1: f32, m: u32) {
+  let b = page * PW + 256u + (c * K + i) * 3u;
   pgStore(b, bitcast<u32>(z0));
   pgStore(b + 1u, bitcast<u32>(z1));
   pgStore(b + 2u, m);
-  pgStore(b + 3u, e);
 }
-fn setIvl(lid: u32, X: i32, Y: i32, i: u32, z0: f32, z1: f32, m: u32, e: u32) {
+fn setIvl(lid: u32, X: i32, Y: i32, i: u32, z0: f32, z1: f32, m: u32) {
   let p = pageOf(lid, X >> 4, Y >> 4, i / K);
   if (p >= NOT_LOADED) { return; }
-  pgSetIvl(p, colIn(X, Y), i % K, z0, z1, m, e);
+  pgSetIvl(p, colIn(X, Y), i % K, z0, z1, m);
 }
-/** a column's count written into each of its chunk's pages (cz < need) */
+/** a column's count written into each of its chunk's pages (cz < need; solid pages: residuals and TMP, where a written
+ *  column is marked TOUCHED for pack) */
 fn setCount(lid: u32, X: i32, Y: i32, n: u32, need: u32) {
+  let mark = select(0u, TOUCHED, lid >= TMP_ID);
   for (var cz = 0u; cz < need; cz++) {
     let p = pageOf(lid, X >> 4, Y >> 4, cz);
     if (p >= NOT_LOADED) { continue; }
-    pgStore(p * PW + colIn(X, Y), u32(clamp(i32(n) - i32(cz * K), 0, i32(K))));
+    pgStore(p * PW + colIn(X, Y), u32(clamp(i32(n) - i32(cz * K), 0, i32(K))) | mark);
   }
+}
+/** (a pass that changes only part of a column) its solid view copied into TMP first; the pass then edits the copy and
+ *  pack writes the result back as the partition */
+fn tmpCopy(L: u32, X: i32, Y: i32, n: u32, need: u32) {
+  let T = TMP_ID + L;
+  setCount(T, X, Y, n, need);
+  for (var i = 0u; i < n; i++) {
+    let iv = ivlAt(L, X, Y, i);
+    setIvl(T, X, Y, i, iv.z0, iv.z1, iv.m);
+  }
+}
+
+// ---- pack: TMP (the solid view a pass wrote) -> the level's partition, at the pass boundary ------------------------
+// Each written column becomes records bottom up: an air record wherever an interval starts above the last top, the
+// interval itself; zero or negative thicknesses are dropped and adjacent records of one material merged (so repeated adds
+// cannot pile up intervals: NS-63). Then the TMP pages are let go. Dispatch over the writing pass's slot.
+fn packCol(T: u32, L: u32, X: i32, Y: i32, write: bool) -> u32 {
+  let n = colCount(T, X, Y);
+  var r = 0u;
+  var pTop = OPEN_BOTTOM;
+  var pMat = 0xffffffffu;
+  var have = false;
+  var solids = 0u;
+  for (var i = 0u; i <= n; i++) {
+    var top = 0.0;
+    var m = 0u;
+    var air = false;
+    if (i < n) {
+      let iv = ivlAt(T, X, Y, i);
+      if (i > 0u && !(iv.z1 > iv.z0)) { continue; }
+      if (have && i > 0u && iv.z0 > pTop) {
+        // the air below this interval: the pending record is flushed, the air record follows it
+        if (write) { packPut(L, X, Y, r, pTop, pMat, &solids); }
+        r++;
+        pTop = iv.z0;
+        pMat = MAT_AIR;
+      }
+      top = iv.z1;
+      m = iv.m;
+    } else {
+      air = true;
+    }
+    if (air) { break; }
+    // (an interval reaching no higher than the record below adds nothing)
+    if (have && top <= pTop) { continue; }
+    if (have && m == pMat) {
+      pTop = max(pTop, top);
+      continue;
+    }
+    if (have) {
+      if (write) { packPut(L, X, Y, r, pTop, pMat, &solids); }
+      r++;
+    }
+    pTop = top;
+    pMat = m;
+    have = true;
+  }
+  if (have) {
+    if (write) { packPut(L, X, Y, r, pTop, pMat, &solids); }
+    r++;
+  }
+  if (write && r > 0u) {
+    // the count words: records | solids << 16 of each page; the last page written by packPut's running count
+    let last = (r - 1u) / KR;
+    let p = pageOf(L, X >> 4, Y >> 4, last);
+    if (p < NOT_LOADED) { pgStore(p * PW + colIn(X, Y), (r - last * KR) | (solids << 16u)); }
+    var cz = last + 1u;
+    loop {
+      let q = pageOf(L, X >> 4, Y >> 4, cz);
+      if (q >= NOT_LOADED) { break; }
+      pgStore(q * PW + colIn(X, Y), 0u);
+      cz++;
+    }
+  }
+  return r;
+}
+/** record j of a column written; a page's count word written when the next page starts */
+fn packPut(L: u32, X: i32, Y: i32, j: u32, top: f32, m: u32, solids: ptr<function, u32>) {
+  if (j > 0u && j % KR == 0u) {
+    let pp = pageOf(L, X >> 4, Y >> 4, j / KR - 1u);
+    if (pp < NOT_LOADED) { pgStore(pp * PW + colIn(X, Y), KR | (*solids << 16u)); }
+    *solids = 0u;
+  }
+  let p = pageOf(L, X >> 4, Y >> 4, j / KR);
+  if (p >= NOT_LOADED) { return; }
+  let b = p * PW + 256u + (colIn(X, Y) * KR + j % KR) * 2u;
+  pgStore(b, bitcast<u32>(top));
+  pgStore(b + 1u, m);
+  // (the count word's second half counts the solid view's intervals: every record that is not air)
+  if (m != MAT_AIR) { *solids += 1u; }
+}
+@compute @workgroup_size(16, 16)
+fn pack(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  let L = u.a.w;
+  let T = TMP_ID + L;
+  let o = slotOrigin(u.r.x, li);
+  let cx = o.x + i32(wid.x);
+  let cy = o.y + i32(wid.y);
+  if (!inWin(L, cx * 16, cy * 16)) { return; }
+  if (li == 0u) {
+    atomicStore(&wany, select(0u, 1u, pageOf(T, cx, cy, 0u) < NOT_LOADED));
+    atomicStore(&wmax, 0u);
+  }
+  if (workgroupUniformLoad(&wany) == 0u) { return; }
+  let X = cx * 16 + i32(lid.x);
+  let Y = cy * 16 + i32(lid.y);
+  let p0 = pageOf(T, cx, cy, 0u);
+  let touched = (pgLoad(p0 * PW + colIn(X, Y)) & TOUCHED) != 0u;
+  var r = 0u;
+  if (touched) { r = packCol(T, L, X, Y, false); } else { r = recCount(L, X, Y); }
+  atomicMax(&wmax, r);
+  let need = (workgroupUniformLoad(&wmax) + KR - 1u) / KR;
+  if (li == 0u) { ensurePages(L, cx, cy, need, u.d.x); }
+  storageBarrier();
+  workgroupBarrier();
+  if (touched) { packCol(T, L, X, Y, true); }
+  storageBarrier();
+  workgroupBarrier();
+  if (li == 0u) { ensurePages(T, cx, cy, 0u, u.d.x); }
 }
 
 // ---- regions: reg words 0-7 the levels' z origins (f32, parent units), 8-15 the hit, slots of 12 from 16 ------------
@@ -249,36 +373,13 @@ fn resAt(L: u32, rec: u32, w: u32) -> f32 {
   let p = pageOf(RES_ID + L, gX >> 4, gY >> 4, rec / K);
   if (p >= NOT_LOADED) { return 0.0; }
   if (pgLoad(p * PW + colIn(gX, gY)) <= rec % K) { return 0.0; }
-  let b = p * PW + 256u + (colIn(gX, gY) * K + rec % K) * RW;
+  let b = p * PW + 256u + (colIn(gX, gY) * K + rec % K) * 3u;
   return bitcast<f32>(pgLoad(b + w));
 }
-fn setRes(L: u32, rec: u32, v0: f32, v1: f32, er: f32) {
+fn setRes(L: u32, rec: u32, v0: f32, v1: f32) {
   let p = pageOf(RES_ID + L, gX >> 4, gY >> 4, rec / K);
   if (p >= NOT_LOADED) { return; }
-  pgSetIvl(p, colIn(gX, gY), rec % K, v0, v1, 0u, bitcast<u32>(er));
-}
-/** footprints, enhanced: interval i's (eS, eG) from the parent's, bilinear over the 2 x 2 compatible samples (the
- *  layer pass's stencil), times k, kept within +-E_FAR, as stored (f16; the oracle's eScale) */
-fn eEnh(i: u32) -> vec2<f32> {
-  let L = u.a.w;
-  let P = L - 1u;
-  let own = unpack2x16float(ivlAt(P, gP.x, gP.y, i).e);
-  var v = vec2<f32>(0.0);
-  for (var jj = 0; jj < 2; jj++) {
-    for (var ii = 0; ii < 2; ii++) {
-      let q = clampTo(P, gP.x + gOff.x + ii, gP.y + gOff.y + jj);
-      var s = own;
-      if (((gCompat >> u32(jj * 2 + ii)) & 1u) != 0u) { s = unpack2x16float(ivlAt(P, q.x, q.y, i).e); }
-      v += select(1.0 - gT.x, gT.x, ii == 1) * select(1.0 - gT.y, gT.y, jj == 1) * s;
-    }
-  }
-  return unpack2x16float(packE(clamp(v.x * f32(u.a.x), -E_FAR, E_FAR), clamp(v.y * f32(u.a.x), -E_FAR, E_FAR)));
-}
-/** interval i's footprints in a derived column: enhanced plus the residual (exact: both are f16 values) */
-fn eDerived(L: u32, i: u32) -> u32 {
-  let e = eEnh(i);
-  if (!gResOk) { return packE(e.x, e.y); }
-  return packE(e.x + resAt(L, 2u * i, 3u), e.y + resAt(L, 2u * i + 1u, 3u));
+  pgSetIvl(p, colIn(gX, gY), rec % K, v0, v1, 0u);
 }
 
 /** the layer pass: every gap and thickness of the block, enhanced; mode 0 writes the live column (top down), mode 1
@@ -330,25 +431,22 @@ fn layers(lx: u32, ly: u32, li: u32, maxN: u32, mode: u32, write: bool) {
         // the residual is per bound; the order of the bounds is kept (a no-op when nothing changed under them)
         let d1 = min(addRes(e1, L, i, 1u), dPrev);
         let d0 = min(addRes(e0, L, i, 0u), d1);
-        if (write) { setIvl(L, gX, gY, i, d0, d1, ivlAt(P, gP.x, gP.y, i).m, eDerived(L, i)); }
+        if (write) { setIvl(TMP_ID + L, gX, gY, i, d0, d1, ivlAt(P, gP.x, gP.y, i).m); }
         dPrev = d0;
       }
       if (gAct && !gWhole && mode == 1u) {
         let lv = ivlAt(L, gX, gY, i);
-        let er = unpack2x16float(lv.e) - eEnh(i);
-        putRes(lv.z0, e0, L, i, 0u, write, er.x);
-        putRes(lv.z1, e1, L, i, 1u, write, er.y);
+        putRes(lv.z0, e0, L, i, 0u, write);
+        putRes(lv.z1, e1, L, i, 1u, write);
       }
       z = e0 - vals[1];
     }
   }
   if (gAct && !gWhole && gN > 0u) {
-    if (mode == 0u && write) { setIvl(L, gX, gY, 0u, OPEN_BOTTOM, min(addRes(z, L, 0u, 1u), dPrev), ivlAt(P, gP.x, gP.y, 0u).m, eDerived(L, 0u)); }
+    if (mode == 0u && write) { setIvl(TMP_ID + L, gX, gY, 0u, OPEN_BOTTOM, min(addRes(z, L, 0u, 1u), dPrev), ivlAt(P, gP.x, gP.y, 0u).m); }
     if (mode == 1u) {
-      let er = unpack2x16float(ivlAt(L, gX, gY, 0u).e) - eEnh(0u);
-      if (er.x != 0.0) { atomicOr(&wany, 1u); }
-      if (write) { setRes(L, 0u, 0.0, 0.0, er.x); }
-      putRes(ivlAt(L, gX, gY, 0u).z1, z, L, 0u, 1u, write, er.y);
+      if (write) { setRes(L, 0u, 0.0, 0.0); }
+      putRes(ivlAt(L, gX, gY, 0u).z1, z, L, 0u, 1u, write);
     }
   }
 }
@@ -360,43 +458,40 @@ fn addRes(e: f32, L: u32, i: u32, which: u32) -> f32 {
   let rec = 2u * i + which;
   return (e + resAt(L, rec, 0u)) + resAt(L, rec, 1u);
 }
-/** er: the footprint's residual (record 2i: eS's, 2i + 1: eG's), kept in the record's fourth word */
-fn putRes(live: f32, e: f32, L: u32, i: u32, which: u32, write: bool, er: f32) { putResW(live, e, L, i, which, write, 0u, er); }
-/** word2: 0 for a per-bound record; WHOLE | material for a whole column's (er then the footprint itself) */
-fn putResW(live: f32, e: f32, L: u32, i: u32, which: u32, write: bool, word2: u32, er: f32) {
+fn putRes(live: f32, e: f32, L: u32, i: u32, which: u32, write: bool) { putResW(live, e, L, i, which, write, 0u); }
+/** word2: 0 for a per-bound record; WHOLE | material for a whole column's */
+fn putResW(live: f32, e: f32, L: u32, i: u32, which: u32, write: bool, word2: u32) {
   let hi = live - e;
   let lo = live - (e + hi);
-  if (hi != 0.0 || lo != 0.0 || word2 != 0u || er != 0.0) { atomicOr(&wany, 1u); }
+  if (hi != 0.0 || lo != 0.0 || word2 != 0u) { atomicOr(&wany, 1u); }
   if (!write) { return; }
   if ((e + hi) + lo != live) { atomicAdd(&ctl[6], 1u); }
   let p = pageOf(RES_ID + L, gX >> 4, gY >> 4, (2u * i + which) / K);
   if (p >= NOT_LOADED) { return; }
-  pgSetIvl(p, colIn(gX, gY), (2u * i + which) % K, hi, lo, word2, bitcast<u32>(er));
+  pgSetIvl(p, colIn(gX, gY), (2u * i + which) % K, hi, lo, word2);
 }
 const WHOLE: u32 = 0x80000000u;
 fn resWord(L: u32, rec: u32, w: u32) -> u32 {
   let p = pageOf(RES_ID + L, gX >> 4, gY >> 4, rec / K);
   if (p >= NOT_LOADED) { return 0u; }
-  return pgLoad(p * PW + 256u + (colIn(gX, gY) * K + rec % K) * RW + w);
+  return pgLoad(p * PW + 256u + (colIn(gX, gY) * K + rec % K) * 3u + w);
 }
-/** a live column of another structure than its enhanced parent: kept whole, bounds relative to the enhanced surface gS,
- *  footprints as they are */
+/** a live column of another structure than its enhanced parent: kept whole, bounds relative to the enhanced surface gS */
 fn putWhole(L: u32, n: u32, write: bool) {
   for (var i = 0u; i < n; i++) {
     let iv = ivlAt(L, gX, gY, i);
-    let e = unpack2x16float(iv.e);
-    if (i > 0u) { putResW(iv.z0, gS, L, i, 0u, write, WHOLE | iv.m, e.x); } else { putResW(0.0, 0.0, L, 0u, 0u, write, WHOLE | iv.m, e.x); }
-    putResW(iv.z1, gS, L, i, 1u, write, WHOLE | iv.m, e.y);
+    if (i > 0u) { putResW(iv.z0, gS, L, i, 0u, write, WHOLE | iv.m); } else { putResW(0.0, 0.0, L, 0u, 0u, write, WHOLE | iv.m); }
+    putResW(iv.z1, gS, L, i, 1u, write, WHOLE | iv.m);
   }
 }
 /** a whole column written from its residual */
 fn writeWhole(L: u32, n: u32, need: u32) {
-  setCount(L, gX, gY, n, need);
+  setCount(TMP_ID + L, gX, gY, n, need);
   for (var i = 0u; i < n; i++) {
     let z1 = (gS + bitcast<f32>(resWord(L, 2u * i + 1u, 0u))) + bitcast<f32>(resWord(L, 2u * i + 1u, 1u));
     var z0 = OPEN_BOTTOM;
     if (i > 0u) { z0 = (gS + bitcast<f32>(resWord(L, 2u * i, 0u))) + bitcast<f32>(resWord(L, 2u * i, 1u)); }
-    setIvl(L, gX, gY, i, z0, z1, resWord(L, 2u * i + 1u, 2u) & 0xffffu, packE(bitcast<f32>(resWord(L, 2u * i, 3u)), bitcast<f32>(resWord(L, 2u * i + 1u, 3u))));
+    setIvl(TMP_ID + L, gX, gY, i, z0, z1, resWord(L, 2u * i + 1u, 2u) & 0xffffu);
   }
 }
 fn sameAcross(la: u32, a: vec2<i32>, lb: u32, b: vec2<i32>, n: u32) -> bool {
@@ -490,10 +585,11 @@ fn derive(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
   // a residual column holds two records an interval
   let needR = (2u * maxN + K - 1u) / K;
   if (mode == 0u) {
-    if (li == 0u) { ensurePages(L, cx, cy, need, u.d.x); }
+    // (written to TMP in the solid view; pack makes the partition)
+    if (li == 0u) { ensurePages(TMP_ID + L, cx, cy, need, u.d.x); }
     storageBarrier();
     workgroupBarrier();
-    if (gAct && !gWhole) { setCount(L, gX, gY, gN, need); }
+    if (gAct && !gWhole) { setCount(TMP_ID + L, gX, gY, gN, need); }
     layers(lid.x, lid.y, li, maxN, 0u, true);
     if (gAct && gWhole) { writeWhole(L, finalN, need); }
   } else {
@@ -515,30 +611,6 @@ fn derive(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
       if (gAct && gWhole) { putWhole(L, liveN, true); }
     }
   }
-}
-
-/** restrict's footprints for interval i: the mean over the block's children of tn intervals of their distances clamped
- *  to +-E_SAT k (a block's far values must not swamp a contour in it), in parent columns (the oracle's restrictCell) */
-const E_SAT: f32 = 2.0;
-fn eRestrict(X: i32, Y: i32, i: u32, tn: u32) -> u32 {
-  let L = u.a.w;
-  let k = i32(u.a.x);
-  let kf = f32(k);
-  let sat = E_SAT * kf;
-  var s = vec2<f32>(0.0);
-  var c = 0.0;
-  for (var b = 0; b < k; b++) {
-    for (var a = 0; a < k; a++) {
-      if (colCount(L, X * k + a, Y * k + b) != tn) { continue; }
-      s += clamp(unpack2x16float(ivlAt(L, X * k + a, Y * k + b, i).e), vec2<f32>(-sat), vec2<f32>(sat));
-      c += 1.0;
-    }
-  }
-  // (a block saturated everywhere stays "far": restrict gives back E_FAR from an unedited block)
-  // (compared on the sums: a GPU's division need not be exact, 624 / 39 can come out under 16)
-  let m = s / c;
-  let e = select(select(m / kf, vec2<f32>(-E_FAR), s <= vec2<f32>(-sat * c)), vec2<f32>(E_FAR), s >= vec2<f32>(sat * c));
-  return packE(e.x, e.y);
 }
 
 // ---- restrict: a parent column from its k x k children (dispatch over the parent's chunks; u.a.w = the child) --------
@@ -583,11 +655,13 @@ fn restrictK(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
   atomicMax(&wmax, n);
   let maxN = workgroupUniformLoad(&wmax);
   let need = (maxN + K - 1u) / K;
-  if (li == 0u) { ensurePages(P, cx, cy, need, u.d.x); }
+  // (written to TMP in the solid view; pack makes the partition)
+  let T = TMP_ID + P;
+  if (li == 0u) { ensurePages(T, cx, cy, need, u.d.x); }
   storageBarrier();
   workgroupBarrier();
   if (!act) { return; }
-  setCount(P, X, Y, n, need);
+  setCount(T, X, Y, n, need);
   let inv = 1.0 / (kf * kf) / kf;
   var ss = 0.0;
   for (var b = 0; b < k; b++) {
@@ -607,13 +681,12 @@ fn restrictK(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
           gap += layerVal(L, X * k + a, Y * k + b, 2u * i - 1u);
         }
       }
-      setIvl(P, X, Y, i, z - th * inv, z, ivlAt(L, tpl.x, tpl.y, i).m, eRestrict(X, Y, i, n));
+      setIvl(T, X, Y, i, z - th * inv, z, ivlAt(L, tpl.x, tpl.y, i).m);
       z = z - th * inv - gap * inv;
     }
   } else {
     // children of different structures: the template, its thicknesses scaled per material and its gaps scaled, so
-    // the parent holds the block's mean of each material and of enclosed air (the oracle's restrictCell). A ghost
-    // interval's thickness is air; a ghost gap's is solid of the interval above it.
+    // the parent holds the block's mean of each material and of enclosed air (the oracle's restrictCell)
     var vm = array<f32, 8>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
     var tm = array<f32, 8>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
     var air = 0.0;
@@ -624,40 +697,29 @@ fn restrictK(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
         let cn = colCount(L, c.x, c.y);
         for (var i = 1u; i < cn; i++) {
           let iv = ivlAt(L, c.x, c.y, i);
-          let th = iv.z1 - iv.z0;
-          let gp = iv.z0 - ivlAt(L, c.x, c.y, i - 1u).z1;
-          if (present(eS(iv))) { vm[iv.m & 7u] += th; } else { air += th; }
-          if (present(eG(iv))) { air += gp; } else { vm[iv.m & 7u] += gp; }
+          vm[iv.m & 7u] += iv.z1 - iv.z0;
+          air += iv.z0 - ivlAt(L, c.x, c.y, i - 1u).z1;
         }
       }
     }
     for (var i = 1u; i < n; i++) {
       let iv = ivlAt(L, tpl.x, tpl.y, i);
-      let th = iv.z1 - iv.z0;
-      let gp = iv.z0 - ivlAt(L, tpl.x, tpl.y, i - 1u).z1;
-      if (present(eS(iv))) { tm[iv.m & 7u] += th; } else { tair += th; }
-      if (present(eG(iv))) { tair += gp; } else { tm[iv.m & 7u] += gp; }
+      tm[iv.m & 7u] += iv.z1 - iv.z0;
+      tair += iv.z0 - ivlAt(L, tpl.x, tpl.y, i - 1u).z1;
     }
     let kk = kf * kf;
     for (var i = max(n, 1u) - 1u; i >= 1u; i--) {
       let iv = ivlAt(L, tpl.x, tpl.y, i);
       let mi = iv.m & 7u;
-      // each part scaled by its kind's ratio (solid: its material's; air: the enclosed air's)
-      let sS = present(eS(iv));
-      let tS = select(tair, tm[mi], sS);
-      let mS = select(air, vm[mi], sS);
       var th = 0.0;
-      if (tS > 0.0) { th = (iv.z1 - iv.z0) * (mS / kk / tS) / kf; }
-      let sG = !present(eG(iv));
-      let tG = select(tair, tm[mi], sG);
-      let mG = select(air, vm[mi], sG);
+      if (tm[mi] > 0.0) { th = (iv.z1 - iv.z0) * (vm[mi] / kk / tm[mi]) / kf; }
       var gap = 0.0;
-      if (tG > 0.0) { gap = (iv.z0 - ivlAt(L, tpl.x, tpl.y, i - 1u).z1) * (mG / kk / tG) / kf; }
-      setIvl(P, X, Y, i, z - th, z, iv.m, eRestrict(X, Y, i, n));
+      if (tair > 0.0) { gap = (iv.z0 - ivlAt(L, tpl.x, tpl.y, i - 1u).z1) * (air / kk / tair) / kf; }
+      setIvl(T, X, Y, i, z - th, z, iv.m);
       z = z - th - gap;
     }
   }
-  setIvl(P, X, Y, 0u, OPEN_BOTTOM, z, ivlAt(L, tpl.x, tpl.y, 0u).m, eRestrict(X, Y, 0u, n));
+  setIvl(T, X, Y, 0u, OPEN_BOTTOM, z, ivlAt(L, tpl.x, tpl.y, 0u).m);
 }
 
 // ---- the root: hills and a winding valley (the oracle's rootHeight / makeRoot) -----------------------------------------
@@ -703,18 +765,21 @@ fn rootGen(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) 
   atomicMax(&wmax, n);
   let maxN = workgroupUniformLoad(&wmax);
   let need = (maxN + K - 1u) / K;
-  if (li == 0u) { ensurePages(0u, cx, cy, need, u.d.x); }
+  // (the solid view into TMP; pack makes the partition)
+  let T = TMP_ID;
+  if (li == 0u) { ensurePages(T, cx, cy, need, u.d.x); }
   storageBarrier();
   workgroupBarrier();
-  setCount(0u, X, Y, n, need);
+  setCount(T, X, Y, n, need);
   if (stripe) {
+    // (alternating sand and clay: no two neighbours of one material, so no records merge)
     for (var i = 0u; i < n; i++) {
       let lo = s - 4.0 + f32(i) * 0.1;
-      setIvl(0u, X, Y, i, select(lo, OPEN_BOTTOM, i == 0u), s - 4.0 + f32(i + 1u) * 0.1, select(MAT_SAND, MAT_CLAY, (i & 1u) == 1u), E_FAR_W);
+      setIvl(T, X, Y, i, select(lo, OPEN_BOTTOM, i == 0u), s - 4.0 + f32(i + 1u) * 0.1, select(MAT_SAND, MAT_CLAY, (i & 1u) == 1u));
     }
   } else {
-    setIvl(0u, X, Y, 0u, OPEN_BOTTOM, s - soil, MAT_STONE, E_FAR_W);
-    setIvl(0u, X, Y, 1u, s - soil, s, MAT_SOIL, E_FAR_W);
+    setIvl(T, X, Y, 0u, OPEN_BOTTOM, s - soil, MAT_STONE);
+    setIvl(T, X, Y, 1u, s - soil, s, MAT_SOIL);
   }
 }
 
@@ -736,12 +801,12 @@ fn release(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (s >= TCAP) { return; }
   let k1 = atomicLoad(&tab[s * 4u + 1u]);
   if (k1 >= BUSY) { return; }
-  // the level's columns and its baked draw (gap table, mesh items)
+  // the level's columns, its baked faces, a stroke's snapshot and any scratch
   let lid = k1 & 0xffu;
   // (mode 7: a stroke's snapshot only, at its end)
   if (u.a.z == 7u) {
     if (lid != SNAP_ID + u.a.w) { return; }
-  } else if (lid != u.a.w && lid != GAP_ID + u.a.w && lid != MESH_ID + u.a.w && lid != SNAP_ID + u.a.w) { return; }
+  } else if (lid != u.a.w && lid != FACE_ID + u.a.w && lid != SNAP_ID + u.a.w && lid != TMP_ID + u.a.w) { return; }
   let k0 = atomicLoad(&tab[s * 4u]);
   let cx = i32(k0 & 0xffffu);
   let cy = i32(k0 >> 16u);
@@ -757,7 +822,6 @@ fn release(@builtin(global_invocation_id) gid: vec3<u32>) {
 // stroke is about to change that chunk (copy on write), let go at the stroke's end. The pick (solidDist) reads it
 // where it exists, so during a stroke the ball rides the surface as it was when the stroke began. u.r.z & STROKE: a
 // stroke is on (carve, add).
-const SNAP_ID: u32 = 32u;
 const STROKE: u32 = 2u;
 @compute @workgroup_size(256)
 fn snap(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
@@ -787,6 +851,29 @@ fn snap(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) 
     if (src >= NOT_LOADED || dst >= NOT_LOADED) { continue; }
     for (var i = li; i < PW; i += 256u) { pgStore(dst * PW + i, pgLoad(src * PW + i)); }
   }
+}
+
+// ---- the table's tombstones cleared (NS-14): every op lets TMP and other entries go, and a lookup that misses walks
+// over tombstones to the next empty slot, so after many ops every miss got slower. At the end of each op the live
+// entries are copied out to the scratch buffer, the table emptied, and the entries put back (two passes over TCAP).
+@compute @workgroup_size(64)
+fn tabOut(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let s = gid.x;
+  if (s >= TCAP) { return; }
+  let k1 = atomicLoad(&tab[s * 4u + 1u]);
+  scr[s * 4u + 1u] = bitcast<f32>(select(k1, EMPTY, k1 >= BUSY || k1 == TOMB));
+  scr[s * 4u] = bitcast<f32>(atomicLoad(&tab[s * 4u]));
+  scr[s * 4u + 2u] = bitcast<f32>(atomicLoad(&tab[s * 4u + 2u]));
+  scr[s * 4u + 3u] = bitcast<f32>(atomicLoad(&tab[s * 4u + 3u]));
+  atomicStore(&tab[s * 4u + 1u], EMPTY);
+}
+@compute @workgroup_size(64)
+fn tabIn(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let s = gid.x;
+  if (s >= TCAP) { return; }
+  let k1 = bitcast<u32>(scr[s * 4u + 1u]);
+  if (k1 == EMPTY) { return; }
+  tInsert(bitcast<u32>(scr[s * 4u]), k1, bitcast<u32>(scr[s * 4u + 2u]), bitcast<f32>(scr[s * 4u + 3u]));
 }
 
 /** the pages let go since the last merge join the free stack (its own pass: no push races a pop) */
@@ -847,17 +934,7 @@ fn plan() {
   let w = u.lv[d];
   let cxg = f32(w.x) + hx;
   let cyg = f32(w.y) + hy;
-  // carve and add reach a ring of ghosts past their radius; the brush's one structural decision (where a new gap or
-  // interval goes, by index: the oracle's ballSite) is made here, once, from the column under the centre as it is
-  let isBall = u.a.z == 4u || u.a.z == 5u;
-  var rb = r;
-  if (isBall) {
-    rb = r + RING;
-    let cc = clampTo(u32(d), i32(floor(cxg)), i32(floor(cyg)));
-    reg[14] = i32(ballSiteOf(u32(d), cc.x, cc.y, bitcast<f32>(reg[13]), r, u.a.z == 5u));
-    reg[15] = i32(colCount(u32(d), cc.x, cc.y));
-  }
-  var box = vec4<i32>(i32(floor(cxg - rb)), i32(floor(cyg - rb)), i32(ceil(cxg + rb)) + 1, i32(ceil(cyg + rb)) + 1);
+  var box = vec4<i32>(i32(floor(cxg - r)), i32(floor(cyg - r)), i32(ceil(cxg + r)) + 1, i32(ceil(cyg + r)) + 1);
   // a stroke (carve, add): the ball sweeps from the last centre of the stroke to this one (a capsule), so a fast drag
   // leaves no gaps. cam 300-303: the last centre (level, x, y, z in that level's window units), 304: 1 once the stroke
   // has one; 305-307: it in level d's units (ballSpan's)
@@ -881,7 +958,7 @@ fn plan() {
     cam[304] = 1.0;
     let px = f32(w.x) + pc.x;
     let py = f32(w.y) + pc.y;
-    box = unionR(box, vec4<i32>(i32(floor(px - rb)), i32(floor(py - rb)), i32(ceil(px + rb)) + 1, i32(ceil(py + rb)) + 1));
+    box = unionR(box, vec4<i32>(i32(floor(px - r)), i32(floor(py - r)), i32(ceil(px + r)) + 1, i32(ceil(py + r)) + 1));
   }
   box = vec4<i32>(max(box.x, w.x), max(box.y, w.y), min(box.z, w.x + w.z), min(box.w, w.y + w.z));
   if (box.x >= box.z || box.y >= box.w) {
@@ -950,166 +1027,50 @@ fn brushW(X: i32, Y: i32, L: u32) -> f32 {
 fn inBox(X: i32, Y: i32, b: vec4<i32>) -> bool { return X >= b.x && Y >= b.y && X < b.z && Y < b.w; }
 
 @compute @workgroup_size(16, 16)
-fn edit(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
+fn edit(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
   let L = u.a.w;
+  let T = TMP_ID + L;
   let slot = slotOf(i32(L), 3);
-  let X = (slotW(slot, 4u) + i32(wid.x)) * 16 + i32(lid.x);
-  let Y = (slotW(slot, 5u) + i32(wid.y)) * 16 + i32(lid.y);
+  let o = slotOrigin(slot, li);
+  let cx = o.x + i32(wid.x);
+  let cy = o.y + i32(wid.y);
+  if (!inWin(L, cx * 16, cy * 16)) { return; }
+  let X = cx * 16 + i32(lid.x);
+  let Y = cy * 16 + i32(lid.y);
   let box = vec4<i32>(slotW(slot, 0u), slotW(slot, 1u), slotW(slot, 2u), slotW(slot, 3u));
-  if (!inBox(X, Y, box)) { return; }
   let p = brushW(X, Y, L);
-  if (p <= 0.0) { return; }
-  let a = bitcast<f32>(reg[12]) * p;
   let n = colCount(L, X, Y);
-  if (n == 0u) { return; }
+  let act = inBox(X, Y, box) && p > 0.0 && n > 0u;
+  if (li == 0u) { atomicStore(&wmax, 0u); }
+  workgroupBarrier();
+  if (act) { atomicMax(&wmax, n); }
+  let need = (workgroupUniformLoad(&wmax) + K - 1u) / K;
+  if (li == 0u && need > 0u) { ensurePages(T, cx, cy, need, u.d.x); }
+  storageBarrier();
+  workgroupBarrier();
+  if (!act) { return; }
+  // (the column's solid view copied into TMP and moved there; pack writes it back, dropping emptied intervals)
+  tmpCopy(L, X, Y, n, need);
+  let a = bitcast<f32>(reg[12]) * p;
   if (u.a.z == 1u) {
-    let t = ivlAt(L, X, Y, n - 1u);
-    setIvl(L, X, Y, n - 1u, t.z0, t.z1 + a, t.m, t.e);
+    let t = ivlAt(T, X, Y, n - 1u);
+    setIvl(T, X, Y, n - 1u, t.z0, t.z1 + a, t.m);
     return;
   }
-  let top = ivlAt(L, X, Y, n - 1u).z1 - a;
+  let top = ivlAt(T, X, Y, n - 1u).z1 - a;
   for (var i = n; i > 0u; i--) {
-    let t = ivlAt(L, X, Y, i - 1u);
+    let t = ivlAt(T, X, Y, i - 1u);
     if (t.z1 <= top) { break; }
     var z0 = t.z0;
     if (i > 1u && z0 > top) { z0 = top; }
-    setIvl(L, X, Y, i - 1u, z0, top, t.m, t.e);
+    setIvl(T, X, Y, i - 1u, z0, top, t.m);
   }
 }
 
-// ---- carve (op 4) and add (op 5): a ball on each column (the oracle's applyBall; docs/design/NESTED_SCALES.md
-// "Footprints"). Inside its footprint the ball's z-span is carved or filled; in a ring of RING columns past it only
-// ghosts are written. Nothing is removed: a cut-away interval stays as a ghost (eS < 0). One structural change a brush
-// (the plan's site, reg 14-15): carve splits the interval holding the centre (a new gap), add inserts an interval into
-// the air holding it (or revives the ghost holding it), in every column of the centre column's interval count, so the
-// structure stays constant across the footprint and its ring. Footprints analytic: the ball's air eG = r - d, a bound
-// it reaches cut away (eS = min(eS, d - r_slice(z))), a laid interval eS = r - d. A column grows by one at most; pages
-// are ensured per chunk first; it is rewritten in place (top down).
-const RING: f32 = 1.5; // (the oracle's RING)
-/** (the plan, one thread) the brush's site: kind | idx << 2 (kind 0 none, 1 carve: split interval idx / add: insert
- *  into gap idx (idx = n: the sky), 2 add: revive ghost interval idx) */
-/** a gap a carve may reuse: real air (some thickness) or one a brush made (a ghost, or a footprint nearer than E_FAR);
- *  not the zero-thickness boundary between two materials (the oracle's reusableGap) */
-fn reusableGap(L: u32, X: i32, Y: i32, i: u32) -> bool {
-  let iv = ivlAt(L, X, Y, i);
-  return iv.z0 > ivlAt(L, X, Y, i - 1u).z1 || eG(iv) < E_FAR;
-}
-/** the interval a carve splits: the highest solid one starting at or below the centre (the oracle's splitIdx) */
-fn splitIdx(L: u32, X: i32, Y: i32, cz: f32) -> u32 {
-  var s = 0u;
-  let n = colCount(L, X, Y);
-  for (var i = 1u; i < n; i++) {
-    let iv = ivlAt(L, X, Y, i);
-    if (present(eS(iv)) && iv.z0 <= cz) { s = i; }
-  }
-  return s;
-}
-/** slab s (interval i = s / 2 for even s, the gap below interval (s + 1) / 2 for odd s, the sky 2n - 1) is air: a present
- *  gap, a ghost interval, the sky (the raw presence, no thickness rule) */
-fn rawAir(L: u32, X: i32, Y: i32, s: u32, n: u32) -> bool {
-  if (s >= 2u * n - 1u) { return true; }
-  if ((s & 1u) == 0u) { return !solidIv(ivlAt(L, X, Y, s / 2u), s / 2u); }
-  return present(eG(ivlAt(L, X, Y, (s + 1u) / 2u)));
-}
-/** the air run holding height z (the oracle's airRunAt): slab indices (a, b), or (1, 0) when z is in solid */
-fn airRun(L: u32, X: i32, Y: i32, z: f32) -> vec2<u32> {
-  let n = colCount(L, X, Y);
-  var at = -1;
-  for (var s = 0u; s < 2u * n; s++) {
-    var lo = -3.0e38;
-    var hi = 3.0e38;
-    if (s > 0u) {
-      if ((s & 1u) == 0u) { lo = ivlAt(L, X, Y, s / 2u).z0; } else { lo = ivlAt(L, X, Y, (s - 1u) / 2u).z1; }
-    }
-    if (s < 2u * n - 1u) {
-      if ((s & 1u) == 0u) { hi = ivlAt(L, X, Y, s / 2u).z1; } else { hi = ivlAt(L, X, Y, (s + 1u) / 2u).z0; }
-    }
-    if (rawAir(L, X, Y, s, n) && lo <= z && z <= hi) { at = i32(s); }
-  }
-  if (at < 0) { return vec2<u32>(1u, 0u); }
-  // (a slab thinner than GAP_MIN does not break the run: the draw treats it as its surroundings)
-  var a = u32(at);
-  var b = u32(at);
-  loop {
-    if (a == 0u || !(rawAir(L, X, Y, a - 1u, n) || slabTh(L, X, Y, a - 1u, n) < GAP_MIN)) { break; }
-    a--;
-  }
-  loop {
-    if (b >= 2u * n - 1u || !(rawAir(L, X, Y, b + 1u, n) || slabTh(L, X, Y, b + 1u, n) < GAP_MIN)) { break; }
-    b++;
-  }
-  return vec2<u32>(a, b);
-}
-/** slab s's thickness (interval 0 and the sky: unbounded) */
-fn slabTh(L: u32, X: i32, Y: i32, s: u32, n: u32) -> f32 {
-  if (s == 0u || s >= 2u * n - 1u) { return 3.0e38; }
-  if ((s & 1u) == 0u) {
-    let iv = ivlAt(L, X, Y, s / 2u);
-    return iv.z1 - iv.z0;
-  }
-  return ivlAt(L, X, Y, (s + 1u) / 2u).z0 - ivlAt(L, X, Y, (s - 1u) / 2u).z1;
-}
-fn ballSiteOf(L: u32, X: i32, Y: i32, cz: f32, r: f32, add: bool) -> u32 {
-  let n = colCount(L, X, Y);
-  let run = airRun(L, X, Y, cz);
-  if (!add) {
-    // carve: a gap a brush made within the ball's reach in z, or in the air run holding the centre, is reused (no new
-    // structure); else a split
-    for (var i = 1u; i < n; i++) {
-      let inRun = run.x <= 2u * i - 1u && 2u * i - 1u <= run.y;
-      if (reusableGap(L, X, Y, i) && ((ivlAt(L, X, Y, i).z0 >= cz - r && ivlAt(L, X, Y, i - 1u).z1 <= cz + r) || inRun)) { return 0u; }
-    }
-    return 1u | (splitIdx(L, X, Y, cz) << 2u);
-  }
-  // add: a ghost interval a brush made in the air run holding the centre is revived (the nearest)
-  var ghost = 0u;
-  var gd = 3.0e38;
-  for (var i = 1u; i < n; i++) {
-    let iv = ivlAt(L, X, Y, i);
-    if (2u * i < run.x || 2u * i > run.y || eS(iv) >= E_FAR) { continue; }
-    let dz = max(max(iv.z0 - cz, cz - iv.z1), 0.0);
-    if (dz < gd) {
-      ghost = i;
-      gd = dz;
-    }
-  }
-  if (ghost > 0u) { return 2u | (ghost << 2u); }
-  // add: the nearest interval a brush made within reach is reused; else a new interval into the air holding the centre,
-  // or the air just above the solid holding it (the oracle's ballSite)
-  var best = 0u;
-  var bd = 3.0e38;
-  for (var i = 1u; i < n; i++) {
-    let iv = ivlAt(L, X, Y, i);
-    let dz = max(max(iv.z0 - cz, cz - iv.z1), 0.0);
-    if (eS(iv) < E_FAR && dz <= r && dz < bd) {
-      best = i;
-      bd = dz;
-    }
-  }
-  if (best > 0u) { return 2u | (best << 2u); }
-  for (var i = 0u; i < n; i++) {
-    let iv = ivlAt(L, X, Y, i);
-    if ((i == 0u || iv.z0 <= cz) && cz <= iv.z1) { return 1u | ((i + 1u) << 2u); }
-  }
-  for (var i = 1u; i < n; i++) {
-    if (ivlAt(L, X, Y, i - 1u).z1 < cz && cz < ivlAt(L, X, Y, i).z0) { return 1u | (i << 2u); }
-  }
-  return 1u | (n << 2u);
-}
-/** the ball (or a stroke's capsule) at a column: x the plan distance to its centre line, y the centre's height there */
-fn ballAt(X: i32, Y: i32, L: u32) -> vec2<f32> {
-  let w = u.lv[L];
-  let c1 = vec3<f32>(f32(w.x) + bitcast<f32>(reg[9]), f32(w.y) + bitcast<f32>(reg[10]), bitcast<f32>(reg[13]));
-  var c0 = c1;
-  if ((u.r.z & STROKE) != 0u) { c0 = vec3<f32>(f32(w.x) + cam[305], f32(w.y) + cam[306], cam[307]); }
-  let q = vec2<f32>(f32(X) + 0.5, f32(Y) + 0.5);
-  let dv = c1.xy - c0.xy;
-  let l2 = dot(dv, dv);
-  var t = 1.0;
-  if (l2 > 0.0) { t = clamp(dot(q - c0.xy, dv) / l2, 0.0, 1.0); }
-  let p = mix(c0, c1, t);
-  return vec2<f32>(length(q - p.xy), p.z);
-}
+// ---- carve (op 4) and add (op 5): a ball's z-span on each column (the oracle's applyBall). Carve removes solid in
+// [lo, hi]: an interval it lies inside splits in two, ones inside it go. Add fills each air piece of [lo, hi] with soil
+// as a new interval. Counts change, so pages are ensured per chunk first; the column is rewritten in place (top down
+// when it grows, bottom up when it shrinks).
 fn ballSpan(X: i32, Y: i32, L: u32) -> vec3<f32> {
   let w = u.lv[L];
   let c1 = vec3<f32>(f32(w.x) + bitcast<f32>(reg[9]), f32(w.y) + bitcast<f32>(reg[10]), bitcast<f32>(reg[13]));
@@ -1133,17 +1094,21 @@ fn ballSpan(X: i32, Y: i32, L: u32) -> vec3<f32> {
   if (hi < lo) { return vec3<f32>(0.0, 0.0, -1.0); }
   return vec3<f32>(lo, hi, 1.0);
 }
-/** a bound at height z the ball reaches at plan distance dd is cut away there: dd - r_slice(z) (E_FAR: out of reach) */
-fn eCut(z: f32, czc: f32, r: f32, dd: f32) -> f32 {
-  if (abs(z - czc) >= r) { return E_FAR; }
-  return dd - sqrt(max(0.0, r * r - (z - czc) * (z - czc)));
-}
-/** shift intervals from..n-1 of a column up by one (top down) */
-fn shiftUp(L: u32, X: i32, Y: i32, first: u32, n: u32) {
-  for (var j = i32(n) - 1; j >= i32(first); j--) {
-    let t = ivlAt(L, X, Y, u32(j));
-    setIvl(L, X, Y, u32(j + 1), t.z0, t.z1, t.m, t.e);
+fn ballCount(L: u32, X: i32, Y: i32, n: u32, lo: f32, hi: f32, add: bool) -> u32 {
+  var c = 0u;
+  for (var i = 0u; i < n; i++) {
+    let iv = ivlAt(L, X, Y, i);
+    if (add) {
+      c += 1u;
+      if (i > 0u && max(ivlAt(L, X, Y, i - 1u).z1, lo) < min(iv.z0, hi)) { c += 1u; }
+    } else if (iv.z1 > lo && iv.z0 < hi) {
+      c += select(0u, 1u, iv.z0 < lo) + select(0u, 1u, iv.z1 > hi);
+    } else {
+      c += 1u;
+    }
   }
+  if (add && max(ivlAt(L, X, Y, n - 1u).z1, lo) < hi) { c += 1u; }
+  return c;
 }
 
 @compute @workgroup_size(16, 16)
@@ -1158,183 +1123,83 @@ fn ball(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
   let Y = cy * 16 + i32(lid.y);
   let box = vec4<i32>(slotW(slot, 0u), slotW(slot, 1u), slotW(slot, 2u), slotW(slot, 3u));
   let add = u.a.z == 5u;
-  let r = bitcast<f32>(reg[11]);
   let sp = ballSpan(X, Y, L);
-  let ba = ballAt(X, Y, L);
-  let dd = ba.x;
-  let czc = ba.y;
-  let inside = sp.z > 0.0;
-  let lo = sp.x;
-  let hi = sp.y;
   let n = colCount(L, X, Y);
-  let hit = inBox(X, Y, box) && (inside || dd < r + RING) && n > 0u;
-  let kind = u32(reg[14]) & 3u;
-  let sIdx = u32(reg[14]) >> 2u;
-  let atSite = kind != 0u && n == u32(reg[15]);
-  // carve: the site's split; elsewhere, where no gap lies within the ball's reach, a split of the solid interval holding
-  // the span (in the ring: the centre's height), so the columns past a reused gap's ring get the same gap
-  var split = -1;
-  var nearG = -1;
-  var nearD = 0.0;
-  if (hit && !add) {
-    if (kind == 1u && atSite) { split = i32(sIdx); }
-    if (split < 0) {
-      // the nearest reusable gap within the ball's radius of its centre in z (the same test inside and in the ring)
-      let run = airRun(L, X, Y, czc);
-      for (var g = 1u; g < n; g++) {
-        // (a gap in the air run holding the centre counts as at the centre)
-        var dz = max(max(ivlAt(L, X, Y, g - 1u).z1 - czc, czc - ivlAt(L, X, Y, g).z0), 0.0);
-        if (run.x <= 2u * g - 1u && 2u * g - 1u <= run.y) { dz = 0.0; }
-        if (reusableGap(L, X, Y, g) && dz <= r && (nearG < 0 || dz < nearD)) {
-          nearG = i32(g);
-          nearD = dz;
-        }
-      }
-      if (nearG < 0) { split = i32(splitIdx(L, X, Y, czc)); }
-    }
-  }
-  // add: the site's decision, or (another structure than the centre's) the column's own, made the same way
-  var aKind = kind;
-  var aIdx = sIdx;
-  if (hit && add && !atSite) {
-    let ls = ballSiteOf(L, X, Y, czc, r, true);
-    aKind = ls & 3u;
-    aIdx = ls >> 2u;
-  }
+  let hit = inBox(X, Y, box) && sp.z > 0.0 && n > 0u;
   var nn = n;
-  if (hit && (split >= 0 || (add && aKind == 1u))) { nn = n + 1u; }
+  if (hit) { nn = ballCount(L, X, Y, n, sp.x, sp.y, add); }
   if (li == 0u) { atomicStore(&wmax, 0u); }
   workgroupBarrier();
-  atomicMax(&wmax, max(nn, colCount(L, X, Y)));
+  if (hit) { atomicMax(&wmax, max(n, nn)); }
   let maxN = workgroupUniformLoad(&wmax);
   let need = (maxN + K - 1u) / K;
-  if (li == 0u) { ensurePages(L, cx, cy, need, u.d.x); }
+  // the ball works on the column's solid view copied into TMP (in place there, as before the partition); pack then
+  // writes the partition: Carve leaves air over the span, Add soil, and soil touching soil merges
+  let T = TMP_ID + L;
+  if (li == 0u && need > 0u) { ensurePages(T, cx, cy, need, u.d.x); }
   storageBarrier();
   workgroupBarrier();
   if (!hit) { return; }
-  let eBall = r - dd;
-  var made = -1;
-  if (!add) {
-    if (split >= 0) {
-      let i = u32(split);
-      let iv = ivlAt(L, X, Y, i);
-      let zi0 = iv.z0;
-      let zi1 = iv.z1;
-      var a = clamp(czc, zi0, zi1);
-      var b = a;
-      if (inside) {
-        a = clamp(lo, zi0, zi1);
-        b = clamp(hi, zi0, zi1);
+  tmpCopy(L, X, Y, n, need);
+  let lo = sp.x;
+  let hi = sp.y;
+  if (add) {
+    // top down: every interval moves up by the pieces added below it
+    var idx = i32(nn) - 1;
+    let top = ivlAt(T, X, Y, n - 1u).z1;
+    if (max(top, lo) < hi) {
+      setIvl(T, X, Y, u32(idx), max(top, lo), hi, MAT_SOIL);
+      idx--;
+    }
+    for (var i = i32(n) - 1; i >= 0; i--) {
+      let iv = ivlAt(T, X, Y, u32(i));
+      var below = OPEN_BOTTOM;
+      if (i > 0) { below = ivlAt(T, X, Y, u32(i - 1)).z1; }
+      setIvl(T, X, Y, u32(idx), iv.z0, iv.z1, iv.m);
+      idx--;
+      if (i > 0 && max(below, lo) < min(iv.z0, hi)) {
+        setIvl(T, X, Y, u32(idx), max(below, lo), min(iv.z0, hi), MAT_SOIL);
+        idx--;
       }
-      let esI = eS(iv);
-      shiftUp(L, X, Y, i + 1u, n);
-      // the lower piece keeps index i (and the gap below it); the upper is new, over the ball's gap
-      var lowE = esI;
-      if (i > 0u) { lowE = min(esI, eCut(zi0, czc, r, dd)); }
-      setIvl(L, X, Y, i, zi0, a, iv.m, packE(lowE, eG(iv)));
-      setIvl(L, X, Y, i + 1u, b, zi1, iv.m, packE(min(esI, eCut(zi1, czc, r, dd)), eBall));
-      made = split;
-    }
-    if (split < 0 && nearG > 0 && inside) {
-      // (a span that misses the reused gap: the gap grows to the span, as a swept capsule would)
-      let g = u32(nearG);
-      let bl = ivlAt(L, X, Y, g - 1u);
-      let ab = ivlAt(L, X, Y, g);
-      if (lo < bl.z1) { setIvl(L, X, Y, g - 1u, bl.z0, select(max(lo, bl.z0), lo, g == 1u), bl.m, bl.e); }
-      if (hi > ab.z0) { setIvl(L, X, Y, g, min(hi, ab.z1), ab.z1, ab.m, ab.e); }
-    }
-    if (inside) {
-      for (var j = 0; j < i32(nn); j++) {
-        if (made >= 0 && (j == made || j == made + 1)) { continue; }
-        let iv = ivlAt(L, X, Y, u32(j));
-        let z0 = select(iv.z0, -3.0e38, j == 0);
-        if (!(iv.z1 > lo && z0 < hi)) { continue; }
-        var e = unpack2x16float(iv.e);
-        var b0 = iv.z0;
-        var b1 = iv.z1;
-        if (lo <= z0 && iv.z1 <= hi) {
-          e.x = min(e.x, min(eCut(z0, czc, r, dd), eCut(iv.z1, czc, r, dd)));
-        } else if (iv.z1 <= hi) {
-          b1 = lo;
-        } else if (lo <= z0) {
-          b0 = hi;
-        }
-        setIvl(L, X, Y, u32(j), b0, b1, iv.m, packE(e.x, e.y));
-      }
-    }
-    // the ball's air: every gap it opens or reaches (in the ring: within its radius in z)
-    for (var g = 1u; g < nn; g++) {
-      let iv = ivlAt(L, X, Y, g);
-      let f = ivlAt(L, X, Y, g - 1u).z1;
-      let cc = iv.z0;
-      var near = max(max(f - czc, czc - cc), 0.0) <= r;
-      if (inside) { near = cc >= lo && f <= hi; }
-      if (near && eBall > eG(iv)) { setIvl(L, X, Y, g, iv.z0, iv.z1, iv.m, packE(eS(iv), eBall)); }
     }
   } else {
-    if (aKind == 1u) {
-      let g = aIdx;
-      let f = ivlAt(L, X, Y, g - 1u).z1;
-      var cc = 3.0e38;
-      var egOld = E_FAR;
-      if (g < n) {
-        cc = ivlAt(L, X, Y, g).z0;
-        egOld = eG(ivlAt(L, X, Y, g));
+    var iF = -1;
+    var iL = -1;
+    for (var i = 0; i < i32(n); i++) {
+      let iv = ivlAt(T, X, Y, u32(i));
+      if (iv.z1 > lo && iv.z0 < hi) {
+        if (iF < 0) { iF = i; }
+        iL = i;
       }
-      var a = clamp(czc, f, cc);
-      var b = a;
-      if (inside) {
-        a = clamp(lo, f, cc);
-        b = clamp(hi, f, cc);
-      }
-      shiftUp(L, X, Y, g, n);
-      // the new interval takes index g; the gap below it keeps the old gap's footprint, as does the one above it
-      setIvl(L, X, Y, g, a, b, MAT_SOIL, packE(eBall, egOld));
-      made = i32(g);
-    } else if (aKind == 2u) {
-      // the reused interval takes the span: a present one grows to hold it, a ghost one is laid there
-      let j = aIdx;
-      let iv = ivlAt(L, X, Y, j);
-      var b0 = iv.z0;
-      var b1 = iv.z1;
-      if (inside) {
-        let f = ivlAt(L, X, Y, j - 1u).z1;
-        var up = 3.0e38;
-        if (j + 1u < n) { up = ivlAt(L, X, Y, j + 1u).z0; }
-        let a = min(up, max(lo, f));
-        let bb = max(f, min(hi, up));
-        if (present(eS(iv))) {
-          b0 = min(iv.z0, a);
-          b1 = max(iv.z1, bb);
-        } else {
-          b0 = a;
-          b1 = bb;
-        }
-      }
-      setIvl(L, X, Y, j, b0, b1, iv.m, packE(max(eS(iv), eBall), eG(iv)));
-      made = i32(j);
     }
-    if (inside) {
-      // the other air pieces the span reaches are filled from the solid they touch (no new interval)
-      for (var g = 1; g <= i32(nn); g++) {
-        if (made >= 0 && (g == made || g == made + 1)) { continue; }
-        let below = ivlAt(L, X, Y, u32(g - 1));
-        let f = below.z1;
-        var cc = 3.0e38;
-        if (g < i32(nn)) { cc = ivlAt(L, X, Y, u32(g)).z0; }
-        if (!(cc > lo && f < hi)) { continue; }
-        if (lo <= f) {
-          var es = eS(below);
-          if (g - 1 > 0) { es = max(es, eBall); }
-          setIvl(L, X, Y, u32(g - 1), below.z0, min(hi, cc), below.m, packE(es, eG(below)));
-        } else if (hi >= cc && g < i32(nn)) {
-          let above = ivlAt(L, X, Y, u32(g));
-          setIvl(L, X, Y, u32(g), max(lo, f), above.z1, above.m, packE(max(eS(above), eBall), eG(above)));
-        }
+    if (iF < 0) { return; }
+    let f = ivlAt(T, X, Y, u32(iF));
+    let l = ivlAt(T, X, Y, u32(iL));
+    if (iF == iL && f.z0 < lo && f.z1 > hi) {
+      for (var i = i32(n) - 1; i > iF; i--) {
+        let iv = ivlAt(T, X, Y, u32(i));
+        setIvl(T, X, Y, u32(i + 1), iv.z0, iv.z1, iv.m);
+      }
+      setIvl(T, X, Y, u32(iF), f.z0, lo, f.m);
+      setIvl(T, X, Y, u32(iF + 1), hi, f.z1, f.m);
+    } else {
+      var w = iF;
+      if (f.z0 < lo) {
+        setIvl(T, X, Y, u32(w), f.z0, lo, f.m);
+        w++;
+      }
+      if (l.z1 > hi) {
+        setIvl(T, X, Y, u32(w), select(hi, OPEN_BOTTOM, w == 0), l.z1, l.m);
+        w++;
+      }
+      for (var j = iL + 1; j < i32(n); j++) {
+        let iv = ivlAt(T, X, Y, u32(j));
+        setIvl(T, X, Y, u32(w), iv.z0, iv.z1, iv.m);
+        w++;
       }
     }
   }
-  setCount(L, X, Y, nn, need);
+  setCount(T, X, Y, nn, need);
 }
 
 // ---- melt: a slump of the top four intervals between same-structure neighbours, mass kept exactly in reals ------------
@@ -1359,13 +1224,12 @@ fn meltSnap(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id)
   let n = colCount(L, X, Y);
   var h = n;
   for (var i = 0u; i < n; i++) { h = h * 31u + ivlAt(L, X, Y, i).m; }
-  // (footprints: the surface that slumps is the top present one; a ghost interval holds no mass)
-  scr[b] = topPresent(L, X, Y, n);
+  scr[b] = topS(L, X, Y, n);
   for (var q = 0u; q < MELT_DEPTH; q++) {
     var th = 0.0;
     if (q < n) {
       let i = n - 1u - q;
-      if (i == 0u) { th = 1e30; } else if (present(eS(ivlAt(L, X, Y, i)))) { th = layerVal(L, X, Y, 2u * i); }
+      if (i == 0u) { th = 1e30; } else { th = layerVal(L, X, Y, 2u * i); }
     }
     scr[b + 1u + q] = th;
   }
@@ -1409,16 +1273,31 @@ fn takeFrom(b: u32, o: f32, q: u32) -> f32 {
 }
 
 @compute @workgroup_size(16, 16)
-fn meltApply(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
-  let L = u.a.w;
-  let slot = slotOf(i32(L), 3);
-  let X = (slotW(slot, 4u) + i32(wid.x)) * 16 + i32(lid.x);
-  let Y = (slotW(slot, 5u) + i32(wid.y)) * 16 + i32(lid.y);
+fn meltApply(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  let L0 = u.a.w;
+  let slot = slotOf(i32(L0), 3);
+  let o = slotOrigin(slot, li);
+  let cx = o.x + i32(wid.x);
+  let cy = o.y + i32(wid.y);
+  if (!inWin(L0, cx * 16, cy * 16)) { return; }
+  let X = cx * 16 + i32(lid.x);
+  let Y = cy * 16 + i32(lid.y);
   let box = vec4<i32>(slotW(slot, 0u), slotW(slot, 1u), slotW(slot, 2u), slotW(slot, 3u));
-  if (!inBox(X, Y, box)) { return; }
-  let b = snapIdx(X, Y, box);
-  let n = u32(scr[b + 6u]);
+  let inside = inBox(X, Y, box);
+  var n = 0u;
+  if (inside) { n = u32(scr[snapIdx(X, Y, box) + 6u]); }
+  if (li == 0u) { atomicStore(&wmax, 0u); }
+  workgroupBarrier();
+  atomicMax(&wmax, n);
+  let need = (workgroupUniformLoad(&wmax) + K - 1u) / K;
+  if (li == 0u && need > 0u) { ensurePages(TMP_ID + L0, cx, cy, need, u.d.x); }
+  storageBarrier();
+  workgroupBarrier();
   if (n == 0u) { return; }
+  // (the column's solid view copied into TMP and rebuilt there; pack writes the partition back)
+  tmpCopy(L0, X, Y, n, need);
+  let L = TMP_ID + L0;
+  let b = snapIdx(X, Y, box);
   let m = min(n, MELT_DEPTH);
   var dth = array<f32, 4>(0.0, 0.0, 0.0, 0.0);
   let oo = outflow(X, Y, box);
@@ -1443,7 +1322,7 @@ fn meltApply(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
     let t = ivlAt(L, X, Y, 0u);
     prevOld = t.z1;
     base = t.z1 + dth[n - 1u];
-    setIvl(L, X, Y, 0u, t.z0, base, t.m, t.e);
+    setIvl(L, X, Y, 0u, t.z0, base, t.m);
     first = 1u;
   } else {
     base = ivlAt(L, X, Y, lo - 1u).z1;
@@ -1455,7 +1334,7 @@ fn meltApply(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
     prevOld = t.z1;
     let th = max(0.0, (t.z1 - t.z0) + dth[n - 1u - i]);
     let z0 = base + gap;
-    setIvl(L, X, Y, i, z0, z0 + th, t.m, t.e);
+    setIvl(L, X, Y, i, z0, z0 + th, t.m);
     base = z0 + th;
   }
 }
@@ -1483,7 +1362,7 @@ fn surfLocal(m: u32, x: f32, y: f32) -> f32 {
   for (var q = 0; q < 4; q++) {
     let X = clamp(w.x + i0 + (q & 1), w.x, w.x + w.z - 1);
     let Y = clamp(w.y + j0 + (q >> 1), w.y, w.y + w.z - 1);
-    h[q] = topPresent(m, X, Y, colCount(m, X, Y));
+    h[q] = topS(m, X, Y, colCount(m, X, Y));
   }
   return mix(mix(h[0], h[1], tx), mix(h[2], h[3], tx), ty);
 }
@@ -1499,41 +1378,25 @@ fn solidDist(m: u32, p: vec3<f32>) -> f32 {
   if ((u.r.z & STROKE) != 0u && pageOf(SNAP_ID + m, X >> 4, Y >> 4, 0u) < NOT_LOADED) { lid = SNAP_ID + m; }
   let n = colCount(lid, X, Y);
   var d = 1e9;
-  // solid: the present intervals and the ghost gaps (footprints: present())
   for (var i = 0u; i < n; i++) {
     let iv = ivlAt(lid, X, Y, i);
-    var lo = iv.z0;
-    var hi = iv.z1;
-    var sol = solidIv(iv, i);
-    for (var part = 0u; part < 2u; part++) {
-      if (part == 1u) {
-        if (i == 0u || present(eG(iv))) { break; }
-        lo = ivlAt(lid, X, Y, i - 1u).z1;
-        hi = iv.z0;
-        sol = true;
-      }
-      if (!sol) { continue; }
-      if (p.z >= lo && p.z <= hi) { return -min(p.z - lo, hi - p.z); }
-      d = min(d, min(abs(p.z - hi), select(abs(p.z - lo), 1e9, i == 0u && part == 0u)));
-    }
+    if (p.z >= iv.z0 && p.z <= iv.z1) { return -min(p.z - iv.z0, iv.z1 - p.z); }
+    d = min(d, min(abs(p.z - iv.z1), select(abs(p.z - iv.z0), 1e9, i == 0u)));
   }
   return d;
 }
-/** the distance from local point p to column (X, Y)'s solid, the column dilated to the square between its neighbours'
- *  centres (2 x 2 columns): the drawn surface between column centres (sheets, floors, ceilings, the half-way walls)
- *  lies inside the union of these boxes, so the eye kept outside them is never behind a drawn face. FAR: no solid. */
+/** the distance from local point p to column (X, Y)'s solid boxes (the column's own square: the box draw draws exactly
+ *  these), so the eye kept outside them is never behind a drawn face. FAR: no solid. */
 const FAR: f32 = 1e30;
 fn colDist(m: u32, X: i32, Y: i32, w: vec4<i32>, p: vec3<f32>) -> f32 {
-  let dx = max(0.0, abs(p.x - (f32(X - w.x) + 0.5)) - 1.0);
-  let dy = max(0.0, abs(p.y - (f32(Y - w.y) + 0.5)) - 1.0);
+  let dx = max(0.0, abs(p.x - (f32(X - w.x) + 0.5)) - 0.5);
+  let dy = max(0.0, abs(p.y - (f32(Y - w.y) + 0.5)) - 0.5);
   let n = colCount(m, X, Y);
   var best = FAR;
-  // solid: the present intervals and the ghost gaps (the oracle's colDist)
   for (var i = 0u; i < n; i++) {
     let iv = ivlAt(m, X, Y, i);
     let z0 = select(iv.z0, -FAR, i == 0u);
-    if (solidIv(iv, i)) { best = min(best, max(0.0, max(z0 - p.z, p.z - iv.z1))); }
-    if (i > 0u && !present(eG(iv))) { best = min(best, max(0.0, max(ivlAt(m, X, Y, i - 1u).z1 - p.z, p.z - iv.z0))); }
+    best = min(best, max(0.0, max(z0 - p.z, p.z - iv.z1)));
   }
   if (best >= FAR) { return FAR; }
   return length(vec3<f32>(dx, dy, best));
@@ -1681,10 +1544,7 @@ fn camera(@builtin(local_invocation_index) li: u32) {
           let n = colCount(m, w.x + X, w.y + Y);
           for (var i = 0u; i < n; i++) {
             let iv = ivlAt(m, w.x + X, w.y + Y, i);
-            // (a ghost interval is air; a ghost gap below a present interval is solid: from the one below's top)
-            var z0 = iv.z0;
-            if (i > 0u && !present(eG(iv))) { z0 = ivlAt(m, w.x + X, w.y + Y, i - 1u).z1; }
-            if (solidIv(iv, i) && (i == 0u || p.z >= z0) && p.z <= iv.z1) {
+            if ((i == 0u || p.z >= iv.z0) && p.z <= iv.z1) {
               p.z = iv.z1 + 0.3;
               moved = true;
             }
@@ -1822,735 +1682,317 @@ fn pick() {
   reg[13] = bitcast<i32>(h.p.z);
 }
 
-// ---- the baked draw: the gap table and the mesh items, baked where columns changed ------------------------------------
-// (docs/design/NESTED_SCALES.md "The baked draw"; store.wgsl holds the page layouts.) The owner's rule: "deforming
-// vertices and baking the seam mesh, nothing per frame". Each op that changes a level's columns (root, promote, slide,
-// edit: the edited, restricted and derived regions) bakes that region grown by one chunk: gapsBake writes each
-// column's air regions with their normals, meshBake the draw-B items of the quads there, dirBuild the list of mesh pages
-// the draw instances over. A frame with no change draws the baked buffers and reads nothing else of them.
+// ---- the box draw, baked where columns changed (docs/design/NESTED_SCALES.md "The box draw") -------------------------
+// Every column is drawn as boxes: a face exists exactly where a solid interval touches an air interval, vertically at
+// their shared bound (a cap) or laterally where a solid interval of one column overlaps in height an air interval of the
+// neighbouring column (a wall over the overlap). Nothing pairs bounds between columns. A column outside the level's
+// window, or under its child's footprint (the child draws there), is air to its neighbours, so walls stand at the window
+// edge and round the footprint and every level's faces close by themselves. Each vertical edge of a wall is split at
+// every record top of the four columns round that corner line (and their bottoms), the same set for every face that
+// touches the line, so no T-junction is left. The world below a level is open: a column's first record ends at
+// botOf(L) (or 1 under its top when that is lower), and no cap is drawn on the bottom plane itself.
+// The owner's rule stands: "nothing per frame": an op bakes its changed chunks (grown by one), a frame only draws.
 @group(0) @binding(8) var<storage, read_write> dir: array<atomic<u32>>;
 @group(0) @binding(9) var<storage, read_write> dargs: array<u32>;
 
-fn setRec(lid: u32, X: i32, Y: i32, i: u32, a: u32, b: u32, c: u32) {
-  let p = pageOf(lid, X >> 4, Y >> 4, i / K);
-  if (p >= NOT_LOADED) { return; }
-  let o = p * PW + 256u + (colIn(X, Y) * K + (i % K)) * RW;
-  pgStore(o, a);
-  pgStore(o + 1u, b);
-  pgStore(o + 2u, c);
+/** the level's cz 0 column pages of the 3 x 3 chunks round the baked one, and the baked chunk's face pages cz 0..7 */
+var<workgroup> wPg: array<u32, 9>;
+var<workgroup> wFp: array<u32, 8>;
+var<private> bOrg: vec2<i32>;
+var<private> bChunk: vec2<i32>;
+
+/** the open world bottom of a level (local units): the root's terrain stands above 0; a child's surface lies within
+ *  about its window's width of its z origin */
+fn botOf(L: u32) -> f32 {
+  if (L == 0u) { return -8.0; }
+  return -2.0 * f32(u.lv[L].z);
 }
-// The bakes read the columns of their chunk and its eight neighbours over and over: the cz 0 pages of those nine
-// chunks (the level's and its gap table's) are looked up once a workgroup, not a hashed table probe a read.
-// (and the parent's: the chunk under this one's centre and its neighbours, for the rim morph's targets)
-var<workgroup> wCache: array<u32, 36>;
-var<private> cOrg: vec2<i32>;
-var<private> pOrg: vec2<i32>;
-var<private> cOn: bool;
-/** (every thread of the workgroup, uniform control flow) the cache over chunk (cx, cy) and its neighbours */
-fn cacheFill(L: u32, cx: i32, cy: i32, li: u32) {
-  let k = i32(u.a.x);
-  let pc = vec2<i32>(((cx * 16 + 8) / k) >> 4, ((cy * 16 + 8) / k) >> 4);
-  if (li < 36u) {
-    let j = li % 9u;
-    let q = li / 9u; // 0 the level, 1 its gap table, 2 the parent, 3 the parent's gap table
-    var o = vec2<i32>(cx, cy);
-    if (q >= 2u) { o = pc; }
-    var lid = L + select(0u, GAP_ID, (q & 1u) == 1u);
-    if (q >= 2u) { lid = lid - 1u; }
-    wCache[li] = NONE;
-    if (q < 2u || L > 0u) { wCache[li] = pageOf(lid, o.x - 1 + i32(j % 3u), o.y - 1 + i32(j / 3u), 0u); }
+/** whether column (X, Y) is drawn on level L (in the window and not under a live child's footprint) */
+fn colOn(L: u32, X: i32, Y: i32) -> bool {
+  if (!inWin(L, X, Y)) { return false; }
+  if (L + 1u < 8u && u.lv[L + 1u].w != 0) {
+    let c = u.lv[L + 1u];
+    let k = i32(u.a.x);
+    if (X * k >= c.x && Y * k >= c.y && X * k < c.x + c.z && Y * k < c.y + c.z) { return false; }
+  }
+  return true;
+}
+/** a column's cz page (the workgroup's cache for cz 0) */
+fn bPage(L: u32, X: i32, Y: i32, cz: u32) -> u32 {
+  if (cz == 0u) {
+    let c = vec2<i32>(X >> 4, Y >> 4) - bOrg;
+    if (c.x >= 0 && c.y >= 0 && c.x < 3 && c.y < 3) { return wPg[u32(c.y * 3 + c.x)]; }
+  }
+  return pageOf(L, X >> 4, Y >> 4, cz);
+}
+// The bake reads the 18 x 18 columns round its chunk over and over (each wall's corner lines): their record counts,
+// bottoms and first SC records are copied into workgroup memory once (bFill); deeper records are read from the pages.
+const SC: u32 = 4u;
+var<workgroup> sN: array<u32, 324>;
+var<workgroup> sB: array<f32, 324>;
+var<workgroup> sT: array<f32, 1296>;
+var<workgroup> sM: array<u32, 324>;
+var<private> sOrg: vec2<i32>;
+fn sIdx(X: i32, Y: i32) -> i32 {
+  let q = vec2<i32>(X, Y) - sOrg;
+  if (q.x < 0 || q.y < 0 || q.x >= 18 || q.y >= 18) { return -1; }
+  return q.y * 18 + q.x;
+}
+/** (every thread, uniform control flow) the copy of the columns round chunk (cx, cy) */
+fn bFill(L: u32, cx: i32, cy: i32, li: u32) {
+  sOrg = vec2<i32>(cx * 16 - 1, cy * 16 - 1);
+  for (var q = li; q < 324u; q += 256u) {
+    let X = sOrg.x + i32(q % 18u);
+    let Y = sOrg.y + i32(q / 18u);
+    let n = bCountG(L, X, Y);
+    sN[q] = n;
+    var mats = 0u;
+    for (var j = 0u; j < min(n, SC); j++) {
+      let r = bRecG(L, X, Y, j);
+      sT[q * SC + j] = bitcast<f32>(r.x);
+      mats |= (r.y & 255u) << (8u * j);
+    }
+    sM[q] = mats;
+    sB[q] = 0.0;
+    if (n > 0u) { sB[q] = min(botOf(L), sT[q * SC] - 1.0); }
   }
   workgroupBarrier();
-  cOrg = vec2<i32>(cx - 1, cy - 1);
-  pOrg = pc - 1;
-  cOn = true;
 }
-/** a column's cz 0 page of level id lid (the cache where it holds it) */
-fn cPage(lid: u32, X: i32, Y: i32) -> u32 {
-  let L = u.a.w;
-  if (cOn) {
-    var q = 4u;
-    if (lid == L) { q = 0u; } else if (lid == GAP_ID + L) { q = 1u; } else if (L > 0u && lid == L - 1u) { q = 2u; } else if (L > 0u && lid == GAP_ID + L - 1u) { q = 3u; }
-    if (q < 4u) {
-      let c = vec2<i32>(X >> 4, Y >> 4) - select(cOrg, pOrg, q >= 2u);
-      if (c.x >= 0 && c.y >= 0 && c.x < 3 && c.y < 3) { return wCache[q * 9u + u32(c.y * 3 + c.x)]; }
-    }
-  }
-  return pageOf(lid, X >> 4, Y >> 4, 0u);
+fn bCount(L: u32, X: i32, Y: i32) -> u32 {
+  let i = sIdx(X, Y);
+  if (i >= 0) { return sN[i]; }
+  return bCountG(L, X, Y);
 }
-fn cCount(lid: u32, X: i32, Y: i32) -> u32 {
-  let p = cPage(lid, X, Y);
-  if (p >= NOT_LOADED) { return 0u; }
-  let m = pgLoad(p * PW + colIn(X, Y));
-  if (m < K) { return m; }
-  return colCount(lid, X, Y);
+fn bRec(L: u32, X: i32, Y: i32, j: u32) -> vec2<u32> {
+  let i = sIdx(X, Y);
+  if (i >= 0 && j < SC) { return vec2<u32>(bitcast<u32>(sT[u32(i) * SC + j]), (sM[i] >> (8u * j)) & 255u); }
+  return bRecG(L, X, Y, j);
 }
-fn cIvl(lid: u32, X: i32, Y: i32, i: u32) -> Ivl {
-  if (i >= K) { return ivlAt(lid, X, Y, i); }
-  let p = cPage(lid, X, Y);
-  if (p >= NOT_LOADED) { return Ivl(OPEN_BOTTOM, OPEN_BOTTOM, 0u, E_FAR_W); }
-  return pgIvl(p, colIn(X, Y), i);
-}
-
-// Footprints: the solid runs walk the PRESENT intervals (a ghost interval is air); between two present intervals a < b
-// there is air when one of the slabs between them is air and not thinner than GAP_MIN (a present gap, or a ghost
-// interval); a ghost gap is solid.
-/** the next present interval below interval i (interval 0 always is) */
-fn prevSolid(L: u32, X: i32, Y: i32, i: i32) -> i32 {
-  var j = i - 1;
+/** a drawn column's record count (0 where it is air to the draw), from the pages */
+fn bCountG(L: u32, X: i32, Y: i32) -> u32 {
+  if (!colOn(L, X, Y)) { return 0u; }
+  var n = 0u;
+  var cz = 0u;
   loop {
-    if (j <= 0) { return 0; }
-    if (present(eS(cIvl(L, X, Y, u32(j))))) { return j; }
-    j--;
+    let p = bPage(L, X, Y, cz);
+    if (p >= NOT_LOADED) { break; }
+    let m = pgLoad(p * PW + colIn(X, Y)) & 0xffffu;
+    n += m;
+    if (m < KR) { break; }
+    cz++;
   }
+  return n;
 }
-/** air (GAP_MIN or more) between present intervals a < b */
-fn airBetween(L: u32, X: i32, Y: i32, a: i32, b: i32) -> bool {
-  for (var q = a + 1; q <= b; q++) {
-    let iv = cIvl(L, X, Y, u32(q));
-    if (present(eG(iv)) && iv.z0 > cIvl(L, X, Y, u32(q - 1)).z1 + GAP_MIN) { return true; }
-    if (q < b && iv.z1 - iv.z0 > GAP_MIN) { return true; }
-  }
-  return false;
+/** record j: (top, material), from the pages */
+fn bRecG(L: u32, X: i32, Y: i32, j: u32) -> vec2<u32> {
+  let p = bPage(L, X, Y, j / KR);
+  if (p >= NOT_LOADED) { return vec2<u32>(0u, MAT_AIR); }
+  let b = p * PW + 256u + (colIn(X, Y) * KR + j % KR) * 2u;
+  return vec2<u32>(pgLoad(b), pgLoad(b + 1u));
 }
-/** the top present interval */
-fn topSolid(L: u32, X: i32, Y: i32, n: u32) -> i32 {
-  var i = i32(n) - 1;
-  loop {
-    if (i <= 0 || present(eS(cIvl(L, X, Y, u32(i))))) { return max(i, 0); }
-    i--;
-  }
+/** a drawn column's bottom: the first record ends at the level's open bottom, or 1 under its top when that is lower */
+fn bBot(L: u32, X: i32, Y: i32) -> f32 {
+  let i = sIdx(X, Y);
+  if (i >= 0) { return sB[i]; }
+  return min(botOf(L), bitcast<f32>(bRecG(L, X, Y, 0u).x) - 1.0);
 }
-/** a column's gap g from its intervals (gap 0 the sky above the top, then the air between solid runs; gaps under
- *  GAP_MIN merged into the solid), normals not set */
-fn gapAtI(L: u32, X: i32, Y: i32, g: u32) -> Gap {
-  let n = cCount(L, X, Y);
-  var out = Gap(0.0, 0.0, 0u, 0u, 0.0, vec2<f32>(0.0), vec2<f32>(0.0), false);
-  if (n == 0u) { return out; }
-  var cur = 0u;
-  var ceil = 1e30;
-  var cm = 0u;
-  var i = topSolid(L, X, Y, n);
-  loop {
-    let top = cIvl(L, X, Y, u32(i));
-    var j = i;
-    loop {
-      if (j == 0) { break; }
-      let pj = prevSolid(L, X, Y, j);
-      if (airBetween(L, X, Y, pj, j)) { break; }
-      j = pj;
-    }
-    let bot = cIvl(L, X, Y, u32(j));
-    if (cur == g) { return Gap(top.z1, ceil, top.m, cm, max(bot.z0, top.z1 - 1000.0), vec2<f32>(0.0), vec2<f32>(0.0), true); }
-    if (j == 0) { return out; }
-    ceil = bot.z0;
-    cm = bot.m;
-    cur++;
-    i = prevSolid(L, X, Y, j);
-  }
-}
-fn gapCountI(L: u32, X: i32, Y: i32) -> u32 {
-  let n = cCount(L, X, Y);
-  if (n == 0u) { return 0u; }
-  var c = 1u;
-  var j = topSolid(L, X, Y, n);
-  loop {
-    if (j == 0) { break; }
-    let pj = prevSolid(L, X, Y, j);
-    if (airBetween(L, X, Y, pj, j)) { c++; }
-    j = pj;
-  }
-  return c;
-}
-fn sAtC(L: u32, X: i32, Y: i32) -> f32 {
-  let q = clampTo(L, X, Y);
-  let n = cCount(L, q.x, q.y);
-  if (n == 0u) { return 0.0; }
-  return cIvl(L, q.x, q.y, u32(topSolid(L, q.x, q.y, n))).z1;
-}
-/** the top sheet's normal (the draw's nrmAt: central differences of the top surface, clamped to the window) */
-fn sheetN(L: u32, X: i32, Y: i32) -> vec3<f32> {
-  return normalize(vec3<f32>(-(sAtC(L, X + 1, Y) - sAtC(L, X - 1, Y)) * 0.5, -(sAtC(L, X, Y + 1) - sAtC(L, X, Y - 1)) * 0.5, 1.0));
-}
-/** a column's gap g: the baked table where its chunk has one, else (one gap) the sky from its intervals */
-fn gapOf(L: u32, X: i32, Y: i32, g: u32) -> Gap {
-  if (cPage(GAP_ID + L, X, Y) < NOT_LOADED) { return gRecC(L, X, Y, g); }
-  // one gap: the sky over the column's whole solid run (no gap inside it by GAP_MIN, so its bottom is the first
-  // interval's)
-  let n = cCount(L, X, Y);
-  if (n == 0u) { return Gap(0.0, 0.0, 0u, 0u, 0.0, vec2<f32>(0.0), vec2<f32>(0.0), false); }
-  let top = cIvl(L, X, Y, u32(topSolid(L, X, Y, n)));
-  return Gap(top.z1, 1e30, top.m, 0u, max(cIvl(L, X, Y, 0u).z0, top.z1 - 1000.0), sheetN(L, X, Y).xy, vec2<f32>(0.0), true);
-}
-fn gCountW(L: u32, X: i32, Y: i32) -> u32 {
-  if (!inWin(L, X, Y)) { return 0u; }
-  if (cPage(GAP_ID + L, X, Y) < NOT_LOADED) { return cCount(GAP_ID + L, X, Y) / GREC; }
-  return select(0u, 1u, cCount(L, X, Y) > 0u);
-}
-/** gap g's records from the cached page (store.wgsl gRec when they reach past it) */
-fn gRecC(L: u32, X: i32, Y: i32, g: u32) -> Gap {
-  let i = GREC * g;
-  if (i + 2u >= K) { return gRec(L, X, Y, g); }
-  let p = cPage(GAP_ID + L, X, Y);
-  let b = p * PW + 256u + (colIn(X, Y) * K + i) * RW;
-  let m = pgLoad(b + 2u);
-  return Gap(bitcast<f32>(pgLoad(b)), bitcast<f32>(pgLoad(b + 1u)), m & 0xffu, (m >> 8u) & 0xffu, bitcast<f32>(pgLoad(b + RW)), unpack2x16snorm(pgLoad(b + RW + 1u)), unpack2x16snorm(pgLoad(b + RW + 2u)), true);
-}
-// Neighbouring columns' gaps correspond when each is the other's nearest-floor gap among those overlapping it in z
-// (mutual nearest): the ground outside an overhang meets the floor under it, not its roof; a tunnel's air meets no air
-// in a solid neighbour. The I forms read intervals (the gap bake), the R forms the baked table (the mesh bake).
-/** the gap of column (X, Y) nearest by floor among those overlapping (f, c), and its floor and ceiling: one walk down
- *  the intervals (few call sites: the D3D11 compiler inlines every call) */
-struct Near {
-  g: i32,
-  f: f32,
-  c: f32,
-}
-fn nearestGapI(L: u32, X: i32, Y: i32, f: f32, c: f32) -> Near {
-  var out = Near(-1, 0.0, 0.0);
-  var bd = 1e30;
-  let n = cCount(L, X, Y);
-  if (n == 0u) { return out; }
-  var g = 0;
-  var ceil = 1e30;
-  var i = topSolid(L, X, Y, n);
-  loop {
-    let fl = cIvl(L, X, Y, u32(i)).z1;
-    var j = i;
-    loop {
-      if (j == 0) { break; }
-      let pj = prevSolid(L, X, Y, j);
-      if (airBetween(L, X, Y, pj, j)) { break; }
-      j = pj;
-    }
-    if (fl < c && f < ceil && abs(fl - f) < bd) {
-      bd = abs(fl - f);
-      out = Near(g, fl, ceil);
-    }
-    if (j == 0) { break; }
-    ceil = cIvl(L, X, Y, u32(j)).z0;
-    g++;
-    i = prevSolid(L, X, Y, j);
-  }
-  return out;
-}
-/** gap g of column a (floor f, ceiling c): the corresponding gap of column b (mutual nearest floor), and its bounds */
-fn mutualI(L: u32, a: vec2<i32>, g: u32, f: f32, c: f32, b: vec2<i32>) -> Near {
-  let none = Near(-1, 0.0, 0.0);
-  if (!inWin(L, b.x, b.y)) { return none; }
-  let H = nearestGapI(L, b.x, b.y, f, c);
-  if (H.g < 0) { return none; }
-  if (nearestGapI(L, a.x, a.y, H.f, H.c).g != i32(g)) { return none; }
-  return H;
-}
-fn nearestGapR(L: u32, X: i32, Y: i32, f: f32, c: f32) -> i32 {
-  var best = -1;
-  var bd = 1e30;
-  let gc = gCountW(L, X, Y);
-  for (var g = 0u; g < gc; g++) {
-    let h = gapOf(L, X, Y, g);
-    if (h.f < c && f < h.c && abs(h.f - f) < bd) {
-      bd = abs(h.f - f);
-      best = i32(g);
+/** the lowest breakpoint above z on the corner line (CX, CY): a record top or a bottom of one of its four columns
+ *  (3e38: none) */
+fn nextBp(L: u32, CX: i32, CY: i32, z: f32) -> f32 {
+  var best = 3e38;
+  for (var q = 0; q < 4; q++) {
+    let X = CX - 1 + (q & 1);
+    let Y = CY - 1 + (q >> 1);
+    let n = bCount(L, X, Y);
+    if (n == 0u) { continue; }
+    let b = bBot(L, X, Y);
+    if (b > z) { best = min(best, b); }
+    for (var j = 0u; j < n; j++) {
+      let t = bitcast<f32>(bRec(L, X, Y, j).x);
+      if (t > z) {
+        best = min(best, t);
+        break;
+      }
     }
   }
   return best;
 }
-/** the six neighbour offsets a triangle's edges use: +x, +y, +x+y, -x, -y, -x-y (direction d + 3 is d's opposite) */
-fn dirOff(d: u32) -> vec2<i32> {
-  var t = array<vec2<i32>, 3>(vec2<i32>(1, 0), vec2<i32>(0, 1), vec2<i32>(1, 1));
-  let o = t[d % 3u];
-  return select(o, -o, d >= 3u);
+/** one triangle written at index t of the chunk's faces */
+fn putTri(t: u32, w0: u32, z0: f32, z1: f32, z2: f32) {
+  var p = NONE;
+  let cz = t / TPP;
+  if (cz < 8u) { p = wFp[cz]; } else { p = pageOf(FACE_ID + u.a.w, bChunk.x, bChunk.y, cz); }
+  if (p >= NOT_LOADED) { return; }
+  let b = p * PW + FHDR + (t % TPP) * 4u;
+  pgStore(b, w0);
+  pgStore(b + 1u, bitcast<u32>(z0));
+  pgStore(b + 2u, bitcast<u32>(z1));
+  pgStore(b + 3u, bitcast<u32>(z2));
 }
-fn dirOf(o: vec2<i32>) -> u32 {
-  let s = select(0u, 3u, o.x < 0 || o.y < 0);
-  let a = abs(o);
-  return s + select(select(2u, 1u, a.x == 0), 0u, a.y == 0);
-}
-/** a one-sided or central difference */
-fn diff1(own: f32, lo: f32, hasLo: bool, hi: f32, hasHi: bool) -> f32 {
-  if (hasLo && hasHi) { return 0.5 * (hi - lo); }
-  if (hasHi) { return hi - own; }
-  if (hasLo) { return own - lo; }
-  return 0.0;
-}
-
-// ---- slabs (footprints, F4): a column of n intervals read bottom up as 2n slabs: slab 0 interval 0 (solid), slab 2i - 1
-// the gap below interval i, slab 2i interval i, slab 2n - 1 the sky. Each slab's AIR FIELD a (air where a > 0): an
-// interval's -eS (a ghost is air); a gap's eG where it is GAP_MIN thick or more, else min(eG, thickness - GAP_MIN) (a thin
-// gap is solid, its edge where it thins out); never 0 (the cut's t needs a sign on both sides). H_s: the top of slab s.
-// Neighbouring columns of one interval count match slab for slab (ghosts keep the count constant across a footprint's
-// edge), so a triangle of such columns is cut per slab from its corners alone (draw.wgsl vsB, kind 1).
-/** slab s's own field (an interval's -eS, a gap's eG) and thickness */
-fn slabOwn(L: u32, X: i32, Y: i32, s: u32) -> vec2<f32> {
-  if ((s & 1u) == 0u) {
-    let iv = cIvl(L, X, Y, s / 2u);
-    return vec2<f32>(-eS(iv), iv.z1 - iv.z0);
-  }
-  let iv = cIvl(L, X, Y, (s + 1u) / 2u);
-  return vec2<f32>(eG(iv), iv.z0 - cIvl(L, X, Y, (s - 1u) / 2u).z1);
-}
-/** a slab thinner than GAP_MIN takes the occupancy of the nearest slab below it that is not (a zero-thickness ghost
- *  between two solids is solid, a thin one under the sky over a tunnel is air): no zero-thickness faces back to back.
- *  Its own field keeps its sign where it agrees, else it is nudged to just across 0 (the cut lands at its column). */
-fn slabA(L: u32, X: i32, Y: i32, s: u32, n: u32) -> f32 {
-  if (s == 0u) { return -E_FAR; }
-  if (s >= 2u * n - 1u) { return E_FAR; }
-  let own = slabOwn(L, X, Y, s);
-  var a = own.x;
-  if (own.y < GAP_MIN) {
-    var air = false;
-    var q = s - 1u;
-    loop {
-      if (q == 0u) { break; }
-      let o = slabOwn(L, X, Y, q);
-      if (o.y >= GAP_MIN) {
-        air = o.x > 0.0;
-        break;
-      }
-      q--;
+/** a column's faces: counted, or written from index `at` (returns the count). Caps where a solid record meets air above
+ *  or below; for each side, each solid record's height range less the neighbour's solid, as strips between the two
+ *  corner lines' breakpoints. */
+fn emitCol(L: u32, X: i32, Y: i32, write: bool, at: u32) -> u32 {
+  let n = bCount(L, X, Y);
+  if (n == 0u) { return 0u; }
+  let lxy = u32(X & 15) | (u32(Y & 15) << 4u);
+  let zb = bBot(L, X, Y);
+  let bot = botOf(L);
+  var t = 0u;
+  // caps: (j, j + 1) for j < n (above the last record: air); and the bottom where the column ends above the open bottom
+  for (var j = 0u; j < n; j++) {
+    let r = bRec(L, X, Y, j);
+    var up = MAT_AIR;
+    if (j + 1u < n) { up = bRec(L, X, Y, j + 1u).y; }
+    let s0 = matSolid(r.y);
+    if (s0 == matSolid(up)) { continue; }
+    let z = bitcast<f32>(r.x);
+    let kind = select(5u, 4u, s0);
+    let w = lxy | (kind << 8u) | ((select(up, r.y, s0) & 255u) << 11u);
+    if (write) {
+      putTri(at + t, w | (0u << 19u) | (1u << 21u) | (3u << 23u), z, z, z);
+      putTri(at + t + 1u, w | (0u << 19u) | (3u << 21u) | (2u << 23u), z, z, z);
     }
-    if (air) { a = max(a, 1.0 / 1024.0); } else { a = min(a, -1.0 / 1024.0); }
+    t += 2u;
   }
-  return select(a, -1.0 / 1024.0, a == 0.0);
-}
-/** the top of slab s (s <= 2n - 2) */
-fn slabH(L: u32, X: i32, Y: i32, s: u32) -> f32 {
-  if ((s & 1u) == 0u) { return cIvl(L, X, Y, s / 2u).z1; }
-  return cIvl(L, X, Y, (s + 1u) / 2u).z0;
-}
-/** slab s's material when solid: an interval's own; a gap's, the interval above it's */
-fn slabM(L: u32, X: i32, Y: i32, s: u32) -> u32 { return cIvl(L, X, Y, (s + 1u) / 2u).m; }
-/** columns a and b (neighbours) of one interval count, with some slab air in one and solid in the other: an edge the
- *  slab draw cuts (the top sheet must leave both its triangles to B) */
-fn contourEdge(L: u32, a: vec2<i32>, b: vec2<i32>) -> bool {
-  if (!inWin(L, b.x, b.y)) { return false; }
-  let n = cCount(L, a.x, a.y);
-  if (n == 0u || cCount(L, b.x, b.y) != n) { return false; }
-  for (var s = 1u; s + 1u < 2u * n; s++) {
-    if ((slabA(L, a.x, a.y, s, n) > 0.0) != (slabA(L, b.x, b.y, s, n) > 0.0)) { return true; }
+  let r0 = bRec(L, X, Y, 0u);
+  if (matSolid(r0.y) && zb != bot) {
+    let w = lxy | (5u << 8u) | ((r0.y & 255u) << 11u);
+    if (write) {
+      putTri(at + t, w | (0u << 19u) | (1u << 21u) | (3u << 23u), zb, zb, zb);
+      putTri(at + t + 1u, w | (0u << 19u) | (3u << 21u) | (2u << 23u), zb, zb, zb);
+    }
+    t += 2u;
   }
-  return false;
-}
-/** a column's B flag (bit 16 of its gap record 0's material word): B draws every triangle with a flagged corner, the top
- *  sheet the rest */
-fn bFlagC(L: u32, X: i32, Y: i32) -> bool {
-  let p = cPage(GAP_ID + L, X, Y);
-  if (p >= NOT_LOADED || !inWin(L, X, Y)) { return false; }
-  return ((pgLoad(p * PW + 256u + colIn(X, Y) * K * RW + 2u) >> 16u) & 1u) == 1u;
+  // walls: +x, -x, +y, -y; corner codes (bit 0: x + 1, bit 1: y + 1) of the face's two vertical edges
+  for (var d = 0u; d < 4u; d++) {
+    var off = vec2<i32>(1, 0);
+    var cA = 1u;
+    var cB = 3u;
+    if (d == 1u) {
+      off = vec2<i32>(-1, 0);
+      cA = 0u;
+      cB = 2u;
+    } else if (d == 2u) {
+      off = vec2<i32>(0, 1);
+      cA = 2u;
+      cB = 3u;
+    } else if (d == 3u) {
+      off = vec2<i32>(0, -1);
+      cA = 0u;
+      cB = 1u;
+    }
+    let NX = X + off.x;
+    let NY = Y + off.y;
+    let nn = bCount(L, NX, NY);
+    var nb = 0.0;
+    if (nn > 0u) { nb = bBot(L, NX, NY); }
+    let AX = X + i32(cA & 1u);
+    let AY = Y + i32(cA >> 1u);
+    let BX = X + i32(cB & 1u);
+    let BY = Y + i32(cB >> 1u);
+    var lo = zb;
+    for (var j = 0u; j < n; j++) {
+      let r = bRec(L, X, Y, j);
+      let hi = bitcast<f32>(r.x);
+      if (matSolid(r.y)) {
+        let w = lxy | (d << 8u) | ((r.y & 255u) << 11u);
+        // the neighbour's solid runs subtracted from [lo, hi], in order
+        var cur = lo;
+        var jn = 0u;
+        var nlo = nb;
+        loop {
+          if (cur >= hi) { break; }
+          // the next solid range of the neighbour reaching above cur (or none: [3e38, 3e38])
+          var a = 3e38;
+          var b = 3e38;
+          loop {
+            if (jn >= nn) { break; }
+            let q = bRec(L, NX, NY, jn);
+            let qt = bitcast<f32>(q.x);
+            let qlo = nlo;
+            nlo = qt;
+            jn++;
+            if (matSolid(q.y) && qt > cur) {
+              a = qlo;
+              b = qt;
+              break;
+            }
+          }
+          let p0 = cur;
+          let p1 = min(a, hi);
+          if (p1 > p0) {
+            // a strip between the two corner lines from p0 to p1: advance the lower side to its next breakpoint
+            var za = p0;
+            var zc = p0;
+            loop {
+              if (za >= p1 && zc >= p1) { break; }
+              let na = min(nextBp(L, AX, AY, za), p1);
+              let nc = min(nextBp(L, BX, BY, zc), p1);
+              if (za < p1 && (na <= nc || zc >= p1)) {
+                if (write) { putTri(at + t, w | (cA << 19u) | (cB << 21u) | (cA << 23u), za, zc, na); }
+                za = na;
+              } else {
+                if (write) { putTri(at + t, w | (cA << 19u) | (cB << 21u) | (cB << 23u), za, zc, nc); }
+                zc = nc;
+              }
+              t++;
+            }
+          }
+          cur = max(cur, b);
+        }
+      }
+      lo = hi;
+    }
+  }
+  return t;
 }
 
-/** (over a slot's chunks) a chunk's gap table: written where some column has more than one gap, let go elsewhere */
+/** (over a slot's chunks) a chunk's faces: counted per column, the chunk's face pages sized, then written (one call
+ *  site of emitCol: the D3D11 compiler inlines every call) */
 @compute @workgroup_size(16, 16)
-fn gapsBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+fn faceBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
   let L = u.a.w;
   let o = slotOrigin(u.r.x, li);
   let cx = o.x + i32(wid.x);
   let cy = o.y + i32(wid.y);
   if (!inWin(L, cx * 16, cy * 16)) { return; }
-  cacheFill(L, cx, cy, li);
+  if (li < 9u) { wPg[li] = pageOf(L, cx - 1 + i32(li % 3u), cy - 1 + i32(li / 3u), 0u); }
+  if (li == 0u) { atomicStore(&wmax, 0u); }
+  workgroupBarrier();
+  bOrg = vec2<i32>(cx - 1, cy - 1);
+  bChunk = vec2<i32>(cx, cy);
+  bFill(L, cx, cy, li);
   let X = cx * 16 + i32(lid.x);
   let Y = cy * 16 + i32(lid.y);
-  if (li == 0u) {
-    atomicStore(&wmax, 0u);
-    atomicStore(&wany, 0u);
-  }
-  workgroupBarrier();
-  let G = gapCountI(L, X, Y);
-  atomicMax(&wmax, G);
-  // a table where some column, or a neighbour of one, has more than one gap: the top sheet beside an overhang takes
-  // its normal from the table (the floor its neighbours' matching gaps continue), not from the top surface's steps
-  var near = G > 1u;
-  // the B flag: more than one air run, or an edge (of the six a triangle uses) the slab draw cuts
-  var flag = G > 1u;
-  for (var d = 0u; d < 6u; d++) {
-    let b = vec2<i32>(X, Y) + dirOff(d);
-    if (d % 3u != 2u && inWin(L, b.x, b.y) && gapCountI(L, b.x, b.y) > 1u) { near = true; }
-    if (!flag && u.e.w == 0 && contourEdge(L, vec2<i32>(X, Y), b)) { flag = true; }
-  }
-  if (near || flag) { atomicOr(&wany, 1u); }
-  let mg = workgroupUniformLoad(&wmax);
-  let anyNear = workgroupUniformLoad(&wany);
-  let need = select(0u, (GREC * mg + K - 1u) / K, anyNear != 0u);
-  if (li == 0u) { ensurePages(GAP_ID + L, cx, cy, need, u.d.x); }
-  storageBarrier();
-  workgroupBarrier();
-  if (need == 0u) { return; }
-  setCount(GAP_ID + L, X, Y, GREC * G, need);
-  let C = vec2<i32>(X, Y);
-  let sn = sheetN(L, X, Y).xy;
-  for (var g = 0u; g < G; g++) {
-    let a = gapAtI(L, X, Y, g);
-    // the six links (the normals' neighbours among them: +-x, +-y), one matching call site
-    var lk = array<u32, 3>(0u, 0u, 0u);
-    var zf = array<f32, 6>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
-    var zc = array<f32, 6>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
-    var hf = array<bool, 6>(false, false, false, false, false, false);
-    var hc = array<bool, 6>(false, false, false, false, false, false);
-    for (var d = 0u; d < 6u; d++) {
-      let H = mutualI(L, C, g, a.f, a.c, C + dirOff(d));
-      lk[d / 2u] |= (select(0xffffu, u32(H.g), H.g >= 0) & 0xffffu) << (16u * (d % 2u));
-      hf[d] = H.g >= 0;
-      hc[d] = H.g >= 0 && H.c < 1e29;
-      zf[d] = H.f;
-      zc[d] = H.c;
-    }
-    var nF = sn;
-    if (G > 1u || near) { nF = normalize(vec3<f32>(-diff1(a.f, zf[3], hf[3], zf[0], hf[0]), -diff1(a.f, zf[4], hf[4], zf[1], hf[1]), 1.0)).xy; }
-    var nC = vec2<f32>(0.0, 0.0);
-    if (a.c < 1e29) { nC = normalize(vec3<f32>(diff1(a.c, zc[3], hc[3], zc[0], hc[0]), diff1(a.c, zc[4], hc[4], zc[1], hc[1]), -1.0)).xy; }
-    setRec(GAP_ID + L, X, Y, GREC * g, bitcast<u32>(a.f), bitcast<u32>(a.c), a.fm | (a.cm << 8u) | (select(0u, 1u, flag && g == 0u) << 16u));
-    setRec(GAP_ID + L, X, Y, GREC * g + 1u, bitcast<u32>(a.rb), pack2x16snorm(nF), pack2x16snorm(nC));
-    setRec(GAP_ID + L, X, Y, GREC * g + 2u, lk[0], lk[1], lk[2]);
-  }
-}
-
-// ---- mesh items: per triangle of a quad with a corner of more than one gap, per region (connected air across the
-// triangle's corners), one item: each corner's gap (or none), its bounds and normals, and the parent's matching bounds
-// and presence at that corner for the rim morph. The draw cuts and walls it in the vertex stage (draw.wgsl vsB).
-var<private> mC: array<vec2<i32>, 3>;
-var<private> mG: array<u32, 3>;
-/** per corner of the triangle: its chunk's gap page (cz 0, or NONE) */
-var<private> mPg: array<u32, 3>;
-/** corner r's gap g: its baked link in direction d */
-fn linkAt(r: u32, g: u32, d: u32) -> i32 {
-  let i = GREC * g + 2u;
-  var p = mPg[r];
-  if (i >= K) { p = pageOf(GAP_ID + u.a.w, mC[r].x >> 4, mC[r].y >> 4, i / K); }
-  if (p >= NOT_LOADED) { return -1; }
-  let v = (pgLoad(p * PW + 256u + (colIn(mC[r].x, mC[r].y) * K + (i % K)) * RW + d / 2u) >> (16u * (d % 2u))) & 0xffffu;
-  return select(i32(v), -1, v == 0xffffu);
-}
-/** corner r's gap g: the corresponding gap at corner s, from the baked links: r's own link where its chunk has a gap
- *  table; else (one gap at r) s's gap whose link back is gap 0; else (one gap each) the skies meet */
-fn mm(r: u32, s: u32, g: i32) -> i32 {
-  if (g < 0 || mG[s] == 0u) { return -1; }
-  let d = dirOf(mC[s] - mC[r]);
-  if (mPg[r] < NOT_LOADED) { return linkAt(r, u32(g), d); }
-  if (mPg[s] >= NOT_LOADED) { return 0; }
-  let back = (d + 3u) % 6u;
-  for (var h = 0u; h < mG[s]; h++) {
-    if (linkAt(s, h, back) == 0) { return i32(h); }
-  }
-  return -1;
-}
-/** the region seeded by corner 0's gap g: its gap at corners 1 and 2 (direct, else through the third corner when that
- *  gap is no other corner-0 gap's) */
-fn comp0(g: i32) -> vec3<i32> {
-  var a1 = mm(0u, 1u, g);
-  var a2 = mm(0u, 2u, g);
-  if (a2 < 0 && a1 >= 0) {
-    let b = mm(1u, 2u, a1);
-    if (b >= 0 && mm(2u, 0u, b) < 0) { a2 = b; }
-  }
-  if (a1 < 0 && a2 >= 0) {
-    let b = mm(2u, 1u, a2);
-    if (b >= 0 && mm(1u, 0u, b) < 0) { a1 = b; }
-  }
-  return vec3<i32>(g, a1, a2);
-}
-/** whether corner r's gap x belongs to a region seeded at corner 0 (directly, or through the third corner as comp0
- *  takes it) */
-fn in0(r: u32, x: i32) -> bool {
-  let o = 3u - r; // the third corner
-  if (mm(r, 0u, x) >= 0) { return true; }
-  let b = mm(r, o, x);
-  if (b < 0) { return false; }
-  let g = mm(o, 0u, b);
-  return g >= 0 && mm(0u, r, g) < 0;
-}
-fn comp1(h: i32) -> vec3<i32> {
-  var a2 = mm(1u, 2u, h);
-  if (a2 >= 0 && in0(2u, a2)) { a2 = -1; }
-  return vec3<i32>(-1, h, a2);
-}
-/** whether corner 2's gap x (in no corner-0 region) belongs to a region seeded at corner 1 */
-fn in1(x: i32) -> bool {
-  let h = mm(2u, 1u, x);
-  return h >= 0 && !in0(1u, h);
-}
-/** the parent's triangle at a child column's centre (the top sheet's morph): corner (i0, j0) and the weights */
-struct PTri {
-  i0: i32,
-  j0: i32,
-  w: vec4<f32>,
-}
-fn parentTri(X: i32, Y: i32) -> PTri {
-  let k = f32(u.a.x);
-  let ux = (f32(X) + 0.5) / k - 0.5;
-  let uy = (f32(Y) + 0.5) / k - 0.5;
-  let i0 = i32(floor(ux));
-  let j0 = i32(floor(uy));
-  let fu = ux - f32(i0);
-  let fv = uy - f32(j0);
-  var wts = vec4<f32>(0.0);
-  if (fu >= fv) { wts = vec4<f32>(1.0 - fu, fu - fv, 0.0, fv); } else { wts = vec4<f32>(1.0 - fv, 0.0, fv - fu, fu); }
-  return PTri(i0, j0, wts);
-}
-/** the parent's bound matching a child gap (child units): over the parent triangle, each corner's gap overlapping the
- *  child's, its floor or ceiling; a corner with none takes `own` */
-/** the parent's bounds matching a child gap (floor gf, ceiling gc; child units) over the parent triangle: each corner's
- *  gap overlapping the child's gives its floor and ceiling (a corner with none, or no finite ceiling: the child's
- *  own); z the parent's presence of the gap (its corners' indicator interpolated) */
-fn parentQ(L: u32, T: PTri, gf: f32, gc: f32) -> vec3<f32> {
-  let k = f32(u.a.x);
-  let P = L - 1u;
-  let z0 = zOrigin(L);
-  let pf = gf / k + z0;
-  let pc = select(gc / k + z0, 1e30, gc > 1e29);
-  var out = vec3<f32>(0.0);
-  for (var q = 0u; q < 4u; q++) {
-    if (T.w[q] <= 0.0) { continue; }
-    let C = clampTo(P, T.i0 + i32(q & 1u), T.j0 + i32(q >> 1u));
-    let g = nearestGapR(P, C.x, C.y, pf, pc);
-    var v = vec3<f32>(gf, gc, 0.0);
-    if (g >= 0) {
-      let G = gapOf(P, C.x, C.y, u32(g));
-      v = vec3<f32>((G.f - z0) * k, select(gc, (G.c - z0) * k, G.c < 1e29), 1.0);
-    }
-    out += T.w[q] * v;
-  }
-  return out;
-}
-/** the parent's top sheet under a child column, child units (the top sheet's morph target, draw.wgsl vs) */
-fn parentSheet(L: u32, T: PTri) -> f32 {
-  let P = L - 1u;
-  let ph = T.w.x * sAtC(P, T.i0, T.j0) + T.w.y * sAtC(P, T.i0 + 1, T.j0) + T.w.z * sAtC(P, T.i0, T.j0 + 1) + T.w.w * sAtC(P, T.i0 + 1, T.j0 + 1);
-  return (ph - zOrigin(L)) * f32(u.a.x);
-}
-var<private> mChunk: vec2<i32>;
-/** one region's item, written at slot i of the chunk's mesh pages */
-fn writeItem(L: u32, cmp: vec3<i32>, i: u32, lx: u32, ly: u32, t: u32, birth: u32) {
-  let p = pageOf(MESH_ID + L, mChunk.x, mChunk.y, i / IPP);
-  if (p >= NOT_LOADED) { return; }
-  let b = p * PW + MESH_HDR + (i % IPP) * ITEM_W;
-  var r0 = 0u;
-  if (cmp.x < 0) { r0 = select(2u, 1u, cmp.y >= 0); }
-  var gs: array<Gap, 3>;
-  var enclosed = true;
-  for (var r = 0u; r < 3u; r++) {
-    gs[r] = gapOf(L, mC[r].x, mC[r].y, u32(max(cmp[r], 0)));
-    if (cmp[r] >= 0 && gs[r].c > 1e29) { enclosed = false; }
-  }
-  let rep = gs[r0];
-  pgStore(b, lx | (ly << 4u) | (t << 8u) | (select(0u, 1u, enclosed) << 9u));
-  pgStore(b + 1u, birth);
-  for (var r = 0u; r < 3u; r++) {
-    let pres = cmp[r] >= 0;
-    var G = rep;
-    if (pres) { G = gs[r]; }
-    var pf = G.f;
-    var pc = G.c;
-    var x8 = select(0.0, 1.0, pres);
-    if (!enclosed) { x8 = G.rb; }
-    if (L > 0u) {
-      let T = parentTri(mC[r].x, mC[r].y);
-      // query 0: this gap's bounds; query 1: (enclosed) the region's presence, or (the sky) the parent's ceiling of
-      // the gap below, which the sky's wall bottom (its solid run's) follows
-      var below = false;
-      var Gb = G;
-      if (!enclosed && pres && u32(cmp[r]) + 1u < gCount(L, mC[r].x, mC[r].y)) {
-        Gb = gapOf(L, mC[r].x, mC[r].y, u32(cmp[r]) + 1u);
-        below = true;
-      }
-      x8 = G.rb;
-      for (var qi = 0u; qi < 2u; qi++) {
-        var qf = G.f;
-        var qc = G.c;
-        if (qi == 1u) {
-          if (enclosed) {
-            qf = rep.f;
-            qc = rep.c;
-          } else {
-            qf = Gb.f;
-            qc = Gb.c;
-          }
-        }
-        let Q = parentQ(L, T, qf, qc);
-        if (qi == 0u) {
-          pf = Q.x;
-          pc = Q.y;
-        } else if (enclosed) {
-          x8 = Q.z;
-        } else if (below) {
-          x8 = Q.y;
-        }
-      }
-      if (pres && cmp[r] == 0) { pf = parentSheet(L, T); }
-      if (!enclosed && !below) { x8 = G.rb + (pf - G.f); }
-    }
-    let o = b + 2u + r * 9u;
-    pgStore(o, bitcast<u32>(G.f));
-    pgStore(o + 1u, bitcast<u32>(G.c));
-    pgStore(o + 2u, bitcast<u32>(G.rb));
-    pgStore(o + 3u, G.fm | (G.cm << 8u) | (select(0u, 1u, pres) << 16u));
-    pgStore(o + 4u, pack2x16snorm(G.nF));
-    pgStore(o + 5u, pack2x16snorm(G.nC));
-    pgStore(o + 6u, bitcast<u32>(pf));
-    pgStore(o + 7u, bitcast<u32>(pc));
-    pgStore(o + 8u, bitcast<u32>(x8));
-  }
-}
-/** the slab draw's item (kind 1) for slab s of the triangle mC (corners of n intervals each): face s (between slab s and
- *  s + 1, at H_s) and slab s's wall. Per corner (10 words from 2 + r * 10): H_{s-1}, H_s, air fields (a_{s-1}, a_s) and
- *  (a_{s+1}, 0) as f16 pairs, the face's up normal (xy snorm16), materials (slab s, slab s + 1), the top present
- *  surface and the parent's sheet there (the top sheet's rim morph, so B moves with A), the chunk's birth (its fade). */
-fn writeSlab(L: u32, s: u32, n: u32, i: u32, lx: u32, ly: u32, t: u32) {
-  let p = pageOf(MESH_ID + L, mChunk.x, mChunk.y, i / IPP);
-  if (p >= NOT_LOADED) { return; }
-  let b = p * PW + MESH_HDR + (i % IPP) * ITEM_W;
-  pgStore(b, lx | (ly << 4u) | (t << 8u) | (1u << 10u) | (s << 11u));
-  pgStore(b + 1u, 0u);
-  for (var r = 0u; r < 3u; r++) {
-    let C = mC[r];
-    let o = b + 2u + r * 10u;
-    var lo = -1e30;
-    var am = -E_FAR;
-    if (s > 0u) {
-      lo = slabH(L, C.x, C.y, s - 1u);
-      am = slabA(L, C.x, C.y, s - 1u, n);
-    }
-    let h = slabH(L, C.x, C.y, s);
-    // the face's normal: central differences of H_s over the neighbours of the same interval count
-    var hh = array<f32, 4>(0.0, 0.0, 0.0, 0.0);
-    var ok = array<bool, 4>(false, false, false, false);
-    for (var q = 0u; q < 4u; q++) {
-      let N = C + select(vec2<i32>(select(-1, 1, q == 0u), 0), vec2<i32>(0, select(-1, 1, q == 2u)), q >= 2u);
-      ok[q] = inWin(L, N.x, N.y) && cCount(L, N.x, N.y) == n;
-      if (ok[q]) { hh[q] = slabH(L, N.x, N.y, s); }
-    }
-    let nr = normalize(vec3<f32>(-diff1(h, hh[1], ok[1], hh[0], ok[0]), -diff1(h, hh[3], ok[3], hh[2], ok[2]), 1.0));
-    var top = h;
-    var tgt = h;
-    var birth = -1e9;
-    if (L > 0u) {
-      top = sAtC(L, C.x, C.y);
-      tgt = parentSheet(L, parentTri(C.x, C.y));
-      let sl = tFind(tKey0(C.x >> 4, C.y >> 4), tKey1(L, 0u));
-      if (sl != NONE) { birth = bitcast<f32>(atomicLoad(&tab[sl * 4u + 3u])); }
-    }
-    pgStore(o, bitcast<u32>(lo));
-    pgStore(o + 1u, bitcast<u32>(h));
-    pgStore(o + 2u, pack2x16float(vec2<f32>(am, slabA(L, C.x, C.y, s, n))));
-    pgStore(o + 3u, pack2x16float(vec2<f32>(slabA(L, C.x, C.y, s + 1u, n), 0.0)));
-    pgStore(o + 4u, pack2x16snorm(nr.xy));
-    pgStore(o + 5u, slabM(L, C.x, C.y, s) | (select(0u, slabM(L, C.x, C.y, s + 1u), s + 1u < 2u * n - 1u) << 8u));
-    pgStore(o + 6u, bitcast<u32>(top));
-    pgStore(o + 7u, bitcast<u32>(tgt));
-    pgStore(o + 8u, bitcast<u32>(birth));
-    pgStore(o + 9u, 0u);
-  }
-}
-/** whether slab s of the triangle mC needs an item: a face (some corner solid on one side of H_s and air on the other, or
- *  both fields change sign across the triangle) or a wall (slab s changes between corners) */
-fn slabNeeded(L: u32, s: u32, n: u32) -> bool {
-  var diff = false;
-  var a0 = 0u;
-  var a1 = 0u;
-  for (var r = 0u; r < 3u; r++) {
-    let x = slabA(L, mC[r].x, mC[r].y, s, n) > 0.0;
-    let y = slabA(L, mC[r].x, mC[r].y, s + 1u, n) > 0.0;
-    if (x != y) { diff = true; }
-    a0 += select(0u, 1u, x);
-    a1 += select(0u, 1u, y);
-  }
-  let v0 = a0 != 0u && a0 != 3u;
-  let v1 = a1 != 0u && a1 != 3u;
-  return diff || (v0 && v1) || (v0 && s > 0u);
-}
-/** a quad's regions, both triangles: counted, or written from slot `at` (returns the count). Every region is seeded at
- *  the first corner (0, 1, 2) that has it; one loop and one write site (the D3D11 compiler inlines every call). */
-fn quadItems(L: u32, base: vec2<i32>, write: bool, at: u32, lx: u32, ly: u32, birth: u32) -> u32 {
-  var n = 0u;
-  for (var t = 0u; t < 2u; t++) {
-    // (the diagonal from (i, j) to (i + 1, j + 1), as the top sheet's index buffer)
-    var tc = array<u32, 3>(0u, 1u, 3u);
-    if (t == 1u) { tc = array<u32, 3>(0u, 3u, 2u); }
-    // B draws the triangle when a corner is flagged (more than one air run, or an edge the slab draw cuts)
-    var multi = false;
-    for (var r = 0u; r < 3u; r++) {
-      mC[r] = base + vec2<i32>(i32(tc[r] & 1u), i32(tc[r] >> 1u));
-      mPg[r] = cPage(GAP_ID + L, mC[r].x, mC[r].y);
-      var c = 0u;
-      if (inWin(L, mC[r].x, mC[r].y)) {
-        if (mPg[r] < NOT_LOADED) { c = cCount(GAP_ID + L, mC[r].x, mC[r].y) / GREC; } else { c = 1u; }
-      }
-      mG[r] = c;
-      if (bFlagC(L, mC[r].x, mC[r].y)) { multi = true; }
-    }
-    if (!multi) { continue; }
-    // corners of one interval count: the slab draw, an item per slab that has a face or a wall here
-    let n0 = cCount(L, mC[0].x, mC[0].y);
-    if (u.e.w == 0 && n0 > 0u && cCount(L, mC[1].x, mC[1].y) == n0 && cCount(L, mC[2].x, mC[2].y) == n0) {
-      for (var s = 0u; s + 1u < 2u * n0; s++) {
-        if (!slabNeeded(L, s, n0)) { continue; }
-        if (write) { writeSlab(L, s, n0, at + n, lx, ly, t); }
-        n++;
-      }
-      continue;
-    }
-    // (otherwise: the region items, half-way cuts, as before footprints: NS-55)
-    for (var r = 0u; r < 3u; r++) {
-      for (var x = 0; x < i32(mG[r]); x++) {
-        var cmp = vec3<i32>(-1, -1, x);
-        if (r == 0u) {
-          cmp = comp0(x);
-        } else {
-          if (in0(r, x)) { continue; }
-          if (r == 1u) { cmp = comp1(x); } else if (in1(x)) { continue; }
-        }
-        if (write) { writeItem(L, cmp, at + n, lx, ly, t, birth); }
-        n++;
-      }
-    }
-  }
-  return n;
-}
-
-/** (over a slot's chunks) a chunk's mesh items: the quads whose (i, j) corner is in it */
-@compute @workgroup_size(16, 16)
-fn meshBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
-  let L = u.a.w;
-  let o = slotOrigin(u.r.x, li);
-  let cx = o.x + i32(wid.x);
-  let cy = o.y + i32(wid.y);
-  if (!inWin(L, cx * 16, cy * 16)) { return; }
-  cacheFill(L, cx, cy, li);
-  let base = vec2<i32>(cx * 16 + i32(lid.x), cy * 16 + i32(lid.y));
-  let ok = inWin(L, base.x + 1, base.y + 1);
-  if (li == 0u) {
-    atomicStore(&wmax, 0u);
-    atomicStore(&wany, 0u);
-  }
-  workgroupBarrier();
-  mChunk = vec2<i32>(cx, cy);
-  let s = tFind(tKey0(cx, cy), tKey1(L, 0u));
-  var birth = 0u;
-  if (s != NONE) { birth = atomicLoad(&tab[s * 4u + 3u]); }
-  // pass 0 counts the quad's items; then the chunk's pages are sized; pass 1 writes them (one call site)
   var n = 0u;
   var at = 0u;
   for (var ps = 0u; ps < 2u; ps++) {
     if (ps == 1u) {
-      atomicAdd(&wmax, n);
+      at = atomicAdd(&wmax, n);
       let total = workgroupUniformLoad(&wmax);
-      let need = (total + IPP - 1u) / IPP;
+      let need = (total + TPP - 1u) / TPP;
       if (li == 0u) {
-        ensurePages(MESH_ID + L, cx, cy, need, u.d.x);
+        ensurePages(FACE_ID + L, cx, cy, need, u.d.x);
         for (var cz = 0u; cz < need; cz++) {
-          let p = pageOf(MESH_ID + L, cx, cy, cz);
-          if (p < NOT_LOADED) { pgStore(p * PW, min(IPP, total - cz * IPP)); }
+          let p = pageOf(FACE_ID + L, cx, cy, cz);
+          if (p < NOT_LOADED) {
+            pgStore(p * PW, min(TPP, total - cz * TPP));
+            pgStore(p * PW + 1u, u32(cx));
+            pgStore(p * PW + 2u, u32(cy));
+          }
         }
       }
       storageBarrier();
       workgroupBarrier();
-      at = atomicAdd(&wany, n);
+      if (li < 8u) { wFp[li] = pageOf(FACE_ID + L, cx, cy, li); }
+      workgroupBarrier();
     }
-    if (ok && (ps == 0u || n > 0u)) { n = quadItems(L, base, ps == 1u, at, lid.x, lid.y, birth); }
+    if (ps == 0u || n > 0u) { n = emitCol(L, X, Y, ps == 1u, at); }
   }
 }
 
-/** the draw's list of mesh pages: dir[L] their count, entries (page, chunk key) from 16 + (L * cap + i) * 2 */
+/** the draw's list of face pages: dir[L] their count, entries (page, chunk key) from 16 + (L * cap + i) * 2 */
 @compute @workgroup_size(1)
 fn dirClear() {
   for (var L = 0u; L < 8u; L++) { atomicStore(&dir[L], 0u); }
@@ -2562,8 +2004,8 @@ fn dirBuild(@builtin(global_invocation_id) gid: vec3<u32>) {
   let k1 = atomicLoad(&tab[s * 4u + 1u]);
   if (k1 >= BUSY) { return; }
   let lid = k1 & 0xffu;
-  if (lid < MESH_ID || lid >= MESH_ID + 8u) { return; }
-  let L = lid - MESH_ID;
+  if (lid < FACE_ID || lid >= FACE_ID + 8u) { return; }
+  let L = lid - FACE_ID;
   let p = atomicLoad(&tab[s * 4u + 2u]);
   if (p >= NOT_LOADED || pgLoad(p * PW) == 0u) { return; }
   let i = atomicAdd(&dir[L], 1u);
@@ -2571,12 +2013,12 @@ fn dirBuild(@builtin(global_invocation_id) gid: vec3<u32>) {
   atomicStore(&dir[e], p);
   atomicStore(&dir[e + 1u], atomicLoad(&tab[s * 4u]));
 }
-/** draw B's indirect arguments a level: 18 vertices, an instance per item slot of its mesh pages */
+/** the draw's indirect arguments a level: an instance per face page, three vertices a triangle slot */
 @compute @workgroup_size(1)
 fn dirFinish() {
   for (var L = 0u; L < 8u; L++) {
-    dargs[L * 4u] = VPI;
-    dargs[L * 4u + 1u] = atomicLoad(&dir[L]) * IPP;
+    dargs[L * 4u] = 3u * TPP;
+    dargs[L * 4u + 1u] = atomicLoad(&dir[L]);
     dargs[L * 4u + 2u] = 0u;
     dargs[L * 4u + 3u] = 0u;
   }
@@ -2596,9 +2038,15 @@ fn dilate() {
   }
   let ox = slotW(s, 4u);
   let oy = slotW(s, 5u);
-  let x0 = max(ox - 1, w.x / 16);
-  let y0 = max(oy - 1, w.y / 16);
-  let x1 = min(ox + nx + 1, (w.x + w.z) / 16);
-  let y1 = min(oy + ny + 1, (w.y + w.z) / 16);
+  // the columns the slot's pass changes (its box) grown by one column, in chunks: a column's faces depend on its four
+  // neighbours only (a CPU slot's box is everything: its chunks grown by one)
+  let bx0 = (max(slotW(s, 0u), -(1 << 28)) - 1) >> 4;
+  let by0 = (max(slotW(s, 1u), -(1 << 28)) - 1) >> 4;
+  let bx1 = (min(slotW(s, 2u), 1 << 28) >> 4) + 1;
+  let by1 = (min(slotW(s, 3u), 1 << 28) >> 4) + 1;
+  let x0 = max(max(ox - 1, bx0), w.x / 16);
+  let y0 = max(max(oy - 1, by0), w.y / 16);
+  let x1 = min(min(ox + nx + 1, bx1), (w.x + w.z) / 16);
+  let y1 = min(min(oy + ny + 1, by1), (w.y + w.z) / 16);
   setSlot(t, vec4<i32>(-(1 << 30), -(1 << 30), 1 << 30, 1 << 30), x0, y0, x1 - x0, y1 - y0);
 }

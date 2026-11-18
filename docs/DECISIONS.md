@@ -3,6 +3,38 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-18 — nested scales round 6: boxes, the partition record, fast and watertight (`nested-scales`)
+
+After five rounds failed to make matched sheets and SDF footprints watertight (8,215 open edges, 5,920 hole pixels,
+curtains joining wrong layers, carve 124-138 ms, draw 28.9 ms), the user, verbatim:
+- "I would rather use blocky voxel columns than waste time on this visual artifact."
+- "Why not just do the same but with voxels of varying sizes so there is never any meshing ambiguity at all?"
+- "Definitely don't give me something with crappy performance that still has holes."
+- On the record: "Stop I already said get rid of the representation that allows unpaired bounds." (Earlier: "Air is
+  meant to be the default but also an interval." / "I was confused why there was a gap since they should use the same z
+  value in my head canon.")
+- The goal: "Fast and water tight and verify we can zoom in and enhance detail. Then we can have unit tests and do the
+  smooth meshing as an optional next step."
+- Not to block: "I hope you know my plan is to have this with the full fluid simulation so I can zoom in on steady flows
+  and have water falls and magma." and "I also ideally want to be able to keep the multi grid representation so I can
+  make islands in their own reference frame floating by. The enhancement only need to happen for nearby objects so we can
+  do this for whatever the active reference frame(s) grids are only."
+- Parked, for the record (what he had imagined for smooth meshing; not built): "a sheet with one vertex per cell and one
+  sheet per layer adjacent to an air interval. Then for any solid interval adjacent to air laterally we mesh between the
+  top and bottom vertex in the interval and connect to neighbors. This may need a marching squares type approach to
+  handle edge cases like things touching at a single point although I would prefer something with a signed distance and
+  contour."
+
+Consequences (built this round, docs/design/NESTED_SCALES.md "Decisions with the owner (round 6)"):
+- Every level draws its columns as boxes; a face exists exactly where a solid interval touches an air interval,
+  vertically at their shared bound or laterally over the overlap with the neighbouring column's air. No matching of
+  intervals between columns anywhere in the draw. Footprints (eS / eG), ghosts, the slab and gap-matching draws are gone.
+- A column is stored as a full partition of height: records (absolute top, material), air included, shared boundaries,
+  equal neighbours merged; layer form only inside enhance and restrict. The record agreed for NS-51 is built now (its
+  edge distance is not: no footprints); the 32 x 32 x 4 page shape is not (pages stay 16 x 16, 24 records a column page).
+- "Solid" is a property in the material table (store.wgsl matSolid), so water or lava can be added as materials without
+  touching the mesher. The draw takes a model matrix per grid (identity today) for later grids in their own frames.
+
 ## 2026-11-18 — air is a material and the default (`nested-scales`)
 
 The user, verbatim: "had originally envisioned air as just another material with intervals like water or any other

@@ -211,7 +211,7 @@ export async function flyThrough(app: App, out: (s: string) => void): Promise<Fl
       gpuMsMean: done.reduce((a, b) => a + b.gpu, 0) / Math.max(1, done.length),
       gpuMsMax: Math.max(0, ...done.map((o) => o.gpu)),
       cpuMsMax: Math.max(0, ...opTimes.map((o) => o.cpu)),
-      sharpMsMax: Math.max(0, ...done.map((o) => o.gpu)) + app.render.fadeSeconds * 1000,
+      sharpMsMax: Math.max(0, ...done.map((o) => o.gpu)),
     });
     out(JSON.stringify(rows[rows.length - 1]));
     (rows[rows.length - 1] as FlyRow & { restByLevel: number[] }).restByLevel = lastByLevel;

@@ -2,19 +2,23 @@
 // Prepended to the compute module (nest.wgsl) and the draw (draw.wgsl). The stage defines tabLoad(i) and pgLoad(i)
 // (compute: atomic table; draw: read-only) and TCAP.
 //
-// Table entry (4 words): key0 = cx | cy << 16 (global chunk of the level's depth), key1 = level | cz << 8, page, birth
-// (f32 bits: when the page was handed out, for the draw's fade). Level ids: 0-7 a live level of that depth, 8-15 the
-// residual of depth (id - 8). Page: K intervals x 256 columns, four words each (z0, z1, material, footprints), after
-// 256 counts.
+// Table entry (4 words): key0 = cx | cy << 16 (global chunk of the level's depth), key1 = level id | cz << 8, page,
+// birth (f32 bits: when the page was handed out). Level ids: 0-7 a live level of that depth, 8-15 its residual, 16-23
+// its baked faces, 32-39 a stroke's snapshot of it, 40-47 a pass's scratch columns (TMP).
 //
-// Footprints (docs/design/NESTED_SCALES.md "Footprints"): the fourth word holds two f16 signed distances in plan (column
-// units, positive inside): eS to the edge of the interval's own footprint, eG to the edge of the gap below it. A
-// negative one is a ghost: it keeps its place in the structure but is not solid (not air). present() is the one test.
+// A page is PW words: 256 count words (one a column), then the records. Two record layouts share the page size:
+// - COLUMN pages (live levels and snapshots): a column is a FULL PARTITION of height, an ordered list (bottom up) of
+//   intervals of any material, air included, with shared boundaries. A record is two words: the interval's absolute
+//   top (f32, level-local units) and its material. Its bottom is the top of the record below; the first record is
+//   open downward; above the last record is air (a trailing air record is never stored). Adjacent records never have
+//   the same material. KR = 24 records a page; the count word holds the page's records | its solid records << 16.
+// - SOLID pages (residuals, TMP): the solid view, K = 16 records of three words (z0, z1, material). The passes' maths
+//   (enhance, restrict, residuals, brushes) runs in this relative form; a pass writes TMP and `pack` converts it into
+//   the partition at the pass boundary.
 
 const K: u32 = 16u;
-/** words a record */
-const RW: u32 = 4u;
-const PW: u32 = 16640u; // 256 + 256 * 16 * 4
+const KR: u32 = 24u;
+const PW: u32 = 12544u; // 256 + 256 * 16 * 3 == 256 + 256 * 24 * 2
 const NONE: u32 = 0xffffffffu;
 const EMPTY: u32 = 0xffffffffu;
 const NOT_LOADED: u32 = 0xfffffffeu;
@@ -22,23 +26,22 @@ const TOMB: u32 = 0xfffffffdu;
 const BUSY: u32 = 0xfffffffcu;
 const OPEN_BOTTOM: f32 = -1e30;
 const RES_ID: u32 = 8u;
-/** "present, far from any edge" (the oracle's E_FAR), both halves: f16 1024 = 0x6400 */
-const E_FAR: f32 = 1024.0;
-const E_FAR_W: u32 = 0x64006400u;
+const FACE_ID: u32 = 16u;
+const SNAP_ID: u32 = 32u;
+const TMP_ID: u32 = 40u;
+const MAT_AIR: u32 = 0u;
+/** TMP count words: a column the pass wrote (pack converts only those) */
+const TOUCHED: u32 = 0x80000000u;
+
+/** the material table's draw property: whether a material is drawn as an opaque solid (air and, later, water or lava
+ *  as their own kinds). The mesher asks only this: a new material is a row here, not a change to the mesher. */
+fn matSolid(m: u32) -> bool { return m != MAT_AIR; }
 
 struct Ivl {
   z0: f32,
   z1: f32,
   m: u32,
-  e: u32,
 }
-fn eS(iv: Ivl) -> f32 { return unpack2x16float(iv.e).x; }
-fn eG(iv: Ivl) -> f32 { return unpack2x16float(iv.e).y; }
-fn present(e: f32) -> bool { return e > 0.0; }
-/** interval i is solid (interval 0 always is) */
-fn solidIv(iv: Ivl, i: u32) -> bool { return i == 0u || present(eS(iv)); }
-/** the two distances as stored (f16, no negative zero: a residual gives the stored bits back) */
-fn packE(s: f32, g: f32) -> u32 { return pack2x16float(vec2<f32>(select(s, 0.0, s == 0.0), select(g, 0.0, g == 0.0))); }
 
 fn tKey0(cx: i32, cy: i32) -> u32 { return u32(cx) | (u32(cy) << 16u); }
 fn tKey1(lid: u32, cz: u32) -> u32 { return lid | (cz << 8u); }
@@ -67,45 +70,106 @@ fn pageOf(lid: u32, cx: i32, cy: i32, cz: u32) -> u32 {
   return tabLoad(s * 4u + 2u);
 }
 fn colIn(X: i32, Y: i32) -> u32 { return u32((Y & 15) * 16 + (X & 15)); }
-fn pgIvl(page: u32, c: u32, i: u32) -> Ivl {
-  let b = page * PW + 256u + (c * K + i) * RW;
-  return Ivl(bitcast<f32>(pgLoad(b)), bitcast<f32>(pgLoad(b + 1u)), pgLoad(b + 2u), pgLoad(b + 3u));
-}
-/** a column's interval count over its stacked pages (0: no page; a page not loaded ends the run, its open interval
- *  extrapolated) */
-fn colCount(lid: u32, X: i32, Y: i32) -> u32 {
+/** whether a level id holds column pages (the partition) */
+fn isColId(lid: u32) -> bool { return lid < 8u || (lid >= SNAP_ID && lid < SNAP_ID + 8u); }
+
+// ---- column pages: the partition ------------------------------------------------------------------------------------
+fn recTop(page: u32, c: u32, j: u32) -> f32 { return bitcast<f32>(pgLoad(page * PW + 256u + (c * KR + j) * 2u)); }
+fn recMat(page: u32, c: u32, j: u32) -> u32 { return pgLoad(page * PW + 256u + (c * KR + j) * 2u + 1u); }
+/** a column's record count (all materials, air included) */
+fn recCount(lid: u32, X: i32, Y: i32) -> u32 {
   let c = colIn(X, Y);
   var n = 0u;
   var cz = 0u;
   loop {
     let p = pageOf(lid, X >> 4, Y >> 4, cz);
-    if (p == NONE || p == NOT_LOADED) { break; }
-    let m = pgLoad(p * PW + c);
+    if (p >= NOT_LOADED) { break; }
+    let m = pgLoad(p * PW + c) & 0xffffu;
     n += m;
-    if (m < K) { break; }
+    if (m < KR) { break; }
+    cz++;
+  }
+  return n;
+}
+/** record j of a column: (top, material as f32 bits) */
+fn recAt(lid: u32, X: i32, Y: i32, j: u32) -> vec2<u32> {
+  let p = pageOf(lid, X >> 4, Y >> 4, j / KR);
+  if (p >= NOT_LOADED) { return vec2<u32>(bitcast<u32>(OPEN_BOTTOM), MAT_AIR); }
+  let b = p * PW + 256u + (colIn(X, Y) * KR + j % KR) * 2u;
+  return vec2<u32>(pgLoad(b), pgLoad(b + 1u));
+}
+
+// ---- solid pages ----------------------------------------------------------------------------------------------------
+fn pgIvl(page: u32, c: u32, i: u32) -> Ivl {
+  let b = page * PW + 256u + (c * K + i) * 3u;
+  return Ivl(bitcast<f32>(pgLoad(b)), bitcast<f32>(pgLoad(b + 1u)), pgLoad(b + 2u));
+}
+
+/** the SOLID VIEW of a column: its non-air intervals in order (any level id). For column pages it is read from the
+ *  partition: interval i is the i-th non-air record, z0 the top of the record below it (open for record 0), z1 its top.
+ *  A page not loaded ends the run (its open interval extrapolated). */
+fn colCount(lid: u32, X: i32, Y: i32) -> u32 {
+  let c = colIn(X, Y);
+  let col = isColId(lid);
+  let per = select(K, KR, col);
+  var n = 0u;
+  var cz = 0u;
+  loop {
+    let p = pageOf(lid, X >> 4, Y >> 4, cz);
+    if (p >= NOT_LOADED) { break; }
+    let w = pgLoad(p * PW + c);
+    let r = w & 0xffffu;
+    n += select(r, w >> 16u, col);
+    if (r < per) { break; }
     cz++;
   }
   return n;
 }
 fn ivlAt(lid: u32, X: i32, Y: i32, i: u32) -> Ivl {
-  let p = pageOf(lid, X >> 4, Y >> 4, i / K);
-  if (p == NONE || p == NOT_LOADED) { return Ivl(OPEN_BOTTOM, OPEN_BOTTOM, 0u, E_FAR_W); }
-  return pgIvl(p, colIn(X, Y), i % K);
+  if (!isColId(lid)) {
+    let p = pageOf(lid, X >> 4, Y >> 4, i / K);
+    if (p >= NOT_LOADED) { return Ivl(OPEN_BOTTOM, OPEN_BOTTOM, 0u); }
+    return pgIvl(p, colIn(X, Y), i % K);
+  }
+  let c = colIn(X, Y);
+  var rem = i;
+  var below = OPEN_BOTTOM;
+  var cz = 0u;
+  loop {
+    let p = pageOf(lid, X >> 4, Y >> 4, cz);
+    if (p >= NOT_LOADED) { break; }
+    let w = pgLoad(p * PW + c);
+    let r = w & 0xffffu;
+    let s = w >> 16u;
+    if (rem < s) {
+      // (a page with no air record: interval rem is record rem)
+      if (s == r) {
+        var b = below;
+        if (rem > 0u) { b = recTop(p, c, rem - 1u); }
+        return Ivl(b, recTop(p, c, rem), recMat(p, c, rem));
+      }
+      for (var j = 0u; j < r; j++) {
+        let t = recTop(p, c, j);
+        let m = recMat(p, c, j);
+        if (m != MAT_AIR) {
+          if (rem == 0u) { return Ivl(below, t, m); }
+          rem--;
+        }
+        below = t;
+      }
+      break;
+    }
+    rem -= s;
+    if (r > 0u) { below = recTop(p, c, r - 1u); }
+    if (r < KR) { break; }
+    cz++;
+  }
+  return Ivl(OPEN_BOTTOM, OPEN_BOTTOM, 0u);
 }
-/** the top surface of a column of n intervals in layer form (the last interval's z1, ghost or not: enhance's S) */
+/** the top surface of a column of n intervals */
 fn topS(lid: u32, X: i32, Y: i32, n: u32) -> f32 {
   if (n == 0u) { return 0.0; }
   return ivlAt(lid, X, Y, n - 1u).z1;
-}
-/** the top PRESENT surface (the draw's top sheet, the camera's ground): the highest solid interval's z1 */
-fn topPresent(lid: u32, X: i32, Y: i32, n: u32) -> f32 {
-  if (n == 0u) { return 0.0; }
-  var i = n - 1u;
-  loop {
-    let iv = ivlAt(lid, X, Y, i);
-    if (i == 0u || present(eS(iv))) { return iv.z1; }
-    i--;
-  }
 }
 /** layer form: v = 2i - 1 the gap below interval i, v = 2i its thickness (i >= 1) */
 fn layerVal(lid: u32, X: i32, Y: i32, v: u32) -> f32 {
@@ -115,58 +179,13 @@ fn layerVal(lid: u32, X: i32, Y: i32, v: u32) -> f32 {
   return a.z0 - ivlAt(lid, X, Y, i - 1u).z1;
 }
 
-// ---- the baked draw (docs/design/NESTED_SCALES.md "The baked draw") ---------------------------------------------------
-// GAP pages (level id GAP_ID + depth): a chunk's per-column air regions (gaps), only for chunks where some column has
-// more than one; elsewhere a column's one gap (the sky) is read from its intervals. A column's gap g is three records:
-// (floor, ceiling, fm | cm << 8), (the bottom of the solid run under the floor, floor normal, ceiling normal; the
-// normals' xy packed snorm16) and its links: the corresponding gap of the neighbour at +x, +y, +x+y (-1: none). MESH pages (MESH_ID + depth): the chunk's baked items (draw B), word 0 the item count
-// of that page, items of ITEM_W words from MESH_HDR; only for chunks that have items.
-const GAP_ID: u32 = 16u;
-const GREC: u32 = 3u;
-const MESH_ID: u32 = 24u;
-const MESH_HDR: u32 = 4u;
-const ITEM_W: u32 = 32u; // (a region item, kind 0: 29 words; a slab item, kind 1: 32)
-const IPP: u32 = 519u; // (PW - MESH_HDR) / ITEM_W
-/** vertices a B instance: a slab item's two faces (up to three triangles each) and its wall (up to three quads) */
-const VPI: u32 = 36u;
-/** an air gap thinner than this (local units: a quarter column) is below the level's resolution (a finer level's tunnel
- *  restricted to its mean air) and is drawn as solid (NS-30) */
-const GAP_MIN: f32 = 0.25;
-struct Gap {
-  f: f32, // floor
-  c: f32, // ceiling (1e30: the sky)
-  fm: u32,
-  cm: u32,
-  rb: f32, // the bottom of the solid run under the floor
-  nF: vec2<f32>,
-  nC: vec2<f32>,
-  ok: bool,
-}
-fn recW(lid: u32, X: i32, Y: i32, i: u32, w: u32) -> u32 {
-  let p = pageOf(lid, X >> 4, Y >> 4, i / K);
-  if (p >= NOT_LOADED) { return 0u; }
-  return pgLoad(p * PW + 256u + (colIn(X, Y) * K + (i % K)) * RW + w);
-}
-/** whether the column's chunk has gap pages */
-fn hasGapPages(L: u32, X: i32, Y: i32) -> bool { return pageOf(GAP_ID + L, X >> 4, Y >> 4, 0u) < NOT_LOADED; }
-/** a column's gap count (the baked table; a chunk without one: 1, or 0 for no column) */
-fn gCount(L: u32, X: i32, Y: i32) -> u32 {
-  if (hasGapPages(L, X, Y)) { return colCount(GAP_ID + L, X, Y) / GREC; }
-  return select(0u, 1u, colCount(L, X, Y) > 0u);
-}
-/** a column's gap g from the baked table (only for columns of chunks with gap pages) */
-fn gRec(L: u32, X: i32, Y: i32, g: u32) -> Gap {
-  let lid = GAP_ID + L;
-  let r = GREC * g;
-  let m = recW(lid, X, Y, r, 2u);
-  return Gap(bitcast<f32>(recW(lid, X, Y, r, 0u)), bitcast<f32>(recW(lid, X, Y, r, 1u)), m & 0xffu, (m >> 8u) & 0xffu, bitcast<f32>(recW(lid, X, Y, r + 1u, 0u)), unpack2x16snorm(recW(lid, X, Y, r + 1u, 1u)), unpack2x16snorm(recW(lid, X, Y, r + 1u, 2u)), true);
-}
-/** the baked link of gap g to the corresponding gap of the neighbour in direction d (+x, +y, +x+y, -x, -y, -x-y: 16
- *  bits each, two a word); -1: none */
-fn gLink(L: u32, X: i32, Y: i32, g: u32, d: u32) -> i32 {
-  let v = (recW(GAP_ID + L, X, Y, GREC * g + 2u, d / 2u) >> (16u * (d % 2u))) & 0xffffu;
-  return select(i32(v), -1, v == 0xffffu);
-}
+// ---- the baked faces (docs/design/NESTED_SCALES.md "The box draw") --------------------------------------------------
+// FACE pages (FACE_ID + depth, stacked by cz as needed): word 0 the triangles in this page, 1-2 the chunk (cx, cy); from
+// FHDR, triangles of 4 words: w0 = column x | y << 4 (in the chunk) | face kind << 8 (0 +x, 1 -x, 2 +y, 3 -y, 4 +z,
+// 5 -z) | material << 11 (8 bits) | each vertex's corner (bit 0: +1 in x, bit 1: +1 in y) << 19 + 2v; w1-w3 the three
+// vertices' z (local units).
+const FHDR: u32 = 4u;
+const TPP: u32 = 3135u; // (PW - FHDR) / 4
 
 // ---- hashing and detail (the oracle's hash3 / valueNoise / detail, src/nested/oracle.ts) -------------------------------
 fn hash3(x: i32, y: i32, z: i32, seed: u32) -> f32 {

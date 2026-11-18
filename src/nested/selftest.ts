@@ -1,7 +1,7 @@
 // Nested scales lab: the page self-test (?selftest=1). The same invariants as test/unit/nested-oracle.test.ts, run on
 // the GPU passes over pages, and the GPU compared with the oracle. Readbacks here are test-only.
 import { GpuNest, RES_ID, type Snapshot, type Win } from './gpu/nest';
-import { Level, Nest, OPEN_BOTTOM, egOf, esOf, toLayers, topPresent, type Col, type Frame } from './oracle';
+import { Level, Nest, OPEN_BOTTOM, toLayers, type Col, type Frame } from './oracle';
 
 export interface Check {
   name: string;
@@ -28,37 +28,19 @@ function identical(a: Cols, b: Cols): { same: boolean; diff: number } {
   let diff = 0;
   for (const [key, c] of a) {
     const d = b.get(key);
-    const same = (p: number[] | undefined, q: number[] | undefined, i: number) => Object.is(p?.[i], q?.[i]);
-    if (!d || d.mat.length !== c.mat.length || c.mat.some((v, i) => v !== d.mat[i] || !Object.is(c.z0[i], d.z0[i]) || !Object.is(c.z1[i], d.z1[i]) || !same(c.eS, d.eS, i) || !same(c.eG, d.eG, i))) diff++;
+    if (!d || d.mat.length !== c.mat.length || c.mat.some((v, i) => v !== d.mat[i] || !Object.is(c.z0[i], d.z0[i]) || !Object.is(c.z1[i], d.z1[i]))) diff++;
   }
   return { same: diff === 0 && a.size === b.size, diff };
 }
-/** the worst footprint difference (relative to its size: f16 against f64, an ulp or two) over every comparison */
-let eWorst = { v: 0, at: '' };
-/** max |gpu - oracle| over every interval bound (the open bottom left out); the footprints into eWorst; -1 on a structure
- *  difference */
+/** max |gpu - oracle| over every interval bound (the open bottom left out); -1 on a structure difference */
 function against(g: Cols, o: Level): number {
   let worst = 0;
-  let at = '';
   for (const [key, c] of g) {
     const [x, y] = key.split(',').map(Number);
     const r = o.at(x, y)!;
-    if (c.mat.length !== r.mat.length || c.mat.some((v, i) => v !== r.mat[i])) {
-      console.error(`against: structure differs at ${key}: gpu ${JSON.stringify(c)} oracle ${JSON.stringify(r)}`);
-      return -1;
-    }
-    for (let i = 0; i < c.mat.length; i++) {
-      const ed = (a: number, b: number) => Math.abs(a - b) / Math.max(1, Math.abs(b));
-      const we = Math.max(ed(c.eS![i], esOf(r, i)), i ? ed(c.eG![i], egOf(r, i)) : 0);
-      if (we > eWorst.v) eWorst = { v: we, at: `${key} interval ${i}: gpu ${JSON.stringify(c)} oracle ${JSON.stringify(r)}` };
-      const w = Math.max(Math.abs(c.z1[i] - r.z1[i]), i ? Math.abs(c.z0[i] - r.z0[i]) : 0);
-      if (w > worst) {
-        worst = w;
-        at = `${key} interval ${i}: gpu ${JSON.stringify(c)} oracle ${JSON.stringify(r)}`;
-      }
-    }
+    if (c.mat.length !== r.mat.length || c.mat.some((v, i) => v !== r.mat[i])) return -1;
+    for (let i = 0; i < c.mat.length; i++) worst = Math.max(worst, Math.abs(c.z1[i] - r.z1[i]), i ? Math.abs(c.z0[i] - r.z0[i]) : 0);
   }
-  if (worst > TOL) console.error(`against: worst ${worst} at ${at}`);
   return worst;
 }
 const frame = (L: number, w: Win, s: Snapshot): Frame => ({ depth: L, gx: w.gx, gy: w.gy, n: w.n, z0: s.zOrigin(L) });
@@ -88,7 +70,8 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
   for (let y = 0; y < ROOT; y++) for (let x = 0; x < ROOT; x++) root.set(x, y, s.column(0, x, y));
   const o = new Nest(root, K, SEED);
   const sc = s.column(0, stripe.x, stripe.y);
-  check('root: a column of 40 intervals spans three stacked pages', sc.mat.length === 40 && s.page(0, stripe.x >> 4, stripe.y >> 4, 2) >= 0 && s.page(0, stripe.x >> 4, stripe.y >> 4, 3) < 0, `${sc.mat.length} intervals`);
+  // (40 records at 24 a column page: two stacked pages)
+  check('root: a column of 40 intervals spans two stacked column pages', sc.mat.length === 40 && s.page(0, stripe.x >> 4, stripe.y >> 4, 1) >= 0 && s.page(0, stripe.x >> 4, stripe.y >> 4, 2) < 0, `${sc.mat.length} intervals`);
 
   // promote
   let t0 = performance.now();
@@ -101,7 +84,7 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
   let e = against(c1, o.levels[1]);
   check('promote: the GPU child matches the oracle', e >= 0 && e < TOL, `max |gpu - oracle| ${e.toExponential(2)} local units (tolerance ${TOL}); ${promoteMs.toFixed(1)} ms with readback setup`);
   check('promote: no residual pages without edits', s.pagesOf(RES_ID + 1) === 0, `${s.pagesOf(RES_ID + 1)} residual pages`);
-  check('the 40-interval column enhances into a 40-interval block on three pages', s.column(1, stripe.x * K + 3, stripe.y * K + 5).mat.length === 40 && s.page(1, (stripe.x * K) >> 4, (stripe.y * K) >> 4, 2) >= 0, '');
+  check('the 40-interval column enhances into a 40-interval block on two stacked pages', s.column(1, stripe.x * K + 3, stripe.y * K + 5).mat.length === 40 && s.page(1, (stripe.x * K) >> 4, (stripe.y * K) >> 4, 1) >= 0, '');
 
   // (a) demote, promote: bit-identical
   g.demote(1);
@@ -135,17 +118,37 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
     const same = gpuChunks.size === oraChunks.size && [...gpuChunks].every((c) => oraChunks.has(c));
     check('residual pages exactly on the chunks where the oracle has a non-zero residual', same, `GPU ${gpuChunks.size} chunks, oracle ${oraChunks.size} of 16; ${s.pagesOf(RES_ID + 1)} residual pages with overflow`);
   }
-  // (b) volume: each root column against its block
+  // (b) volume: each root column against its block: the top surface, each material's volume above the first interval
+  // and the enclosed air (a block whose children differ in structure, e.g. where the dig emptied intervals the
+  // partition dropped, restricts by the template rule, which conserves these, not each layer)
   let worst = 0;
   const z0 = s.zOrigin(1);
+  const vols = (c: { mat: number[]; z0: number[]; z1: number[] }) => {
+    const v = new Map<number, number>();
+    let air = 0;
+    for (let i = 1; i < c.mat.length; i++) {
+      v.set(c.mat[i], (v.get(c.mat[i]) ?? 0) + c.z1[i] - c.z0[i]);
+      air += c.z0[i] - c.z1[i - 1];
+    }
+    return { v, air, S: toLayers(c).v[0] };
+  };
   for (let py = F1.gy / K; py < (F1.gy + F1.n) / K; py++)
     for (let px = F1.gx / K; px < (F1.gx + F1.n) / K; px++) {
-      const pl = toLayers(s.column(0, px, py));
-      const sum = pl.v.map(() => 0);
-      for (let b = 0; b < K; b++) for (let a = 0; a < K; a++) toLayers(c1e.get(`${px * K + a},${py * K + b}`)!).v.forEach((v, i) => (sum[i] += v));
-      worst = Math.max(worst, Math.abs(sum[0] / K ** 3 - (pl.v[0] - z0)), ...pl.v.slice(1).map((v, i) => Math.abs(sum[i + 1] / K ** 3 - v)));
+      const p = vols(s.column(0, px, py));
+      const sum = new Map<number, number>();
+      let air = 0;
+      let S = 0;
+      for (let b = 0; b < K; b++)
+        for (let a = 0; a < K; a++) {
+          const c = vols(c1e.get(`${px * K + a},${py * K + b}`)!);
+          for (const [m, x] of c.v) sum.set(m, (sum.get(m) ?? 0) + x);
+          air += c.air;
+          S += c.S;
+        }
+      worst = Math.max(worst, Math.abs(S / K ** 3 - (p.S - z0)), Math.abs(air / K ** 3 - p.air));
+      for (const m of new Set([...sum.keys(), ...p.v.keys()])) worst = Math.max(worst, Math.abs((sum.get(m) ?? 0) / K ** 3 - (p.v.get(m) ?? 0)));
     }
-  check('(b) restrict conserves volume per layer', worst < 1e-4, `worst block ${worst.toExponential(2)} parent units (tolerance 1e-4)`);
+  check('(b) restrict conserves the surface, each material and the enclosed air per block', worst < 1e-4, `worst block ${worst.toExponential(2)} parent units (tolerance 1e-4)`);
   g.demote(1);
   g.promote(1, F1);
   s = await g.readAll();
@@ -173,7 +176,7 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
   // the oracle follows the melt by taking the GPU's level as its own (melt has no oracle: NS-10)
   for (const [key, c] of c1m) {
     const [x, y] = key.split(',').map(Number);
-    o.levels[1].set(x, y, { mat: c.mat.slice(), z0: c.z0.map((v, i) => (i ? v : OPEN_BOTTOM)), z1: c.z1.slice(), eS: c.eS!.slice(), eG: c.eG!.slice() });
+    o.levels[1].set(x, y, { mat: c.mat.slice(), z0: c.z0.map((v, i) => (i ? v : OPEN_BOTTOM)), z1: c.z1.slice() });
   }
   for (let y = 0; y < ROOT; y++) for (let x = 0; x < ROOT; x++) o.levels[0].set(x, y, s.column(0, x, y));
   // the oracle's residuals for level 1 follow from its levels
@@ -191,8 +194,9 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
   o.edit(2, 'dig', F2.gx + 20, F2.gy + 40, 6, 8);
   s = await g.readAll();
   const ch = [levelCols(s, 0, { gx: 0, gy: 0, n: ROOT }), levelCols(s, 1, F1), levelCols(s, 2, F2)];
-  e = Math.max(...ch.map((c, m) => against(c, o.levels[m]) * K ** (2 - m)));
-  check('(c) an edit at depth 2: every level matches the oracle', e >= 0 && e < TOL, `max diff ${e.toExponential(2)} (in depth-2 units)`);
+  const per = ch.map((c, m) => against(c, o.levels[m]));
+  e = Math.max(...per.map((v, m) => v * K ** (2 - m)));
+  check('(c) an edit at depth 2: every level matches the oracle', per.every((v) => v >= 0 && v < TOL), `max diff ${e.toExponential(2)} (in depth-2 units); per level in its own units ${per.map((v) => v.toExponential(2)).join(', ')} (tolerance ${TOL} each)`);
   g.demote(2);
   g.demote(1);
   s = await g.readAll();
@@ -209,12 +213,7 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
   {
     const solidSum = (cs: Cols) => {
       let v = 0;
-      // (footprints: a ghost interval is air, a ghost gap solid)
-      for (const c of cs.values())
-        for (let i = 0; i < c.mat.length; i++) {
-          if (i === 0 || c.eS![i] > 0) v += c.z1[i] - Math.max(c.z0[i], -500);
-          if (i > 0 && !(c.eG![i] > 0)) v += c.z0[i] - c.z1[i - 1];
-        }
+      for (const c of cs.values()) for (let i = 0; i < c.mat.length; i++) v += c.z1[i] - Math.max(c.z0[i], -500);
       return v;
     };
     const res: string[] = [];
@@ -237,8 +236,7 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
       const removed = before - solidSum(levelCols(s, L, F));
       const worst = Math.max(...[0, 1, 2].map((m) => against(levelCols(s, m, m === 0 ? { gx: 0, gy: 0, n: ROOT } : m === 1 ? F1 : F2), o.levels[m]) * K ** (L - m)));
       const t = s.column(L, F.gx + 32, F.gy + 32);
-      // (its air: the present gaps and the ghost intervals among them)
-      const gap = t.mat.reduce((a, _m, i) => a + (i ? (t.eG[i] > 0 ? t.z0[i] - t.z1[i - 1] : 0) + (t.eS[i] > 0 ? 0 : t.z1[i] - t.z0[i]) : 0), 0);
+      const gap = Math.max(...t.mat.map((_m, i) => (i ? t.z0[i] - t.z1[i - 1] : 0)));
       ok &&= worst >= 0 && worst < TOL * 4 && removed > 9 * 50 && removed < 9 * 113 * 1.1 && gap > 4;
       res.push(`depth ${L}: ${removed.toFixed(0)} cells³ removed (9 balls r 3, overlapping; one alone 113), gap ${gap.toFixed(2)}, max |gpu - oracle| ${worst.toExponential(2)}, ${ms.toFixed(1)} ms a carve with sync`);
     }
@@ -378,8 +376,7 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
       const post = await h.readAll();
       const top = (s: Snapshot, x: number, y: number) => {
         const c = s.column(0, Math.floor(x), Math.floor(y));
-        // (the top present surface: a carve through the top leaves the cut-away piece as a ghost)
-        return topPresent(c);
+        return c.z1[c.z1.length - 1];
       };
       const depths = centres.slice(1, first - 1).map(([x, y]) => top(pre, x, y) - top(post, x, y));
       const slope = Math.abs(top(pre, centres[first - 1][0], centres[first - 1][1]) - top(pre, centres[0][0], centres[0][1])) / Math.max(1e-6, Math.hypot(centres[first - 1][0] - centres[0][0], centres[first - 1][1] - centres[0][1]));
@@ -396,7 +393,6 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
     }
     check('strokes: a drag carves one even layer on the surface as it was (depth within 20 % of the radius, flat and sloped), crossing its own path digs no deeper; the snapshot is let go', ok, res.join('; '));
   }
-  check('footprints (eS, eG) match the oracle on every comparison above, within f16 rounding', eWorst.v < 4e-3, `worst relative difference ${eWorst.v.toExponential(2)}${eWorst.v >= 4e-3 ? ` at ${eWorst.at}` : ''}`);
   check('the pool grew under load with nothing refused; no mismatches, table never full, every residual exact', st.grows > 0 && s.ctl[1] === 0 && s.ctl[4] === 0 && s.ctl[5] === 0 && s.ctl[6] === 0, `started at 16 pages, grew ${st.grows} times to ${g.cap} (${st.segs} segments of ${st.segPages}; ${st.used} used); refused ${s.ctl[1]}, mismatches ${s.ctl[4]}, table full ${s.ctl[5]}, inexact residuals ${s.ctl[6]}`);
   return out;
 }

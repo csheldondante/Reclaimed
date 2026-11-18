@@ -100,8 +100,6 @@ export class App {
     this.render = new Renderer(device, ctx, this.nest);
     this.render.tint = q.get('tint') === '1';
     if (q.has('detail')) this.nest.detailAmp = Number(q.get('detail'));
-    // (?cut=old: the draw's cut before footprints, half way between columns: comparison stills, NS-42)
-    this.nest.oldCut = q.get('cut') === 'old';
     if (q.has('yaw')) this.yaw = Number(q.get('yaw'));
     if (q.has('pitch')) this.pitch = Number(q.get('pitch'));
     this.nest.root(this.rootN);
@@ -322,11 +320,13 @@ export class App {
         // follow the focus by whole chunks (whole parent cells), with a chunk of slack
         if (Math.abs(want.gx - cur.gx) >= 32 || Math.abs(want.gy - cur.gy) >= 32 || !this.nest.fits(m, cur)) {
           // (refused while the pool grows ahead: tried again next frame)
-          if (this.timed('slide', m, () => this.nest.slide(m, want))) this.bornAt[m] = Math.max(this.bornAt[m] ?? 0, now - this.render.fadeSeconds + 0.05);
+          this.timed('slide', m, () => this.nest.slide(m, want));
         }
         continue;
       }
-      if (m === live && this.dNear < 0.45 * W && now - (this.bornAt[m - 1] ?? 0) > this.render.fadeSeconds + 0.05) {
+      // (one promote a frame at most, a level's child after the level itself: no fade, the parent draws until the child
+      // is baked in the same submit)
+      if (m === live && this.dNear < 0.45 * W && now - (this.bornAt[m - 1] ?? 0) > 0.05) {
         const w = this.desired(m);
         if (this.timed('promote', m, () => this.nest.promote(m, w))) this.bornAt[m] = now;
       }
@@ -350,7 +350,6 @@ export class App {
       const c = this.nest.wins[m + 1];
       const k = this.k;
       const inset = 0.75 / k;
-      const cut: DrawLevel['cut'] = c ? [c.gx / k - w.gx + inset, c.gy / k - w.gy + inset, (c.gx + c.n) / k - w.gx - inset, (c.gy + c.n) / k - w.gy - inset] : null;
       // (metrics) where the child should be now: the window the level logic keeps (its current one while within the
       // slack) or would move to
       let want: DrawLevel['want'] = null;
@@ -361,7 +360,7 @@ export class App {
         if (c && Math.abs(g.gx - c.gx) < 32 && Math.abs(g.gy - c.gy) < 32) g = c;
         want = [g.gx / k - w.gx + inset, g.gy / k - w.gy + inset, (g.gx + g.n) / k - w.gx - inset, (g.gy + g.n) / k - w.gy - inset];
       }
-      out.push({ depth: m, cut, want });
+      out.push({ depth: m, want });
     }
     return out;
   }
@@ -442,11 +441,13 @@ export class App {
       const ok = this.timed('edit', -1, () => this.nest.edit({ op, radius, amount: (op === 'melt' ? 0 : 0.04) * radius, rate: 0.1 }));
       if (!ok && qd) this.queue.unshift(qd);
     }
-    this.render.draw(this.drawList());
+    if (!this.benchPause) this.render.draw(this.drawList());
     this.post?.();
     this.text();
     requestAnimationFrame(() => this.frame());
   }
+  /** (measurement) the frame's draw left out, so an op's GPU time is measured alone */
+  benchPause = false;
 
   private text(): void {
     const live = this.nest.live;
@@ -537,26 +538,43 @@ export class App {
       },
       /** (measurement) an edit's GPU time with and without the bakes (ms; the edit is applied twice) */
       benchEdit: async (spec: Parameters<GpuNest['edit']>[0]) => {
-        const run = async (off: boolean | 'mesh') => {
+        const run = async (off: boolean) => {
+          // (the frames' draws and the level logic held back while it runs: the time is the edit's own)
+          this.benchPause = true;
+          const fz = this.frozen;
+          this.frozen = true;
+          await new Promise((r) => requestAnimationFrame(r));
           await this.device.queue.onSubmittedWorkDone();
           this.nest.bakeOff = off;
           const t = performance.now();
-          this.nest.edit(spec);
+          // (refused while the pool grows ahead: tried again)
+          while (!this.nest.edit(spec)) {
+            this.nest.bakeOff = false;
+            await new Promise((r) => setTimeout(r, 30));
+            this.nest.bakeOff = off;
+          }
           await this.device.queue.onSubmittedWorkDone();
           this.nest.bakeOff = false;
+          this.benchPause = false;
+          this.frozen = fz;
           return performance.now() - t;
         };
         const without = await run(true);
-        const gapsOnly = await run('mesh');
         const withBake = await run(false);
-        return { withBake, gapsOnly, without };
+        return { withBake, without };
       },
-      /** (test only, readbacks) the manifold check of every level's drawn mesh at time `now` (default: this frame) */
-      manifold: async (now?: number) => {
-        // (a level demoted while the check awaits has no window)
-        const list = this.drawList().filter((l) => this.nest.wins[l.depth]);
-        const caps = await this.render.capture(list, now ?? this.nest.now());
-        return caps.map((c) => manifold(c, list.find((l) => l.depth === c.depth)!.cut));
+      /** (test only, readbacks) the manifold check of every level's drawn faces */
+      manifold: async () => {
+        // (the levels held still while the capture's readbacks are awaited: it sees one frame's faces, not a slide's
+        // half)
+        const was = this.frozen;
+        this.frozen = true;
+        try {
+          const caps = await this.render.capture(this.drawList());
+          return caps.map((c) => manifold(c));
+        } finally {
+          this.frozen = was;
+        }
       },
       /** (test only) pixels with no surface in the last frame */
       holes: () => holePixels(this.device, this.render, () => this.render.draw(this.drawList())),

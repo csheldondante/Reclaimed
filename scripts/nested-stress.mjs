@@ -42,6 +42,10 @@ await run({ name: 'nested-stress', kind: 'behaviour', size: '960x640', dpr: 1, e
   await sleep(1000);
   const f1 = await page.evaluate(() => nested.app.frameCount);
   console.log(`frames flowing after: ${f1 - f0} in 1 s`);
+  console.log('grows', JSON.stringify(await page.evaluate(() => nested.app.nest.growLog)));
+  const st = await page.evaluate(() => nested.state().stats);
+  R.check('pool: reserved at most twice the pages in use', st.cap <= 2 * st.used, `${st.used} used of ${st.cap} reserved`);
+  R.check('pool: no refusals', st.refused === 0, `${st.refused} refused`);
   console.log('info', JSON.stringify(await page.evaluate(() => document.getElementById('info').textContent)));
   const fatal = await page.evaluate(() => [...document.querySelectorAll('.fatal')].map((d) => d.textContent.slice(0, 300)));
   console.log('fatal', JSON.stringify(fatal));

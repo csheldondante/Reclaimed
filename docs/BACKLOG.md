@@ -205,6 +205,43 @@ user) · `deferred` (agreed for later).
 - NS-60 (process) One DEVLOG entry (F1-F3) was appended with a quoted shell heredoc, against the round's rule (Edit /
   Write only); the text was checked intact.
 
+Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18 round 6). Status changes:
+- `done`: NS-46 (the manifold and screen checks pass and run in ?selftest=1: 0 odd edges at 8 eyes, 0 hole pixels over
+  40 poses), NS-51 (the partition record built: absolute top + material, air included, shared bounds; no edge distance,
+  footprints are parked), NS-63 (equal neighbours merge: repeated adds cannot pile up), NS-61 (carve at level 1 with bakes
+  median 11-14 ms; NS-68 for its tail), NS-45 and NS-13 (each op reserves what it can take; a grow is sized only after the
+  ops in flight read back; tunnel scene 1,797 used of 3,200, stress 1,626 of 2,752), NS-14 (the table's tombstones are
+  cleared at the end of every op), NS-24 (the eye's distance is to the column's own boxes, which is what is drawn).
+- `obsolete` (the draw they were about is gone): NS-21 (rim morph: boxes meet on whole parent cells), NS-30 (GAP_MIN:
+  thin air is drawn as it is now, a slit), NS-33 (gap-table normals), NS-39 (hairline crack), NS-40 (gap links), NS-41
+  (gap and mesh pages), NS-44 (ragged half-way walls), NS-52 and NS-53 (ghosts, the brush's structural decision),
+  NS-55, NS-56, NS-57 (crack classes of the old draw), NS-58 (draw B instances), NS-59 (stripes along the stroke), NS-62
+  (curtains), NS-6 (zero-thickness intervals: the partition has none).
+- `parked`: NS-18 (SDF footprints; smooth meshing returns as an optional step from the owner's sheet-and-contour idea).
+- NS-42 now: GpuNest.bakeOff (measurement only) and App.benchPause (the bench holds the frame's draw back).
+- NS-38 not re-measured: the bake is one kernel now (faceBake); startup time was not measured this round.
+- NS-64 (hack) The table's compaction (nest.wgsl tabOut / tabIn) parks the table's u32 words in the f32 scratch buffer by
+  bitcast (as the melt already does with its structure hash): it relies on loads and stores keeping f32 bit patterns
+  (NaN payloads included). A u32 view of the scratch (or its own buffer) would not.
+- NS-65 (limit) The world's open bottom is a constant a level (root -8, a child -2 x its window width, local units); a
+  column whose first record lies under it ends 1 under its top instead, with a down cap. Derive it from the data.
+- NS-66 (departure, test) Self-test (c) now holds each level to the tolerance in its own units; before, every level's
+  difference was scaled to depth-2 units. The root differs from the oracle by 3.6e-5 root units (= 2.3e-3 depth-2 units,
+  over 2e-3): more blocks restrict by the template now that dug intervals are dropped.
+- NS-67 (limit) The pool never shrinks: after the screen check's 40 poses it held 5,120 pages for 1,781 in use (the
+  gate's 2x holds in the tunnel scene and after the stress run). Shrink the last segment when its tail is free.
+- NS-68 (perf) A carve's GPU time is data dependent: 9-14 ms for most carves at level 1 in the tunnel scene, 17-21 ms
+  where the ball sits in the mound (more intervals; larger derive regions at levels 2-3). Profile the derive at level 2.
+- NS-69 (limit) While the pool grows ahead, ops wait (46 waits over the suite run); a promote can lag a few frames.
+- NS-70 (perf) Triangle counts: the root ~0.74 M, a 256 x 256 child up to ~1.2 M in the tunnel scene (walls at every
+  step). Desktop draw 4-6.6 ms uncapped; not measured on the phone. Merging coplanar faces in the bake would cut it.
+- NS-71 (perf) Every pass that writes columns writes their solid view into TMP pages and packs it into the partition (a
+  copy a pass); writing the partition directly in passes whose output order allows it would save that.
+- NS-72 (limit) The bake copies the first 4 records of each column into workgroup memory; deeper records are read from the
+  pages (correct, slower where columns hold many intervals).
+- NS-73 (not built) The optional smoothed-normal toggle for tops; the grid id and per-grid transform in the level table
+  (only the draw's model matrix exists: NESTED_SCALES.md round 6 says where a second grid plugs in).
+
 ## Terrain: rivers first (2026-11-17, `terrain-rivers`; docs/design/TERRAIN_RIVERS.md, DECISIONS 2026-11-17)
 
 A sandbox behind `a.rivers2=1` (default off). Relates to V1, Q36, Q58, P12, TG2, RWS1, LS-122.

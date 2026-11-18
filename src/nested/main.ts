@@ -42,7 +42,23 @@ async function main(): Promise<void> {
     const log = document.getElementById('log')!;
     log.style.display = 'block';
     log.textContent = 'Self-test: the GPU passes against the oracle\n\n';
-    const res = await selftest(device, (c) => (log.textContent += `${c.pass ? 'PASS' : 'FAIL'}  ${c.name}\n      ${c.detail}\n`));
+    const say = (c: { pass: boolean; name: string; detail: string }) => (log.textContent += `${c.pass ? 'PASS' : 'FAIL'}  ${c.name}\n      ${c.detail}\n`);
+    const res = await selftest(device, say);
+    // then the box draw's watertight suite on the sandbox's scene (?wt=0 skips it)
+    if (q.get('wt') !== '0') {
+      log.textContent += '\nThe watertight suite on the sandbox scene\n\n';
+      const { App } = await import('./app');
+      const { watertightSuite } = await import('./suite');
+      await App.start(device, new URLSearchParams('k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140'));
+      const api = (window as unknown as { nested: Parameters<typeof watertightSuite>[0] }).nested;
+      while (api.app.frameCount < 60) await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 1500));
+      const wt = await watertightSuite(api, { log: (s) => console.log(`[suite] ${s}`) });
+      for (const c of wt.checks) {
+        res.push(c);
+        say(c);
+      }
+    }
     const failed = res.filter((c) => !c.pass).length;
     log.textContent += `\n${res.length - failed} of ${res.length} passed.\n`;
     (window as unknown as { __selftest: unknown }).__selftest = { done: true, failed, results: res };

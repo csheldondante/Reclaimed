@@ -48,7 +48,9 @@ The concise design for Reclaimed. It's written system by system with the user, a
 - Air is a material like any other and can be stored as an interval (like water or any transparent interval). It is
   also the DEFAULT: where a column stores nothing (above its last interval, and anywhere no interval is stored) the
   space is air, so empty space still costs nothing. (corrected 2026-11-18, the user)
-- Caves, overhangs and arches are just intervals with gaps between them.
+- A column is a full partition of height: every bound is shared by the interval below and the one above, and there is
+  no bound that belongs to only one interval (no stored gap, no stored bottom). Caves, overhangs and arches are air
+  intervals between solid ones. Adjacent intervals of one material are one interval. (the user, 2026-11-18 round 6)
 - The material table gives each material its behaviour: density, strength, how much it bears, its angle of repose, tensile bond, growth cap, fallback, and so on.
 
 **Rules.**

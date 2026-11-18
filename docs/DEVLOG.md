@@ -26560,3 +26560,50 @@ and an interval, the brush's air-run walk per column). **Stress** at ?maxbuf=128
 ring-only column (ghosts, nothing present) passes 4 intervals (ring-only columns: L0 21, L1 407, L2 3,030), so the ghost
 ring would add no stacked pages there; but 52 L1 columns hold 13 intervals (the stalk's repeated adds still pile up,
 NS-63).
+
+## 2026-11-18 — Nested scales lab, round 6: boxes on the partition record — watertight, and the edit speed back
+
+**Why.** Five rounds of matched sheets and SDF footprints did not close (F4: 8,215 open edges, 5,920 hole pixels,
+curtains, carve 124-138 ms, draw 28.9 ms). The owner: "I would rather use blocky voxel columns than waste time on this
+visual artifact", "Definitely don't give me something with crappy performance that still has holes", and on the record
+"get rid of the representation that allows unpaired bounds" (DECISIONS 2026-11-18 round 6).
+
+**Removed.** Rebuilt forward from 2b4b8f40 (round 4 step 2, the last state with good edit times: segmented pool,
+hold-to-grow strokes): src/nested was checked out from it, so footprints (eS / eG, the record's fourth word), ghosts,
+the brush's gap-reuse rules, the slab draw, `?cut=old`, and with them the round-3 gap table, mesh items, draw A / B and
+the rim morph are gone. Kept from after it: the watertight script's 2D dispatch (now in Renderer.capture), the docs.
+
+**The record.** A column is a full partition (NESTED_SCALES.md "Storage"): records (absolute top f32, material), air
+included, shared bounds, equal neighbours merged, no empty record; 24 a page in the same 49 KB page. The maths still runs
+on the solid view (store.wgsl ivlAt reads it from the partition; a page with no air record is read directly), the passes
+write it into TMP pages and `pack` converts at the pass boundary. So Carve leaves air, Add soil, and soil touching soil is
+one record (NS-63). The oracle stores the same partition (Level.parts; toPart / fromPart). Unit tests: the camera test
+now checks exact boxes; a new partition test (shared bounds, merging, 12 overlapping adds leave [stone, soil]).
+
+**The box draw** (NESTED_SCALES.md "The box draw"): caps where a solid record meets air, walls where a solid range
+overlaps the neighbour's air, each wall split at every record top of the four columns round its corner lines (no
+T-junctions); a column outside the window or under the child's footprint is air to its neighbours, so each level is
+closed by itself and parent and child meet on whole parent cells. Baked per changed chunk into face pages from the pool
+(4 words a triangle), one indirect draw a level; the parent's footprint re-baked in the promote's, demote's and slide's
+own submits, so no frame shows a gap. The material table says what is solid (water and lava later are rows, not code).
+The draw takes a model matrix per grid (identity).
+
+**Checks** (the watertight suite, src/nested/suite.ts, in ?selftest=1 and scripts/nested-watertight.mjs): the scene
+(mound with a tunnel through it, a blob on a stalk, a mid-air blob, an arch, a carve stroke across the level-1/root rim);
+**0 odd edges** at 8 eyes (each level's whole face set, its window edge and footprint included; the open bottom plane
+aside), both 3 frames after the move and settled; **0 hole pixels** over 40 poses sampled 1, 2, 6 and 60 frames after
+each move. Self-test 27/27 (two checks changed: (b) restrict now checks the surface, each material and the enclosed air
+per block, since a dug block restricts by the template; (c) each level against the oracle in its own units, NS-66).
+**Stress** ?maxbuf=128, 300 frames of alternating carves and adds: 0 refusals, frames flowing, 1,626 pages used of
+2,752 reserved.
+
+**Measured** (960 x 640, desktop, scripts/nested-perf.mjs): uncapped draw 4.0-6.6 ms in every view (tunnel inside 5.5,
+round 4: 28.9); frames at vsync (p50 10.0 ms) in all still views. Triangles: root 0.74 M, level 1 0.54-0.56 M, level 2
+1.06-1.18 M in the tunnel. A carve at level 1 with three levels live: median 11-14 ms with the bakes over runs (9-21 ms
+spread, NS-68), without bakes 7-10 ms; bakes ~3 ms after baking only the changed columns grown by one (was a chunk all
+round: ~8 ms). Pages: tunnel scene 1,797 used of 3,200 reserved (153 MB); the edit's reserve is its chunks' possible new
+pages plus the largest pass's scratch (TMP merged back after each pass), and a grow is sized only once ops in flight have
+read back (a grow sized with an in-flight op's worst case held on top had taken the stress run to 3,776 for 1,626).
+The table's tombstones are cleared at the end of every op (two passes over the table).
+
+src/nested: 6,043 lines before (17d881d6), 5,780 now (with the new suite).

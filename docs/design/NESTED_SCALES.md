@@ -1,6 +1,6 @@
 # Nested scales: zoom in and sculpt inside a larger live scene
 
-Status: DRAFT for the user to mark up (2026-11-18). Nothing is built. No builder runs until this is agreed.
+Status: a lab on branch `nested-scales` (round 6: boxes and the partition record; "Built so far" has the current truth).
 Lower priority than the board gameplay loop.
 
 ## What this is for
@@ -91,13 +91,24 @@ and enhance its exact inverse on the block, with no area weights for fine cells 
 BACKLOG NS-2: hex storage, or hex-style rendering over square storage, later.
 
 **Pages (DESIGN.md §2, followed).**
-- A page is 16 × 16 columns × K = 16 intervals. An interval is three words: z0 (f32), z1 (f32), material | aux << 16.
-  A page also holds each column's interval count in that page. Page size 256 + 256·16·3 words = 49 KB.
-- Pages are keyed (level, cx, cy, cz) in global chunk coordinates of that level's depth. cz is interval overflow:
-  intervals 0-15 of a column are in cz 0, 16-31 in cz 1, and so on. A cz + 1 page exists only where some column of
-  the chunk has more than 16 · (cz + 1) intervals. There is no cap on intervals a column.
-- Open-ended intervals: a column's first interval is open downward (z0 = the OPEN_BOTTOM sentinel, stone); above
-  the last interval is air, open upward. Air between intervals is a gap and costs nothing.
+- **The record (round 6, the owner's: "get rid of the representation that allows unpaired bounds").** A column is a FULL
+  PARTITION of height: an ordered list (bottom up) of intervals of any material, AIR INCLUDED, with SHARED boundaries.
+  A record is two words: the interval's absolute top (f32, the level's local units) and its material. Its bottom is the
+  top of the record below; the first record is open downward; above the last record is air (a trailing air record is
+  never stored). Adjacent records never share a material (merged), no record is empty. There is no stored gap, no
+  stored bottom, no bound that belongs to only one interval. Whether a material is drawn solid is a row of the material
+  table (store.wgsl matSolid: air is not), so water or lava are new materials, not new cases.
+- A column page is 16 × 16 columns × KR = 24 records (2 words each) after 256 count words (records | non-air records
+  << 16): 256 + 256·24·2 = 12,544 words = 49 KB, the same size as before. Residual pages and a pass's scratch (TMP, level
+  id 40 + depth) keep the solid-view record of three words (z0, z1, material), K = 16 a page, in the same page size.
+- Pages are keyed (level, cx, cy, cz) in global chunk coordinates of that level's depth. cz is record overflow: records
+  0-23 of a column are in cz 0, 24-47 in cz 1, and so on. A cz + 1 page exists only where some column of the chunk
+  needs it. There is no cap on records a column.
+- **The solid view and the pass boundary.** The maths (enhance, restrict, residuals, the brushes) reads a column's solid
+  view: its non-air records, interval i from the top of the record below it (store.wgsl ivlAt), and inside enhance and
+  restrict the layer form built from it. A pass writes its result as solid views into TMP pages; `pack` (nest.wgsl)
+  converts each written column into the partition (air where an interval starts above the last top, empty intervals
+  dropped, equal neighbours merged) and lets the TMP pages go, at the end of the pass.
 - One sparse table in its own binding: an open-addressed hash of entries (key0 = cx | cy << 16, key1 = level |
   cz << 8, page, birth). Three states: page here (the page id), exists but not loaded (NOT_LOADED), no page (absent).
   Nothing in the lab evicts to a store yet, so NOT_LOADED is defined and handled by lookups (treated like a missing
@@ -164,7 +175,9 @@ self-test).
   units). Per-material volume is conserved by construction. A block whose children disagree on intervals (count or
   materials) is counted as a mismatch and left alone; no edit in the lab makes one (BACKLOG NS-5: matching columns
   of different structure).
-- Zero-thickness intervals are kept, so neighbouring columns keep matching structures after a dig (BACKLOG NS-6).
+- Zero-thickness intervals are dropped (round 6: the partition has no empty record); a dig that empties an interval
+  changes the column's structure, and the correspondence rules below (template restrict, whole-column residuals) carry
+  it. (Before round 6 they were kept so neighbouring columns kept matching structures: NS-6, now moot.)
 
 ## Decisions with the owner (2026-11-18, round 2)
 
@@ -214,7 +227,51 @@ self-test).
 - Order: SDF footprints, then streaming. Borders: "I would keep heightfields and borders distinct and use SDF with
   masks for the latter."
 
+## Decisions with the owner (round 6)
+
+After five rounds failed to make matched sheets and SDF footprints watertight (8,215 open edges, 5,920 hole pixels,
+curtains joining wrong layers, carve 124-138 ms, draw 28.9 ms, 455-553 MB reserved), the owner, verbatim:
+- "I would rather use blocky voxel columns than waste time on this visual artifact."
+- "Why not just do the same but with voxels of varying sizes so there is never any meshing ambiguity at all?"
+- "Definitely don't give me something with crappy performance that still has holes."
+- "Stop I already said get rid of the representation that allows unpaired bounds." (Earlier: "Air is meant to be the
+  default but also an interval." / "I was confused why there was a gap since they should use the same z value in my
+  head canon.")
+- "Fast and water tight and verify we can zoom in and enhance detail. Then we can have unit tests and do the smooth
+  meshing as an optional next step."
+- Not to block: "I hope you know my plan is to have this with the full fluid simulation so I can zoom in on steady flows
+  and have water falls and magma." And: "I also ideally want to be able to keep the multi grid representation so I can
+  make islands in their own reference frame floating by. The enhancement only need to happen for nearby objects so we can
+  do this for whatever the active reference frame(s) grids are only."
+- PARKED, for the record (what he had imagined for smooth meshing; not built): "a sheet with one vertex per cell and one
+  sheet per layer adjacent to an air interval. Then for any solid interval adjacent to air laterally we mesh between the
+  top and bottom vertex in the interval and connect to neighbors. This may need a marching squares type approach to
+  handle edge cases like things touching at a single point although I would prefer something with a signed distance and
+  contour."
+
+So:
+- **Every level draws its columns as boxes** ("The box draw" below): a face exists exactly where a solid interval
+  touches an air interval, vertically at their shared bound (a cap) or laterally where a solid interval of one column
+  overlaps in height an air interval of the neighbouring column (a wall over the overlap). No pairing or matching of
+  bounds between columns anywhere in the draw. Finer levels are smaller boxes. Watertight because it is the boundary of a
+  union of boxes.
+- **The column record is the full partition** ("Storage"), built now rather than with the 32 x 32 x 4 pages.
+- Brushes are material writes over a z-span: Carve writes air over the ball's span in each column, Add soil; equal
+  neighbours merge, so repeated adds cannot pile up intervals (NS-63). Raise, Dig, Melt move tops.
+- Fluids are not built and not blocked: water and lava are materials in the record; the draw asks only the material
+  table whether a material is drawn solid. The flow point of "The design" (8) stands.
+- More grids are not built and not blocked. Where a second grid plugs in: the level table (nest.ts wins, the WGSL
+  u.lv) would gain a grid id and each root grid a rigid transform; the draw already takes a model matrix per draw call
+  (draw.wgsl DrawU.model, identity today) between a level's local units and the frame the camera's per-level
+  view-projection expects. Still missing for that: page keys carry no grid id (key1 = level | cz << 8 would take one;
+  level ids would be per grid), the camera pass and the pick assume one chain of levels over one root at the origin, and
+  promotion is per depth, not per (grid, depth).
+
 ## Column correspondence (round 2; the Storage section's rules extended)
+
+PARKED for the draw (round 6): the draw no longer matches anything between columns; the rules below are kept only for
+the data across levels (restrict's template, whole-column residuals), which promote and demote exactness still need. The
+last bullet ("For the draw") is obsolete.
 
 - **Structure** = a column's interval count and material sequence. Gaps (air between intervals) are not part of it:
   a tunnel cut inside one layer, or a dig, keeps the structure, so per-bound residuals and the bound-mean restrict
@@ -237,6 +294,26 @@ self-test).
   no air in a solid neighbour.
 
 ## Built so far (branch `nested-scales`, page nested.html)
+
+The current truth (round 6, 2026-11-18):
+- **Storage:** paged columns on the GPU, the full-partition record ("Storage"); the oracle (src/nested/oracle.ts) stores
+  the same partition (Level.parts) and reads the solid view from it. One pool of up to four segment buffers, grown ahead
+  of the ops; one op in flight; each op's reserve is what it can take (its chunks' extra column, residual and face pages,
+  a stroke's snapshot, and the largest pass's scratch, merged back between passes), and a grow is sized only once the ops
+  in flight have read back. The table's tombstones are cleared at the end of every op.
+- **Levels:** root 256 x 256 at k = 8 per level, up to three child levels of 256 x 256 columns; promote = enhance
+  (limited PPM top, bilinear gaps and thicknesses, seeded detail) + residual; restrict by bound means or the template
+  rule; residuals per bound as two floats or whole columns; demote then promote bit-identical.
+- **Brushes:** Carve and Add are a ball's (or a stroke's capsule's) z-span per column, written in the solid view and
+  packed: Carve leaves air, Add soil, equal neighbours merge. Hold to grow, the sweep along the pre-stroke surface (the
+  stroke's snapshot), one op in flight. Raise, Dig, Melt as before. The pick and the free eye read the solid view; the
+  eye's distance is to the column's own boxes (no dilation).
+- **Draw:** the box draw ("The box draw"), baked per changed chunk, one indirect draw a level, finest first.
+- **Checks:** unit tests (oracle, 13), `?selftest=1` (25 GPU-against-oracle checks, then the watertight suite on the
+  sandbox scene: the manifold check at 8 eyes and the screen check over 40 poses; src/nested/suite.ts),
+  scripts/nested-watertight.mjs (the suite alone), nested-stress.mjs (?maxbuf=128), nested-perf.mjs (the gate's timings).
+
+History (rounds 1-4; superseded where the above differs):
 
 - Step 1 (2026-11-18): the oracle (src/nested/oracle.ts, 8 Node tests) and the GPU store and passes
   (src/nested/gpu/: store.wgsl readers, nest.wgsl root, derive, residual, restrict, plan, raise, dig, melt, release,
@@ -320,7 +397,35 @@ self-test).
   hole pixels 7,372 -> 5,920 over the watertight scenes; not zero (NS-46, NS-55..57). `?cut=old` for comparison. F5 (the
   rim morph of e) not built.
 
+## The box draw (round 6)
+
+- **Faces.** For each drawn column and each record boundary where one side is solid and the other air: a cap (two
+  triangles over the column's square). For each of the four sides: each solid record's height range less the
+  neighbouring column's solid records (an interval set difference local to that edge), each remaining piece a wall. A
+  column outside its level's window, or under a live child's footprint, is air to its neighbours, so a level walls its
+  own window edge and the footprint, and parent and child boxes meet on whole parent cells (k x k children per parent
+  column, whole-cell offsets): no morph, no cut. A parent bakes nothing under its child.
+- **No T-junctions.** Each wall is a strip between its two vertical edges; each vertical edge is split at every record
+  top (and bottom) of the four columns round that corner line, the same set for every face touching the line, so every
+  edge of the face set is shared by an even number of triangles (a box union can share an edge among four).
+- **The world's bottom.** A column's first record is open below; the draw ends it at the level's open bottom (root -8,
+  a child -2 x its window width, local units) or 1 under its top where that is lower (then with a down cap). No cap is
+  drawn on the bottom plane; its edges are the one boundary a level has.
+- **Baked, nothing per frame** (the owner's round 3 ruling stands). An op bakes the columns it changed grown by one
+  column, as whole chunks (nest.wgsl faceBake via dilate): edit, restrict and derive regions; promote the child's window
+  and, in the same submit, the parent round the footprint; demote the parent round the old footprint; slide the entering
+  chunks, then the new window's edge ring and the parent round the old and new footprints. A frame only draws.
+- **Face pages** (level id 16 + depth, stacked by cz as needed, from the one pool; no cap): a triangle is 4 words (the
+  column in the chunk, face kind, material, each vertex's corner; its three z), 3,135 a page. The bake counts each
+  column's triangles, sizes the chunk's pages (ensurePages), then writes; the workgroup copies the 18 x 18 columns' counts,
+  bottoms and first four records into workgroup memory first. The draw is one indirect draw a level over its face page
+  list (an instance a page, 3 x 3,135 vertices; slots past the page's count dropped).
+- **Shading.** Flat face normals; colour by material (soil tops green, soil walls brown), the triplanar pattern in world
+  units, the level tint toggle. No smoothed normals (the optional toggle was not built).
+
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
+
+SUPERSEDED by "The box draw" (round 6); kept for the history.
 
 - **What is baked, when.** Every op that changes a level's live columns (root, promote, slide, edit: the edited,
   restricted and derived regions) bakes that region grown by one chunk (a column's normals and its quads reach its
@@ -355,6 +460,10 @@ self-test).
   Pages: the tunnel scene with three levels holds ~1370-1420 pages (was ~800): the tables round the tunnels at depth 2.
 
 ## Footprints (round 4 step 3: the design, written before any code; F1-F3 built, see the changes below)
+
+PARKED (round 6): removed from the code. Five rounds of matched sheets and footprint cuts did not close (8,215 open edges
+at F4); the owner chose blocky boxes ("never any meshing ambiguity") and the partition record. Smooth meshing returns
+later as an optional step, from the owner's sheet-and-contour idea in "Decisions with the owner (round 6)".
 
 The owner: "I would keep heightfields and borders distinct and use SDF with masks for the latter", and for layer edges
 "let's wait for SDF and then we can have nicer material boundaries at zoom". Today the draw knows only whether an air
