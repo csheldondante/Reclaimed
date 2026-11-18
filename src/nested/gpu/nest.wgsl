@@ -10,8 +10,8 @@ struct U {
   d: vec4<f32>, // now, melt rate, forced level, detail amplitude
   e: vec4<i32>, // the stripe column (self-test): X, Y, interval count, 0
   lv: array<vec4<i32>, 8>, // per depth: window gx0, gy0, n (columns), live
-  cA: vec4<f32>, // camera: target x hi, y hi, x lo, y lo (world)
-  cB: vec4<f32>, // distance, yaw, pitch, aspect
+  cA: vec4<f32>, // camera: the wished move x, y, z (world), 1 = place the eye (cam words 256-258)
+  cB: vec4<f32>, // yaw, pitch, aspect, speed limit (nearest-solid distances a second)
   cC: vec4<f32>, // fovy, pointer ndc x, y, dt
 }
 
@@ -1071,48 +1071,22 @@ fn solidDist(m: u32, p: vec3<f32>) -> f32 {
   }
   return d;
 }
-/** the floor (top of a solid with air above) of column (X, Y) nearest to height z */
-fn floorNear(m: u32, X: i32, Y: i32, z: f32) -> f32 {
+/** the distance from local point p to column (X, Y)'s solid, the column dilated to the square between its neighbours'
+ *  centres (2 x 2 columns): the drawn surface between column centres (sheets, floors, ceilings, the half-way walls)
+ *  lies inside the union of these boxes, so the eye kept outside them is never behind a drawn face. FAR: no solid. */
+const FAR: f32 = 1e30;
+fn colDist(m: u32, X: i32, Y: i32, w: vec4<i32>, p: vec3<f32>) -> f32 {
+  let dx = max(0.0, abs(p.x - (f32(X - w.x) + 0.5)) - 1.0);
+  let dy = max(0.0, abs(p.y - (f32(Y - w.y) + 0.5)) - 1.0);
   let n = colCount(m, X, Y);
-  var best = 0.0;
-  var bd = 1e30;
+  var best = FAR;
   for (var i = 0u; i < n; i++) {
     let iv = ivlAt(m, X, Y, i);
-    var isFloor = i + 1u == n;
-    if (!isFloor) { isFloor = ivlAt(m, X, Y, i + 1u).z0 > iv.z1; }
-    if (isFloor && abs(iv.z1 - z) < bd) {
-      bd = abs(iv.z1 - z);
-      best = iv.z1;
-    }
+    let z0 = select(iv.z0, -FAR, i == 0u);
+    best = min(best, max(0.0, max(z0 - p.z, p.z - iv.z1)));
   }
-  return best;
-}
-/** the floor nearest a world height under world (hi + lo) x, y, bilinear over four columns of the finest level holding
- *  it: the camera's target follows the floor it is on (a tunnel's floor inside a tunnel) */
-fn floorWorld(xh: f32, yh: f32, xl: f32, yl: f32, zw: f32) -> f32 {
-  let live = u.r.w;
-  for (var mi = i32(live) - 1; mi >= 0; mi--) {
-    let m = u32(mi);
-    let s = kpow(m);
-    let w = u.lv[m];
-    let lx = (xh * s - f32(w.x)) + xl * s;
-    let ly = (yh * s - f32(w.y)) + yl * s;
-    if (lx >= 1.0 && ly >= 1.0 && lx <= f32(w.z) - 1.0 && ly <= f32(w.z) - 1.0) {
-      let zl = (zw - zOrig(m)) * s;
-      let fx = lx - 0.5;
-      let fy = ly - 0.5;
-      let i0 = i32(floor(fx));
-      let j0 = i32(floor(fy));
-      let h00 = floorNear(m, w.x + i0, w.y + j0, zl);
-      let h10 = floorNear(m, w.x + i0 + 1, w.y + j0, zl);
-      let h01 = floorNear(m, w.x + i0, w.y + j0 + 1, zl);
-      let h11 = floorNear(m, w.x + i0 + 1, w.y + j0 + 1, zl);
-      let tx = fx - f32(i0);
-      let ty = fy - f32(j0);
-      return zOrig(m) + mix(mix(h00, h10, tx), mix(h01, h11, tx), ty) / s;
-    }
-  }
-  return ground(xh, yh, xl, yl);
+  if (best >= FAR) { return FAR; }
+  return length(vec3<f32>(dx, dy, best));
 }
 
 /** the ground (world z) under world (hi + lo) x, y: the finest live level holding it */
@@ -1130,66 +1104,185 @@ fn ground(xh: f32, yh: f32, xl: f32, yl: f32) -> f32 {
   return surfLocal(0u, clamp(xh + xl, 1.0, f32(w0.z) - 1.0), clamp(yh + yl, 1.0, f32(w0.z) - 1.0));
 }
 
-@compute @workgroup_size(1)
-fn camera() {
-  let k = f32(u.a.x);
+// ---- the camera: a free eye with collision ---------------------------------------------------------------------------
+// The eye lives here (world, hi + lo floats a coordinate). The CPU sends a wished move; the pass measures the nearest
+// solid round the eye on every level holding it (colDist, CAM_R columns of that level each way), lets the eye move at
+// most (nearest - margin) this frame and at most speed x nearest a second (the owner's rule: "speed limited by
+// interpolated distance so it could never go through a surface"), then writes each level's view-projection.
+// cam words: 1 placed, 2 eye z (world), 3 near (world), 4-6 right, 8-10 up, 12-14 forward, 20-22 eye hi, 24-26 eye lo,
+// 27 times the eye was lifted out of solid, 28 the nearest solid after the move (world, a lower bound), 29 the centre
+// ray's first solid (world; -1 none), 30 the level that measured the nearest solid, 31 the margin (world). Words 0-31 are
+// the report the CPU reads back (asynchronously, never awaited). Level m at 32 + m * 24: view-projection (16), eye (3),
+// near (1) in its units. 256-258: a placement's target x, y and distance (CPU-written).
+const CAM_R: i32 = 24;
+var<workgroup> wEye: array<vec4<f32>, 8>;
+var<workgroup> wD: array<atomic<u32>, 8>;
+
+fn eyeHi() -> vec3<f32> { return vec3<f32>(cam[20], cam[21], cam[22]); }
+fn eyeLo() -> vec3<f32> { return vec3<f32>(cam[24], cam[25], cam[26]); }
+/** the eye in level m's local units; w = 1 when it is inside the level's window */
+fn eyeLocal(m: u32, hi: vec3<f32>, lo: vec3<f32>) -> vec4<f32> {
+  let s = kpow(m);
+  let w = u.lv[m];
+  let p = vec3<f32>((hi.x * s - f32(w.x)) + lo.x * s, (hi.y * s - f32(w.y)) + lo.y * s, (hi.z - zOrig(m)) * s + lo.z * s);
+  let inside = p.x >= 0.0 && p.y >= 0.0 && p.x < f32(w.z) && p.y < f32(w.z);
+  return vec4<f32>(p, select(0.0, 1.0, inside));
+}
+/** a + b as hi + lo (two-sum, then renormalised) */
+fn add2(hi: f32, lo: f32, b: f32) -> vec2<f32> {
+  let s = hi + b;
+  let bb = s - hi;
+  let err = (hi - (s - bb)) + (b - bb);
+  let l = lo + err;
+  let h2 = s + l;
+  return vec2<f32>(h2, l - (h2 - s));
+}
+fn viewDir(yaw: f32, pitch: f32) -> vec3<f32> { return -vec3<f32>(cos(pitch) * cos(yaw), cos(pitch) * sin(yaw), sin(pitch)); }
+
+@compute @workgroup_size(256)
+fn camera(@builtin(local_invocation_index) li: u32) {
   let live = u.r.w;
-  let D = u.cB.x;
-  let yaw = u.cB.y;
-  let pitch = u.cB.z;
-  let aspect = u.cB.w;
+  if (li == 0u) {
+    for (var m = 0u; m < 8u; m++) { atomicStore(&wD[m], bitcast<u32>(FAR)); }
+    if (cam[1] == 0.0 || u.cA.w > 0.5) {
+      // placed: the ground under the target, then back along the view by the distance
+      let t = vec3<f32>(cam[256], cam[257], ground(cam[256], cam[257], 0.0, 0.0));
+      let e = t - cam[258] * viewDir(u.cB.x, u.cB.y);
+      for (var i = 0u; i < 3u; i++) {
+        cam[20u + i] = e[i];
+        cam[24u + i] = 0.0;
+      }
+      cam[1] = 1.0;
+    }
+    let hi = eyeHi();
+    let lo = eyeLo();
+    for (var m = 0u; m < 8u; m++) {
+      if (m < live) { wEye[m] = eyeLocal(m, hi, lo); } else { wEye[m] = vec4<f32>(0.0); }
+    }
+  }
+  workgroupBarrier();
+  // the nearest solid on each level holding the eye, CAM_R of its columns each way
+  let side = u32(2 * CAM_R + 1);
+  for (var m = 0u; m < live; m++) {
+    let e = wEye[m];
+    if (e.w < 0.5) { continue; }
+    let w = u.lv[m];
+    let ex = w.x + i32(floor(e.x)) - CAM_R;
+    let ey = w.y + i32(floor(e.y)) - CAM_R;
+    for (var idx = li; idx < side * side; idx += 256u) {
+      let X = ex + i32(idx % side);
+      let Y = ey + i32(idx / side);
+      if (X < w.x || Y < w.y || X >= w.x + w.z || Y >= w.y + w.z) { continue; }
+      let dd = colDist(m, X, Y, w, e.xyz);
+      if (dd < FAR) { atomicMin(&wD[m], bitcast<u32>(dd)); }
+    }
+  }
+  workgroupBarrier();
+  if (li != 0u) { return; }
+  let yaw = u.cB.x;
+  let pitch = u.cB.y;
+  let aspect = u.cB.z;
+  let speed = u.cB.w;
   let fovy = u.cC.x;
   let dt = u.cC.w;
-  var tz = cam[0];
-  if (cam[1] == 0.0 || dt <= 0.0) {
-    tz = ground(u.cA.x, u.cA.y, u.cA.z, u.cA.w);
-    cam[1] = 1.0;
-  } else {
-    // the target stays on the floor nearest it: outside, the ground; walked into a tunnel's mouth, the tunnel's floor
-    tz = mix(tz, floorWorld(u.cA.x, u.cA.y, u.cA.z, u.cA.w, tz), 1.0 - exp(-dt * 12.0));
+  var hi = eyeHi();
+  var lo = eyeLo();
+  // the finest level holding the eye sets the margin (a third of its column)
+  var fin = 0u;
+  for (var m = 0u; m < live; m++) {
+    if (wEye[m].w > 0.5) { fin = m; }
   }
-  cam[0] = tz;
-  var off = D * vec3<f32>(cos(pitch) * cos(yaw), cos(pitch) * sin(yaw), sin(pitch));
-  // the eye cannot pass through a surface: marched from the target out, on the finest level holding the target, it
-  // stops short of the first solid (a tunnel's roof keeps the eye inside the tunnel)
-  {
-    let live = u.r.w;
-    let fm = live - 1u;
-    let s = kpow(fm);
-    let w = u.lv[fm];
-    let t0 = vec3<f32>((u.cA.x * s - f32(w.x)) + u.cA.z * s, (u.cA.y * s - f32(w.y)) + u.cA.w * s, (tz - zOrig(fm)) * s + 0.05 * D * s);
-    let dl = off * s;
-    let len = length(dl);
-    var t = 0.0;
-    var hitT = 1e30;
-    for (var it = 0; it < 400; it++) {
-      let dd = solidDist(fm, t0 + dl * (t / len));
-      if (dd < 0.0) {
-        hitT = t;
-        break;
-      }
-      t += max(0.4 * dd, 0.01 * len);
-      if (t >= len) { break; }
+  let margin = 0.3 / kpow(fin);
+  // the nearest solid (world): the finest level that found one within its reach; finer levels that found none bound it
+  // from below by their reach (or their window's edge). A coarser level's distance is less one of its columns (its
+  // surface is the finer one's mean, not the finer one itself).
+  var lb = 0.0;
+  var d = -1.0;
+  var used = -1;
+  var raw = FAR;
+  for (var mi = i32(live) - 1; mi >= 0; mi--) {
+    let m = u32(mi);
+    let e = wEye[m];
+    if (e.w < 0.5) { continue; }
+    let s = kpow(m);
+    raw = bitcast<f32>(atomicLoad(&wD[m]));
+    if (raw < 1e29) {
+      d = max(lb, (raw - select(1.0, 0.0, m == fin)) / s);
+      used = mi;
+      break;
     }
-    if (hitT < len) { off *= max(0.05, 0.85 * hitT / len); }
+    let w = u.lv[m];
+    let edge = min(min(e.x, e.y), min(f32(w.z) - e.x, f32(w.z) - e.y));
+    lb = max(lb, max(0.0, min(f32(CAM_R), edge) - 1.5) / s);
   }
-  let f = normalize(-off);
+  if (d < 0.0) { d = lb; }
+  // inside solid (a level promoted under the eye with detail above it, or an add over it): lifted to the air above
+  if (used == i32(fin) && raw <= 0.0) {
+    let m = fin;
+    let s = kpow(m);
+    let w = u.lv[m];
+    var p = wEye[m].xyz;
+    for (var it = 0; it < 64; it++) {
+      var moved = false;
+      for (var X = i32(ceil(p.x - 1.5)); X <= i32(floor(p.x + 0.5)); X++) {
+        for (var Y = i32(ceil(p.y - 1.5)); Y <= i32(floor(p.y + 0.5)); Y++) {
+          let n = colCount(m, w.x + X, w.y + Y);
+          for (var i = 0u; i < n; i++) {
+            let iv = ivlAt(m, w.x + X, w.y + Y, i);
+            if ((i == 0u || p.z >= iv.z0) && p.z <= iv.z1) {
+              p.z = iv.z1 + 0.3;
+              moved = true;
+            }
+          }
+        }
+      }
+      if (!moved) { break; }
+    }
+    hi.z = zOrig(m) + p.z / s;
+    lo.z = 0.0;
+    cam[27] += 1.0;
+    d = margin;
+  }
+  // the move, limited by the nearest solid
+  var mv = u.cA.xyz;
+  let len = length(mv);
+  let allow = max(0.0, min(d - margin, speed * d * dt));
+  if (len > allow) { mv *= allow / max(len, 1e-30); }
+  for (var i = 0u; i < 3u; i++) {
+    let r2 = add2(hi[i], lo[i], mv[i]);
+    hi[i] = r2.x;
+    lo[i] = r2.y;
+  }
+  // inside the root's footprint, below a ceiling
+  let n0 = f32(u.lv[0].z);
+  if (hi.x < 1.0 || hi.x > n0 - 1.0) { hi.x = clamp(hi.x, 1.0, n0 - 1.0); lo.x = 0.0; }
+  if (hi.y < 1.0 || hi.y > n0 - 1.0) { hi.y = clamp(hi.y, 1.0, n0 - 1.0); lo.y = 0.0; }
+  if (hi.z > 600.0) { hi.z = 600.0; lo.z = 0.0; }
+  for (var i = 0u; i < 3u; i++) {
+    cam[20u + i] = hi[i];
+    cam[24u + i] = lo[i];
+  }
+  let dn = max(margin, d - length(mv));
+  cam[28] = dn;
+  cam[30] = f32(used);
+  cam[31] = margin;
+  let f = viewDir(yaw, pitch);
   let r = normalize(cross(f, vec3<f32>(0.0, 0.0, 1.0)));
   let up = cross(r, f);
-  let near = 0.01 * length(off);
-  cam[2] = tz + off.z;
+  // nothing is nearer than dn; every point at dn or more inside the frustum is past half of it
+  let near = 0.5 * dn;
+  cam[2] = hi.z + lo.z;
   cam[3] = near;
   for (var i = 0u; i < 3u; i++) {
     cam[4u + i] = r[i];
     cam[8u + i] = up[i];
     cam[12u + i] = f[i];
-    cam[16u + i] = off[i];
   }
   let fy = 1.0 / tan(fovy * 0.5);
   for (var m = 0u; m < live; m++) {
     let s = kpow(m);
     let w = u.lv[m];
-    let e = vec3<f32>((u.cA.x * s - f32(w.x)) + (off.x + u.cA.z) * s, (u.cA.y * s - f32(w.y)) + (off.y + u.cA.w) * s, (tz + off.z - zOrig(m)) * s);
+    let e = eyeLocal(m, hi, lo).xyz;
     let view = mat4x4<f32>(vec4<f32>(r.x, up.x, -f.x, 0.0), vec4<f32>(r.y, up.y, -f.y, 0.0), vec4<f32>(r.z, up.z, -f.z, 0.0), vec4<f32>(-dot(r, e), -dot(up, e), dot(f, e), 1.0));
     let proj = mat4x4<f32>(vec4<f32>(fy / aspect, 0.0, 0.0, 0.0), vec4<f32>(0.0, fy, 0.0, 0.0), vec4<f32>(0.0, 0.0, 0.0, -1.0), vec4<f32>(0.0, 0.0, near * s, 0.0));
     let vp = proj * view;
@@ -1202,20 +1295,21 @@ fn camera() {
     cam[b + 18u] = e.z;
     cam[b + 19u] = near * s;
   }
+  // the centre ray's first solid (the pan's and the zoom's scale)
+  let h = rayFirst(f);
+  cam[29] = select(-1.0, h.t / kpow(u32(max(h.lvl, 0))), h.lvl >= 0);
 }
 
-/** the pointer's hit (reg 8-10): the ray marched over each level, finest first, kept on the first level whose interior
- *  (away from its rim band) it lands in */
-@compute @workgroup_size(1)
-fn pick() {
+struct Hit {
+  lvl: i32,
+  p: vec3<f32>,
+  t: f32,
+}
+/** a ray from the eye (this frame's camera words): marched over each level, finest first, kept on the first level whose
+ *  interior (away from its rim band) it lands in; lvl -1: none */
+fn rayFirst(dir: vec3<f32>) -> Hit {
   let k = f32(u.a.x);
   let live = u.r.w;
-  let th = tan(u.cC.x * 0.5);
-  let r = vec3<f32>(cam[4], cam[5], cam[6]);
-  let up = vec3<f32>(cam[8], cam[9], cam[10]);
-  let f = vec3<f32>(cam[12], cam[13], cam[14]);
-  let dir = normalize(f + r * u.cC.y * th * u.cB.w + up * u.cC.z * th);
-  reg[8] = -1;
   for (var mi = i32(live) - 1; mi >= 0; mi--) {
     let m = u32(mi);
     let b = 32u + m * 24u;
@@ -1226,7 +1320,7 @@ fn pick() {
     var t = cam[b + 19u];
     var tp = t;
     var hit = false;
-    let tmax = 4.0 * n + 4.0 * u.cB.x * kpow(m);
+    let tmax = 4.0 * n;
     for (var it = 0; it < 1200; it++) {
       let p = e + dir * t;
       let dz = solidDist(m, p);
@@ -1247,10 +1341,22 @@ fn pick() {
     }
     let p = e + dir * hi;
     if (p.x < margin || p.y < margin || p.x > n - margin || p.y > n - margin) { continue; }
-    reg[8] = mi;
-    reg[9] = bitcast<i32>(p.x);
-    reg[10] = bitcast<i32>(p.y);
-    reg[13] = bitcast<i32>(p.z);
-    return;
+    return Hit(mi, p, hi);
   }
+  return Hit(-1, vec3<f32>(0.0), -1.0);
+}
+
+/** the pointer's hit (reg 8-10, 13) */
+@compute @workgroup_size(1)
+fn pick() {
+  let th = tan(u.cC.x * 0.5);
+  let r = vec3<f32>(cam[4], cam[5], cam[6]);
+  let up = vec3<f32>(cam[8], cam[9], cam[10]);
+  let f = vec3<f32>(cam[12], cam[13], cam[14]);
+  let h = rayFirst(normalize(f + r * u.cC.y * th * u.cB.z + up * u.cC.z * th));
+  reg[8] = h.lvl;
+  if (h.lvl < 0) { return; }
+  reg[9] = bitcast<i32>(h.p.x);
+  reg[10] = bitcast<i32>(h.p.y);
+  reg[13] = bitcast<i32>(h.p.z);
 }

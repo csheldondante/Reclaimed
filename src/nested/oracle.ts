@@ -457,6 +457,19 @@ export function resPair(live: number, e: number): [number, number] {
   return [hi, live - (e + hi)];
 }
 
+/** the camera's distance from local point p to column (i, j)'s solid (centre at i + 0.5), the column dilated to the
+ *  2 x 2 columns between its neighbours' centres (gpu: nest.wgsl colDist). Infinity: no solid. */
+export function colDist(c: Col, i: number, j: number, p: [number, number, number]): number {
+  const dx = Math.max(0, Math.abs(p[0] - (i + 0.5)) - 1);
+  const dy = Math.max(0, Math.abs(p[1] - (j + 0.5)) - 1);
+  let best = Infinity;
+  for (let q = 0; q < c.z1.length; q++) {
+    const z0 = q === 0 ? -Infinity : c.z0[q];
+    best = Math.min(best, Math.max(0, z0 - p[2], p[2] - c.z1[q]));
+  }
+  return best === Infinity ? Infinity : Math.hypot(dx, dy, best);
+}
+
 /** fractal value noise, roughly [-1, 1] */
 export function fbm(x: number, y: number, octaves: number, seed: number): number {
   let v = 0;

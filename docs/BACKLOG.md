@@ -67,11 +67,26 @@ user) · `deferred` (agreed for later).
   dropped from the parent. Not met by carve and add in the lab (add makes soil, which every template has).
 - NS-21 (limit) The extra faces (draw B: tunnel floors, ceilings, walls) take no part in the rim morph or the fade;
   a tunnel crossing a level's rim can show a step there. B is flat-shaded (a normal per face).
-- NS-22 (hack) The camera's eye collision marches the finest level only, and promotion still uses the orbit
-  distance, not the distance to the nearest solid.
+- NS-22 `done` (round 2b step 1) The camera's eye collision marches the finest level only, and promotion still uses
+  the orbit distance, not the distance to the nearest solid. Now: a free eye, the nearest solid measured on every
+  level holding it, moves limited by it, promotion by it.
 - NS-23 (perf) Draw B's vertices recompute gap matching for all four corners of the quad (several page walks each);
   fine for a few hundred carved quads, not for a level full of caves. A per-column gap list made once per change
   would cut it.
+- NS-24 (limit) The camera's solid test dilates each column to the 2 x 2 columns between neighbouring centres. It
+  contains the drawn sheets where a layer's parts in neighbouring columns overlap in z; a thin roof that steps by
+  more than its thickness between columns can leave a sliver of drawn roof outside, so the eye could touch it. Fix:
+  measure against the quad's interpolated bounds (the draw's own correspondence).
+- NS-25 (hack) The brush radius is the button's screen size at the distance of the surface in the screen's centre,
+  not at the pointer's hit (the CPU does not know the hit). Scale the radius on the GPU from the pick's distance.
+- NS-26 (limit) The CPU reads the camera's 128-byte report asynchronously (never awaited), so the windows and the
+  input scales use an eye one to three frames old. The collision itself is the GPU's, every frame.
+- NS-27 (asked) Camera model: a free eye with collision is the coordinator's provisional choice; the owner may want
+  an orbit camera round a target (with the same collision).
+- NS-28 (asked, owner: fine for now) Mixed blocks restrict to the most-structured child. Judge it in zoom-in and
+  zoom-out stills over carved tunnels and added blobs, and reconsider if it shows.
+- NS-29 (limit) The pick's ray march steps by 0.4 x the vertical gap (the old camera's flaw): near a vertical wall it
+  can step past a thin feature and pick a surface behind it. Step by the camera's 3D distance (dilated boxes).
 
 ## Terrain: rivers first (2026-11-17, `terrain-rivers`; docs/design/TERRAIN_RIVERS.md, DECISIONS 2026-11-17)
 

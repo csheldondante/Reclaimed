@@ -18,12 +18,24 @@ export class App {
   readonly n: number;
   readonly maxDepth: number;
   readonly rootN = 256;
-  tx = 128;
-  ty = 128;
-  D = 260;
-  Dgoal = 260;
+  /** the eye (world) and the nearest solid's distance, as the GPU last reported them (a frame or two old: the windows
+   *  and the input scales use them; the collision itself is the GPU's, every frame) */
+  ex = 128;
+  ey = 128;
+  ez = 0;
+  dNear = 260;
+  /** the centre ray's first solid (world), -1: none */
+  dHit = -1;
+  lifts = 0;
   yaw = -Math.PI / 2;
   pitch = 0.75;
+  /** the move wished this frame (world), sent to the camera pass, which limits it */
+  move = [0, 0, 0];
+  /** zoom still to apply (log of the distance ratio to the centre's surface; eased, at most 15 % a frame) */
+  zoomLog = 0;
+  /** the camera's speed limit: nearest-solid distances a second */
+  speed = 4;
+  private placeReq: { x: number; y: number; d: number } | null = null;
   mode: Mode = 'move';
   private bornAt: number[] = [];
   private pointers = new Map<number, { x: number; y: number }>();
@@ -82,12 +94,10 @@ export class App {
     this.render = new Renderer(device, ctx, this.nest, Math.max(this.rootN, this.n));
     this.render.tint = q.get('tint') === '1';
     if (q.has('detail')) this.nest.detailAmp = Number(q.get('detail'));
-    if (q.has('tx')) this.tx = Number(q.get('tx'));
-    if (q.has('ty')) this.ty = Number(q.get('ty'));
-    if (q.has('d')) this.D = this.Dgoal = Number(q.get('d'));
     if (q.has('yaw')) this.yaw = Number(q.get('yaw'));
     if (q.has('pitch')) this.pitch = Number(q.get('pitch'));
     this.nest.root(this.rootN);
+    this.place(Number(q.get('tx') ?? 128), Number(q.get('ty') ?? 128), Number(q.get('d') ?? 260));
     this.bornAt[0] = this.nest.now();
     this.ui();
   }
@@ -139,7 +149,7 @@ export class App {
       if (this.pointers.size === 2) {
         const now = this.pinchOf();
         if (this.pinch && now) {
-          this.Dgoal = this.clampD(this.Dgoal * (this.pinch.d / now.d));
+          this.zoomLog += Math.log(this.pinch.d / now.d);
           this.pan(now.cx - this.pinch.cx, now.cy - this.pinch.cy);
         }
         this.pinch = now;
@@ -162,7 +172,7 @@ export class App {
     c.addEventListener('contextmenu', (e) => e.preventDefault());
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
-      this.Dgoal = this.clampD(this.Dgoal * Math.exp(e.deltaY * 0.0012));
+      this.zoomLog += e.deltaY * 0.0012;
     }, { passive: false });
     window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
     window.addEventListener('blur', () => this.keys.clear());
@@ -181,14 +191,16 @@ export class App {
     if (p.length < 2) return null;
     return { d: Math.max(1, Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y)), cx: (p[0].x + p[1].x) / 2, cy: (p[0].y + p[1].y) / 2 };
   }
-  /** world units a CSS pixel at the focus */
+  /** the distance that scales a drag and a zoom: the surface at the screen's centre (or, looking at the sky, a few
+   *  nearest-solid distances) */
+  private dRef(): number {
+    return this.dHit > 0 ? this.dHit : 6 * this.dNear;
+  }
+  /** world units a CSS pixel at the surface in the screen's centre */
   private perPx(): number {
-    return (2 * this.D * Math.tan(FOVY / 2)) / Math.max(1, this.canvas.clientHeight);
+    return (2 * this.dRef() * Math.tan(FOVY / 2)) / Math.max(1, this.canvas.clientHeight);
   }
-  private clampD(d: number): number {
-    return Math.min(400, Math.max(8 / this.k ** this.maxDepth, d));
-  }
-  /** the ground under the finger moves with it; the step is limited by the distance to the ground (speed limit) */
+  /** the eye moves so that the surface under the finger follows it (the GPU then limits the move) */
   pan(dx: number, dy: number): void {
     const s = this.perPx();
     const rx = -Math.sin(this.yaw);
@@ -198,17 +210,31 @@ export class App {
     let mx = (-rx * dx + (fx * dy) / Math.max(0.3, Math.sin(this.pitch))) * s;
     let my = (-ry * dx + (fy * dy) / Math.max(0.3, Math.sin(this.pitch))) * s;
     const len = Math.hypot(mx, my);
-    const max = 0.25 * this.D;
+    const max = 0.25 * this.dRef();
     if (len > max) {
       mx *= max / len;
       my *= max / len;
     }
-    this.tx = Math.min(this.rootN - 2, Math.max(2, this.tx + mx));
-    this.ty = Math.min(this.rootN - 2, Math.max(2, this.ty + my));
+    this.move[0] += mx;
+    this.move[1] += my;
   }
+  /** turn the view round the eye */
   orbit(dx: number, dy: number): void {
     this.yaw -= dx * 0.006;
-    this.pitch = Math.min(1.5, Math.max(0.12, this.pitch + dy * 0.005));
+    this.pitch = Math.min(1.5, Math.max(-1.3, this.pitch + dy * 0.005));
+  }
+  /** the view direction */
+  forward(): [number, number, number] {
+    const c = Math.cos(this.pitch);
+    return [-c * Math.cos(this.yaw), -c * Math.sin(this.yaw), -Math.sin(this.pitch)];
+  }
+  /** put the eye back from the ground under (x, y) by d along the view (the GPU places it; then it is collided) */
+  place(x: number, y: number, d: number): void {
+    this.placeReq = { x, y, d };
+    this.ex = x;
+    this.ey = y;
+    this.dNear = d;
+    this.dHit = d;
   }
 
   // ---- levels ----------------------------------------------------------------------------------------------------------
@@ -218,7 +244,7 @@ export class App {
   }
   private desired(m: number): Win {
     const s = this.k ** (m - 1);
-    return this.nest.windowAt(m, this.tx * s, this.ty * s, this.n);
+    return this.nest.windowAt(m, this.ex * s, this.ey * s, this.n);
   }
   private levels(): void {
     const now = this.nest.now();
@@ -226,7 +252,7 @@ export class App {
       const live = this.nest.live;
       const W = this.width(m);
       if (m < live) {
-        if (this.D > 0.6 * W) {
+        if (this.dNear > 0.6 * W) {
           this.timed('demote', m, () => this.nest.demote(m));
           return;
         }
@@ -239,7 +265,7 @@ export class App {
         }
         continue;
       }
-      if (m === live && this.D < 0.45 * W && now - (this.bornAt[m - 1] ?? 0) > this.render.fadeSeconds + 0.05) {
+      if (m === live && this.dNear < 0.45 * W && now - (this.bornAt[m - 1] ?? 0) > this.render.fadeSeconds + 0.05) {
         const w = this.desired(m);
         this.timed('promote', m, () => this.nest.promote(m, w));
         this.bornAt[m] = now;
@@ -266,9 +292,9 @@ export class App {
       // (metrics) where the child should be now: the window the level logic keeps (its current one while within the
       // slack) or would move to
       let want: DrawLevel['want'] = null;
-      if (m + 1 <= this.maxDepth && (c || this.D < 0.45 * this.width(m + 1))) {
+      if (m + 1 <= this.maxDepth && (c || this.dNear < 0.45 * this.width(m + 1))) {
         const s = this.k ** m;
-        let g = this.nest.windowAt(m + 1, this.tx * s, this.ty * s, this.n);
+        let g = this.nest.windowAt(m + 1, this.ex * s, this.ey * s, this.n);
         if (c && Math.abs(g.gx - c.gx) < 32 && Math.abs(g.gy - c.gy) < 32) g = c;
         want = [g.gx / k - w.gx + inset, g.gy / k - w.gy + inset, (g.gx + g.n) / k - w.gx - inset, (g.gy + g.n) / k - w.gy - inset];
       }
@@ -291,23 +317,40 @@ export class App {
       this.canvas.width = W;
       this.canvas.height = H;
     }
+    // the camera's last report: the eye and the nearest solid
+    const rep = this.nest.camOut;
+    if (rep[1] === 1 && !this.placeReq) {
+      this.ex = rep[20] + rep[24];
+      this.ey = rep[21] + rep[25];
+      this.ez = rep[22] + rep[26];
+      this.dNear = rep[28];
+      this.dHit = rep[29];
+      this.lifts = rep[27];
+    }
     this.hook?.(dt);
-    // fly: WASD or arrows move over the ground, Q and E down and up; speed scales with the distance to the ground
+    // fly: WASD or arrows over the ground in the view's heading, Q and E down and up; speed scales with the nearest solid
     const kx = (this.keys.has('d') || this.keys.has('arrowright') ? 1 : 0) - (this.keys.has('a') || this.keys.has('arrowleft') ? 1 : 0);
-    const ky = (this.keys.has('s') || this.keys.has('arrowdown') ? 1 : 0) - (this.keys.has('w') || this.keys.has('arrowup') ? 1 : 0);
-    if (kx || ky) this.pan(-kx * 600 * dt, -ky * 600 * dt);
-    if (this.keys.has('q')) this.Dgoal = this.clampD(this.Dgoal * Math.exp(-2 * dt));
-    if (this.keys.has('e')) this.Dgoal = this.clampD(this.Dgoal * Math.exp(2 * dt));
-    // zoom eases toward its goal, at most 15 % a frame (the camera cannot outrun a promotion)
-    const ratio = Math.min(1.15, Math.max(1 / 1.15, this.Dgoal / this.D));
-    this.D = this.clampD(this.D * ratio);
+    const ky = (this.keys.has('w') || this.keys.has('arrowup') ? 1 : 0) - (this.keys.has('s') || this.keys.has('arrowdown') ? 1 : 0);
+    const v = 1.5 * this.dNear * dt;
+    this.move[0] += v * (-ky * Math.cos(this.yaw) - kx * Math.sin(this.yaw));
+    this.move[1] += v * (-ky * Math.sin(this.yaw) + kx * Math.cos(this.yaw));
+    this.move[2] += v * ((this.keys.has('e') ? 1 : 0) - (this.keys.has('q') ? 1 : 0));
+    // zoom: toward (or away from) the surface at the centre, eased, at most 15 % of that distance a frame
+    if (this.zoomLog !== 0) {
+      const step = Math.min(Math.log(1.15), Math.max(-Math.log(1.15), this.zoomLog));
+      this.zoomLog = Math.abs(this.zoomLog - step) < 1e-4 ? 0 : this.zoomLog - step;
+      const f = this.forward();
+      const t = this.dRef() * (1 - Math.exp(step));
+      for (let i = 0; i < 3; i++) this.move[i] += f[i] * t;
+    }
     if (!this.frozen) this.levels();
-    const hx = Math.fround(this.tx);
-    const hy = Math.fround(this.ty);
     const ndc = this.sculptAt ? [(this.sculptAt.x / this.canvas.clientWidth) * 2 - 1, 1 - (this.sculptAt.y / this.canvas.clientHeight) * 2] : [0, 0];
     const qd = this.queue.shift();
     if (qd) ndc.splice(0, 2, qd.nx, qd.ny);
-    this.nest.camIn.set([hx, hy, this.tx - hx, this.ty - hy, this.D, this.yaw, this.pitch, W / H, FOVY, ndc[0], ndc[1], dt]);
+    if (this.placeReq) this.nest.placeEye(this.placeReq.x, this.placeReq.y, this.placeReq.d);
+    this.nest.camIn.set([this.move[0], this.move[1], this.move[2], this.placeReq ? 1 : 0, this.yaw, this.pitch, W / H, this.speed, FOVY, ndc[0], ndc[1], dt]);
+    this.placeReq = null;
+    this.move = [0, 0, 0];
     this.nest.camera();
     const op = qd?.op ?? (this.sculptAt ? (this.mode as Op) : null);
     if (op) {
@@ -328,11 +371,12 @@ export class App {
     const avg = ft.reduce((a, b) => a + b, 0) / Math.max(1, ft.length);
     const lines = [
       `Levels open: ${live}. Finest column: ${col >= 100 ? `${(col / 100).toFixed(1)} m` : `${col.toFixed(col < 1 ? 2 : 1)} cm`}.`,
-      `Camera ${(this.D * ROOT_COLUMN_M).toFixed(this.D * ROOT_COLUMN_M < 10 ? 2 : 0)} m from the ground. Frame ${avg.toFixed(1)} ms.`,
+      `Camera ${(this.dNear * ROOT_COLUMN_M).toFixed(this.dNear * ROOT_COLUMN_M < 10 ? 2 : 0)} m from the nearest surface. Frame ${avg.toFixed(1)} ms.`,
       `Pages: ${st.used} used of ${st.cap}.`,
       live < this.maxDepth + 1 ? 'Zoom in close to the ground to open a finer level.' : 'This is the finest level.',
-      this.mode === 'move' ? 'Drag to move. Pinch or scroll to zoom. Keys: WASD to fly, Q and E down and up.' : this.mode === 'orbit' ? 'Drag to turn the view.' : `Drag on the ground to ${this.mode}.`,
+      this.mode === 'move' ? 'Drag to move. Pinch or scroll to zoom. Keys: WASD to fly, Q and E down and up.' : this.mode === 'orbit' ? 'Drag to look around.' : `Drag on the ground to ${this.mode}.`,
     ];
+    if (this.lifts) lines.push(`The camera was lifted out of solid ${this.lifts} times.`);
     if (st.refused || st.mismatch || st.tableFull) lines.push(`Error: ${st.refused} pages refused, ${st.mismatch} blocks mismatched, table full ${st.tableFull} times.`);
     this.info.textContent = lines.join('\n');
   }
@@ -340,19 +384,44 @@ export class App {
   private api() {
     return {
       app: this,
+      /** turn the view; with tx, ty or d, place the eye back from the ground under (tx, ty) by d */
       setView: (v: { tx?: number; ty?: number; d?: number; yaw?: number; pitch?: number }) => {
-        if (v.tx !== undefined) this.tx = v.tx;
-        if (v.ty !== undefined) this.ty = v.ty;
-        if (v.d !== undefined) this.D = this.Dgoal = v.d;
         if (v.yaw !== undefined) this.yaw = v.yaw;
         if (v.pitch !== undefined) this.pitch = v.pitch;
+        if (v.tx !== undefined || v.ty !== undefined || v.d !== undefined) this.place(v.tx ?? this.ex, v.ty ?? this.ey, v.d ?? this.dRef());
       },
+      /** a wished move of the eye (world), limited by the GPU like any input */
+      fly: (x: number, y: number, z: number) => {
+        this.move[0] += x;
+        this.move[1] += y;
+        this.move[2] += z;
+      },
+      zoom: (logRatio: number) => (this.zoomLog += logRatio),
+      eye: () => ({ x: this.ex, y: this.ey, z: this.ez, dNear: this.dNear, dHit: this.dHit, lifts: this.lifts, level: this.nest.camOut[30], margin: this.nest.camOut[31] }),
       /** queue `times` edits at a screen point (ndc), one a frame */
       /** px: the brush's radius in css px (default: the brush button's) */
       sculpt: (op: Op, nx: number, ny: number, times = 1, px?: number) => {
         for (let i = 0; i < times; i++) this.queue.push({ op, nx, ny, px });
       },
-      state: () => ({ live: this.nest.live, wins: this.nest.wins.slice(0, this.nest.live), D: this.D, tx: this.tx, ty: this.ty, stats: { ...this.nest.stats }, queue: this.queue.length }),
+      state: () => ({ live: this.nest.live, wins: this.nest.wins.slice(0, this.nest.live), dNear: this.dNear, ex: this.ex, ey: this.ey, stats: { ...this.nest.stats }, queue: this.queue.length }),
+      /** (diagnostics, a readback) the eye on each level and the column under it */
+      probeCam: async () => {
+        const cam = await this.nest.readCam();
+        const snap = await this.nest.readAll();
+        const out = [];
+        for (let m = 0; m < this.nest.live; m++) {
+          const b = 32 + m * 24;
+          const e = [cam[b + 16], cam[b + 17], cam[b + 18]];
+          const w = this.nest.wins[m]!;
+          const X = w.gx + Math.floor(e[0]);
+          const Y = w.gy + Math.floor(e[1]);
+          const inWin = e[0] >= 0 && e[1] >= 0 && e[0] < w.n && e[1] < w.n;
+          const col = inWin ? snap.column(m, X, Y) : null;
+          const inside = col ? col.z0.some((z0, i) => (i === 0 || e[2] >= z0) && e[2] <= col.z1[i]) : null;
+          out.push({ m, eye: e.map((v) => +v.toFixed(3)), inWin, top: col ? col.z1[col.z1.length - 1] : null, inside, near: cam[b + 19] });
+        }
+        return { eyeZ: cam[2], dNear: cam[28], dHit: cam[29], lifts: cam[27], level: cam[30], levels: out };
+      },
       tint: (on: boolean) => {
         this.render.tint = on;
         this.buttons.get('tint')!.classList.toggle('on', on);

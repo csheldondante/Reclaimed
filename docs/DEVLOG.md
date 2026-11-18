@@ -26306,6 +26306,37 @@ Self-test 23/23 (new: the GPU carves the same tunnels, matching the oracle on ev
 each; a blob added in mid-air; 20 cycles bit-identical with whole-column residual pages). Carve with a sync: 23 ms
 at depth 1, 43 ms at depth 2.
 
+## 2026-11-18 — Nested scales lab, round 2b step 1: the camera is a free eye that is never inside solid
+
+**Why.** At pitch 0.12-0.25 the owner saw sky across the lower screen (local/nested/hill-before.png, add-front.png).
+**Diagnosis** (reproduced headlessly: d = 10, pitch 0.15, eight yaws; the eye read back on every level and compared
+with the intervals of the column under it): at yaw 4.8 and 5.6 the eye was inside solid on both levels (level 1:
+eye z 6.37, column top 9.44), although the march had already shortened the eye. The march from the target to the eye
+stepped by 0.4 x the vertical gap to the nearest bound, which is not a safe step along a near-level ray (a slope
+steeper than 2.5 is crossed between samples); it then backed off only 15 % of the hit distance, still inside the
+hill; the eye itself was never tested; and only the finest level was marched. From inside, the drawn top sheet is seen
+from below and nothing is drawn under the eye: the sky.
+
+**What.** The camera is a free eye with collision (provisional model, a question for the owner). The eye lives on the
+GPU (hi + lo floats a coordinate). The camera pass measures the nearest solid round the eye on every level holding it
+(24 columns each way, 256 threads, a workgroup min): each column's intervals as boxes dilated to the 2 x 2 columns
+between neighbouring centres, so the drawn sheets between column centres lie inside them (unit test, below). The
+finest level that finds solid gives the distance; finer levels that find none bound it from below by their reach. The
+CPU sends a wished move (drag, pinch, wheel, WASD, Q/E); the pass allows at most (nearest - margin) this frame and
+4 x nearest a second (the owner's rule), so the eye cannot cross a surface. A placement or an edit that leaves the eye
+in solid lifts it to the air above (counted; shown on the page). The near plane is half the nearest distance. The
+centre ray's first solid scales drags and zooms. A 128-byte report (eye, nearest, centre hit) is copied out each frame
+and read when ready, never awaited; the CPU uses it for the windows and promotion, which now follow the nearest-solid
+distance, not an orbit distance (NS-22 done). Turn looks round the eye (pitch -1.3..1.5); carving at the centre leaves
+the eye where it is (checked: 25 carves, eye unchanged to the bit; the centre hit went from 3.0 to 7.7, the hole).
+
+**Measured.** The same eight views: the eye is outside solid on every level that draws it (the root disagrees by
+3 cm once at yaw 5.6, under the child, where the root is not drawn). Zooming hard into three hillsides and then
+flying into them for two seconds: never inside; the nearest distance fell to 0.36-0.82 root units with levels 0-2 open
+and 0 lifts in flight. Unit tests 11/11 (new: drawn floors and roofs inside the dilated boxes, 8000 points; it fails,
+as expected, when a layer steps by more than its thickness between columns: NS-24). Self-test 23/23. Stills:
+local/nested/lowpitch-after-a.png, lowpitch-after-b.png (ground to the bottom edge).
+
 
 
 

@@ -42,10 +42,8 @@ export async function opBench(app: App): Promise<OpBench[]> {
   const dev = app.device;
   const nest = app.nest;
   const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-  app.tx = 70;
-  app.ty = 120;
-  app.D = app.Dgoal = 1.5;
   app.pitch = 1.0;
+  app.place(70, 120, 1.5);
   await wait(3500);
   app.frozen = true;
   const time = async (fn: () => void) => {
@@ -148,11 +146,9 @@ export async function flyThrough(app: App, out: (s: string) => void): Promise<Fl
   ];
   for (const z of zooms) {
     // settle at the start: every wanted level open and sharp
-    app.tx = 70;
-    app.ty = 120;
-    app.D = app.Dgoal = z.D;
     app.yaw = -Math.PI / 2;
     app.pitch = 1.0;
+    app.place(70, 120, z.D);
     await wait(3500);
     const ops0 = app.opLog.length;
     const opTimes: { gpu: number; cpu: number }[] = [];
@@ -161,7 +157,7 @@ export async function flyThrough(app: App, out: (s: string) => void): Promise<Fl
     const frames: number[] = [];
     let last = performance.now();
     app.hook = (dt) => {
-      app.tx += speed * dt;
+      app.move[0] += speed * dt;
     };
     const watchOps = () => {
       const fresh = app.opLog.slice(ops0 + opTimes.length);

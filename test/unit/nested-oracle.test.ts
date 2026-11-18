@@ -1,7 +1,7 @@
 // Nested scales lab (docs/design/NESTED_SCALES.md): the oracle's invariants. The page self-test (?selftest=1) runs the
 // same invariants on the GPU passes and compares them with this oracle.
 import { describe, expect, it } from 'vitest';
-import { MAT, Nest, OPEN_BOTTOM, makeRoot, toLayers, type Col, type Frame, type Level } from '../../src/nested/oracle';
+import { MAT, Nest, OPEN_BOTTOM, colDist, makeRoot, toLayers, type Col, type Frame, type Level } from '../../src/nested/oracle';
 
 const K = 8;
 const SEED = 7;
@@ -248,5 +248,46 @@ describe('nested scales oracle', () => {
     n.demote(1);
     n.promote(f);
     expect(maxDiff(snap(n.levels[1]), a)).toBe(0);
+  });
+
+  it('the camera: drawn solid (the sheets between column centres) lies inside the dilated column boxes', () => {
+    // a quad of four columns, each ground (open below) up to a floor f, air, a roof from c to the top t; the draw
+    // interpolates f, c and t over the quad's two triangles (diagonal (0,0)-(1,1)); any point under the drawn floor, or
+    // between the drawn ceiling and the drawn top, must be at distance 0 from some corner's dilated column. This holds
+    // where the four corners' parts of one layer overlap in z (their union is then one interval); a layer that steps
+    // by more than its thickness between neighbouring columns can leave a sliver of drawn roof outside (BACKLOG NS-24).
+    let s = 12345;
+    const rnd = () => (s = (Math.imul(s, 1103515245) + 12345) >>> 0) / 2 ** 32;
+    let bad = 0;
+    for (let trial = 0; trial < 400; trial++) {
+      const cols: Col[] = [];
+      const fz: number[] = [];
+      const cz: number[] = [];
+      const tz: number[] = [];
+      for (let q = 0; q < 4; q++) {
+        const f = rnd() * 3;
+        const c = 3.5 + rnd() * 2;
+        const t = 5.7 + rnd() * 4;
+        fz.push(f);
+        cz.push(c);
+        tz.push(t);
+        cols.push({ mat: [MAT.stone, MAT.soil], z0: [OPEN_BOTTOM, c], z1: [f, t] });
+      }
+      const at = (v: number[], u: number, w: number) => (u >= w ? (1 - u) * v[0] + (u - w) * v[1] + w * v[3] : (1 - w) * v[0] + (w - u) * v[2] + u * v[3]);
+      for (let i = 0; i < 20; i++) {
+        const u = rnd();
+        const w = rnd();
+        const zs = [at(fz, u, w) - 1e-9 - rnd() * 2, at(cz, u, w) + (at(tz, u, w) - at(cz, u, w)) * rnd()];
+        for (const z of zs) {
+          const d = Math.min(...cols.map((c, q) => colDist(c, q & 1, q >> 1, [0.5 + u, 0.5 + w, z])));
+          if (d > 0) bad++;
+        }
+      }
+    }
+    expect(bad).toBe(0);
+    // a point in the air beside or above a single column: its plain distance less the dilation
+    const one: Col = { mat: [MAT.stone], z0: [OPEN_BOTTOM], z1: [2] };
+    expect(colDist(one, 0, 0, [3.5, 0.5, 2])).toBeCloseTo(2, 12);
+    expect(colDist(one, 0, 0, [0.5, 0.5, 5])).toBeCloseTo(3, 12);
   });
 });

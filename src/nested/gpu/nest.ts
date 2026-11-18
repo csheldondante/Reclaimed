@@ -387,11 +387,45 @@ export class GpuNest {
     this.submit();
   }
 
-  /** this frame's camera: the per-level view-projections (cam buffer) from camIn */
+  /** this frame's camera: the eye moved (limited by the nearest solid) and the per-level view-projections (cam buffer)
+   *  from camIn; then its report (cam words 0-31) copied out and read when ready (never awaited) */
   camera(): void {
     this.run('camera', this.uni(), 1);
     this.submit();
+    const buf = this.camRing.find((b) => !b.busy);
+    if (!buf) return;
+    buf.busy = true;
+    const enc = this.device.createCommandEncoder({ label: 'nest camera report' });
+    enc.copyBufferToBuffer(this.cam, 0, buf.b, 0, 128);
+    this.device.queue.submit([enc.finish()]);
+    const seq = ++this.camSeq;
+    buf.b.mapAsync(GPUMapMode.READ).then(
+      () => {
+        if (seq > this.camGot) {
+          this.camGot = seq;
+          this.camOut.set(new Float32Array(buf.b.getMappedRange()));
+        }
+        buf.b.unmap();
+        buf.busy = false;
+      },
+      () => (buf.busy = false),
+    );
   }
+  /** place the eye: back from the ground under (x, y) by distance d along the view (applied by the next camera pass
+   *  whose camIn[3] is 1) */
+  placeEye(x: number, y: number, d: number): void {
+    this.device.queue.writeBuffer(this.cam, 256 * 4, new Float32Array([x, y, d]));
+  }
+  /** the camera's last report (cam words 0-31): 20-22 eye hi, 24-26 eye lo, 27 lifts, 28 nearest solid, 29 centre hit
+   *  distance (-1 none), 30 the measuring level, 31 the margin */
+  readonly camOut = new Float32Array(32);
+  private camRingB: { b: GPUBuffer; busy: boolean }[] | null = null;
+  private get camRing(): { b: GPUBuffer; busy: boolean }[] {
+    this.camRingB ??= [0, 1, 2].map(() => ({ b: this.device.createBuffer({ label: 'nest camera report', size: 128, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }), busy: false }));
+    return this.camRingB;
+  }
+  private camSeq = 0;
+  private camGot = 0;
 
   /** whether window w can sit at depth L inside the current parent */
   fits(L: number, w: Win): boolean {
@@ -433,6 +467,18 @@ export class GpuNest {
   }
 
   // ---- the self-test's readback (never on the interactive path) -------------------------------------------------------
+  /** (diagnostics) the camera buffer */
+  async readCam(): Promise<Float32Array> {
+    this.submit();
+    const tmp = this.device.createBuffer({ size: this.cam.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const enc = this.device.createCommandEncoder();
+    enc.copyBufferToBuffer(this.cam, 0, tmp, 0, this.cam.size);
+    this.device.queue.submit([enc.finish()]);
+    await tmp.mapAsync(GPUMapMode.READ);
+    const out = new Float32Array(tmp.getMappedRange().slice(0));
+    tmp.destroy();
+    return out;
+  }
   async readAll(): Promise<Snapshot> {
     this.submit();
     const read = async (b: GPUBuffer, size = b.size) => {

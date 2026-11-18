@@ -161,6 +161,14 @@ self-test).
   vertical strips where a layer ends between columns. All on the GPU.
 - Stretching on steep faces and strips: owner: "triplanar mapping may resolve those". Not this round: SDF
   footprint masks for crisp layer edges (BACKLOG NS-18), surface nets, strata, flow, hex.
+- Mixed blocks (the parent copies the most-structured child): owner: "I think this is fine for now but we will have
+  to reconsider based on visual quality when zooming in and out." (BACKLOG NS-28: judge it in zoom in/out stills.)
+- A layer ending in a straight wall half-way between columns is fine until SDF footprints: owner: "let's wait for SDF
+  and then we can have nicer material boundaries at zoom."
+- **Camera, provisional (the coordinator's choice, a question for the owner): a free eye with collision.** Drag, keys
+  and pinch move the eye itself; Turn looks round it; there is no orbit target. The eye is never inside solid on any
+  level; it can enter a tunnel or go under an overhang; its speed is limited by the distance to the nearest solid in
+  any direction, and promotion and demotion use that distance.
 
 ## Column correspondence (round 2; the Storage section's rules extended)
 
@@ -223,9 +231,18 @@ self-test).
     (into a tunnel's floor); the eye stops short of the first solid between target and eye.
   - Not yet: the rim morph and fade for B's faces (only the top sheet morphs: NS-21); triplanar texture (colours
     are flat per material, so nothing stretches, but nothing shows texture either).
+- Round 2b step 1 (2026-11-18): the free eye (nest.wgsl `camera`). The eye lives on the GPU (hi + lo floats). Each
+  frame the pass measures the nearest solid on every level holding the eye (24 columns each way; a column's intervals
+  as boxes dilated to the 2 x 2 columns between neighbouring centres, which contain the drawn sheets where a layer's
+  parts in neighbouring columns overlap in z: NS-24); the finest level that finds solid gives the distance, finer
+  ones bound it from below. The wished move is limited to (nearest - margin) a frame and 4 x nearest a second; a
+  placement or edit that leaves the eye in solid lifts it to the air above (counted). Near plane: half the nearest
+  distance. A 128-byte report (eye, nearest, the centre ray's hit) is read back asynchronously, never awaited; the
+  CPU's windows follow the reported eye and open or close levels by the nearest distance.
 
 ## Open questions
 
 - Scale factor per level: 8, or smaller (4) for gentler steps?
 - Which lab: the terrain branch's sandbox, or a new bare page with only terrain?
 - How large is a child, in parent cells, on the phone and on the PC?
+- Camera: the free eye with collision (provisional), or an orbit camera round a target (with the same collision)?
