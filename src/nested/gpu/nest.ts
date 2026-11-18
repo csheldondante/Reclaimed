@@ -215,7 +215,8 @@ export class GpuNest {
   /** a CPU slot: a chunk rect to dispatch over (written before this op's submit) */
   private cpuSlot(i: number, chunks: { x0: number; y0: number; x1: number; y1: number }): number {
     const s = CPU_SLOT + i;
-    this.device.queue.writeBuffer(this.reg, (16 + s * 12) * 4, new Int32Array([0, 0, 0, 0, chunks.x0, chunks.y0]));
+    // (the rect: every column of the dispatched chunks)
+    this.device.queue.writeBuffer(this.reg, (16 + s * 12) * 4, new Int32Array([-(2 ** 30), -(2 ** 30), 2 ** 30, 2 ** 30, chunks.x0, chunks.y0]));
     this.device.queue.writeBuffer(this.args, s * 16, new Uint32Array([chunks.x1 - chunks.x0, chunks.y1 - chunks.y0, 1, 0]));
     return s;
   }

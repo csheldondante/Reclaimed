@@ -80,6 +80,8 @@ fn ensurePages(lid: u32, cx: i32, cy: i32, need: u32, birth: f32) {
     if (tFind(tKey0(cx, cy), tKey1(lid, cz)) == NONE) {
       let p = allocPage();
       if (p != NONE) {
+        // a fresh page's counts are zero: columns a pass leaves alone read as empty (a residual: zero)
+        for (var c = 0u; c < 256u; c++) { pg[p * PW + c] = 0u; }
         if (tInsert(tKey0(cx, cy), tKey1(lid, cz), p, birth)) {
           atomicMax(&ctl[7], cz);
         } else {
@@ -157,6 +159,7 @@ var<workgroup> shv: array<f32, 256>;
 var<workgroup> wmax: atomic<u32>;
 var<workgroup> wany: atomic<u32>;
 var<workgroup> wlive: atomic<u32>;
+var<workgroup> wKeep: u32;
 
 var<workgroup> wOrigin: vec2<i32>;
 /** a slot's dispatch origin, uniform across the workgroup (it is read from a storage buffer) */
@@ -175,6 +178,8 @@ var<private> gOff: vec2<i32>;
 var<private> gT: vec2<f32>;
 var<private> gCompat: u32;
 var<private> gS: f32;
+/** the column is in the slot's rect (an edit's exact change; promote and slide: everything) */
+var<private> gAct: bool;
 
 fn blockSum(lx: u32, ly: u32, k: u32) -> f32 {
   let bx = (lx / k) * k;
@@ -212,14 +217,9 @@ fn layers(lx: u32, ly: u32, li: u32, maxN: u32, mode: u32, write: bool) {
   let P = L - 1u;
   let k = i32(u.a.x);
   let kf = f32(k);
+  // z: the enhanced column's running bound, top down; dPrev: the derived z0 of the interval above (mode 0)
   var z = gS;
-  if (mode == 0u) {
-    z = gS + resAt(L, 0u, 0u);
-  } else {
-    let live = topS(L, gX, gY, gN) - gS;
-    if (live != 0.0) { atomicOr(&wany, 1u); }
-    if (write) { setRes(L, 0u, live, 0.0); }
-  }
+  var dPrev = 3.0e38;
   for (var uu = 0u; uu + 1u < maxN; uu++) {
     let valid = uu + 1u < gN;
     let i = select(1u, gN - 1u - uu, valid);
@@ -252,21 +252,46 @@ fn layers(lx: u32, ly: u32, li: u32, maxN: u32, mode: u32, write: bool) {
         vals[which] = e;
       }
     }
-    if (valid && mode == 0u) {
-      let th = max(0.0, vals[0] + resAt(L, i, 1u));
-      let gap = max(0.0, vals[1] + resAt(L, i, 0u));
-      if (write) { setIvl(L, gX, gY, i, z - th, z, ivlAt(P, gP.x, gP.y, i).m); }
-      z = z - th - gap;
-    }
-    if (valid && mode == 1u) {
-      let lth = layerVal(L, gX, gY, 2u * i);
-      let lgap = layerVal(L, gX, gY, 2u * i - 1u);
-      let r = vec2<f32>(lgap - vals[1], lth - vals[0]);
-      if (r.x != 0.0 || r.y != 0.0) { atomicOr(&wany, 1u); }
-      if (write) { setRes(L, i, r.x, r.y); }
+    if (valid) {
+      let e1 = z;
+      let e0 = z - vals[0];
+      if (gAct && mode == 0u) {
+        // the residual is per bound; the order of the bounds is kept (a no-op when nothing changed under them)
+        let d1 = min(addRes(e1, L, i, 1u), dPrev);
+        let d0 = min(addRes(e0, L, i, 0u), d1);
+        if (write) { setIvl(L, gX, gY, i, d0, d1, ivlAt(P, gP.x, gP.y, i).m); }
+        dPrev = d0;
+      }
+      if (gAct && mode == 1u) {
+        let lv = ivlAt(L, gX, gY, i);
+        putRes(lv.z0, e0, L, i, 0u, write);
+        putRes(lv.z1, e1, L, i, 1u, write);
+      }
+      z = e0 - vals[1];
     }
   }
-  if (mode == 0u && write && gN > 0u) { setIvl(L, gX, gY, 0u, OPEN_BOTTOM, z, ivlAt(P, gP.x, gP.y, 0u).m); }
+  if (gAct && gN > 0u) {
+    if (mode == 0u && write) { setIvl(L, gX, gY, 0u, OPEN_BOTTOM, min(addRes(z, L, 0u, 1u), dPrev), ivlAt(P, gP.x, gP.y, 0u).m); }
+    if (mode == 1u) {
+      if (write) { setRes(L, 0u, 0.0, 0.0); }
+      putRes(ivlAt(L, gX, gY, 0u).z1, z, L, 0u, 1u, write);
+    }
+  }
+}
+// The residual of a bound is two floats, record 2i + (0: z0, 1: z1) of the residual column: hi = live - e and
+// lo = live - (e + hi). Then (e + hi) + lo == live exactly (lo is exact: e + hi lies within an ulp of live), so deriving
+// reproduces a live column bit for bit; one float cannot when live's ulp is finer than e's.
+fn addRes(e: f32, L: u32, i: u32, which: u32) -> f32 {
+  let rec = 2u * i + which;
+  return (e + resAt(L, rec, 0u)) + resAt(L, rec, 1u);
+}
+fn putRes(live: f32, e: f32, L: u32, i: u32, which: u32, write: bool) {
+  let hi = live - e;
+  let lo = live - (e + hi);
+  if (hi != 0.0 || lo != 0.0) { atomicOr(&wany, 1u); }
+  if (!write) { return; }
+  if ((e + hi) + lo != live) { atomicAdd(&ctl[6], 1u); }
+  setRes(L, 2u * i + which, hi, lo);
 }
 
 @compute @workgroup_size(16, 16)
@@ -319,29 +344,43 @@ fn derive(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
       if (sameMats(P, q, gP, gN)) { gCompat |= 1u << u32(jj * 2 + ii); }
     }
   }
+  let blk = vec4<i32>(slotW(u.r.x, 0u), slotW(u.r.x, 1u), slotW(u.r.x, 2u), slotW(u.r.x, 3u));
+  gAct = inBox(gX, gY, blk);
   if (li == 0u) {
     atomicStore(&wmax, 0u);
     atomicStore(&wany, 0u);
+    atomicStore(&wlive, 0u);
   }
   workgroupBarrier();
-  atomicMax(&wmax, gN);
-  if (mode == 1u && colCount(L, gX, gY) != gN) { atomicAdd(&ctl[4], 1u); }
+  // pages: as many as the chunk's longest column needs, the columns left alone included
+  atomicMax(&wmax, select(colCount(L, gX, gY), gN, gAct));
+  if (!gAct) { atomicAdd(&wlive, 1u); }
+  if (mode == 1u && gAct && colCount(L, gX, gY) != gN) { atomicAdd(&ctl[4], 1u); }
   let maxN = workgroupUniformLoad(&wmax);
   let need = (maxN + K - 1u) / K;
+  // a residual column holds two records an interval
+  let needR = (2u * maxN + K - 1u) / K;
   if (mode == 0u) {
     if (li == 0u) { ensurePages(L, cx, cy, need, u.d.x); }
     storageBarrier();
     workgroupBarrier();
-    setCount(L, gX, gY, gN, need);
+    if (gAct) { setCount(L, gX, gY, gN, need); }
     layers(lid.x, lid.y, li, maxN, 0u, true);
   } else {
     layers(lid.x, lid.y, li, maxN, 1u, false);
     let any = workgroupUniformLoad(&wany);
-    if (li == 0u) { ensurePages(RES_ID + L, cx, cy, select(0u, need, any != 0u), u.d.x); }
+    let others = workgroupUniformLoad(&wlive);
+    // no page where nothing differs; a chunk with columns left alone keeps the pages it has (and its columns in the
+    // rect are written, zero or not)
+    if (li == 0u) {
+      let keep = others != 0u && pageOf(RES_ID + L, cx, cy, 0u) < NOT_LOADED;
+      wKeep = select(0u, 1u, keep);
+      ensurePages(RES_ID + L, cx, cy, select(0u, needR, any != 0u || keep), u.d.x);
+    }
     storageBarrier();
-    workgroupBarrier();
-    if (any != 0u) {
-      setCount(RES_ID + L, gX, gY, gN, need);
+    let keepU = workgroupUniformLoad(&wKeep);
+    if (any != 0u || keepU != 0u) {
+      if (gAct) { setCount(RES_ID + L, gX, gY, 2u * gN, needR); }
       layers(lid.x, lid.y, li, maxN, 1u, true);
     }
   }
@@ -587,9 +626,17 @@ fn plan() {
     if (pr.x >= pr.z || pr.y >= pr.w) { continue; }
     let cols = pr * k;
     let cc = chunksOver(cols, u32(m));
-    if (m <= d) { setChunks(slotOf(m, 1), cols, cc); }
-    setChunks(slotOf(m, 2), cols, cc);
-    ch[m] = cc * 16;
+    // at and above the edit, a level's live columns stay (only the restricted or edited ones changed) and its
+    // residual takes up its parent's change; derive reproduces them exactly (exactRes), so it is not run there. Below,
+    // the live columns follow their parent over the enhance support. (Deriving the levels above too, over the support,
+    // made the next level's region its whole window: an edit at depth 2 cost ~100 ms.)
+    if (m <= d) {
+      setChunks(slotOf(m, 1), cols, cc);
+    } else {
+      setChunks(slotOf(m, 2), cols, cc);
+      ch[m] = cols;
+      has[m] = true;
+    }
     has[m] = true;
   }
 }

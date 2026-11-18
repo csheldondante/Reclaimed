@@ -40,11 +40,28 @@ export class App {
   /** per level, when its last promote or slide was submitted, and that op's CPU time (encode + submit) */
   readonly opLog: { what: string; depth: number; at: number; ms: number }[] = [];
   hook: ((dt: number) => void) | null = null;
+  /** after the frame's draw was submitted (the measurements) */
+  post: (() => void) | null = null;
+  private keys = new Set<string>();
+  /** (the benchmark) the levels left as they are */
+  frozen = false;
 
   static async start(device: GPUDevice, q: URLSearchParams): Promise<App> {
     const app = new App(device, q);
     (window as unknown as { nested: unknown }).nested = app.api();
     requestAnimationFrame(() => app.frame());
+    if (q.get('fly') === '1') {
+      const log = document.getElementById('log')!;
+      const { flyThrough, opBench } = await import('./fly');
+      setTimeout(async () => {
+        const bench = q.get('bench') === '0' ? [] : await opBench(app);
+        const rows = await flyThrough(app, (s) => console.log(`[fly] ${s}`));
+        (window as unknown as { __fly: unknown }).__fly = { done: true, rows, bench };
+        log.style.display = 'block';
+        log.style.inset = 'auto 8px 70px 8px';
+        log.textContent = rows.map((r) => `${r.zoom}: frame p50 ${r.frameP50.toFixed(1)} ms, p95 ${r.frameP95.toFixed(1)}, holes ${r.holesMax}, coarse ${(r.coarseMean * 100).toFixed(1)} %`).join('\n');
+      }, 1500);
+    }
     return app;
   }
 
@@ -139,7 +156,10 @@ export class App {
       e.preventDefault();
       this.Dgoal = this.clampD(this.Dgoal * Math.exp(e.deltaY * 0.0012));
     }, { passive: false });
+    window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
+    window.addEventListener('blur', () => this.keys.clear());
     window.addEventListener('keydown', (e) => {
+      this.keys.add(e.key.toLowerCase());
       const m: Record<string, () => void> = { '1': () => this.setMode('raise'), '2': () => this.setMode('dig'), '3': () => this.setMode('melt'), '4': () => this.setMode('move'), '5': () => this.setMode('orbit'), t: () => this.buttons.get('tint')!.click() };
       m[e.key.toLowerCase()]?.();
     });
@@ -235,11 +255,14 @@ export class App {
       const k = this.k;
       const inset = 0.75 / k;
       const cut: DrawLevel['cut'] = c ? [c.gx / k - w.gx + inset, c.gy / k - w.gy + inset, (c.gx + c.n) / k - w.gx - inset, (c.gy + c.n) / k - w.gy - inset] : null;
+      // (metrics) where the child should be now: the window the level logic keeps (its current one while within the
+      // slack) or would move to
       let want: DrawLevel['want'] = null;
-      if (m + 1 <= this.maxDepth && this.D < 0.45 * this.width(m + 1)) {
+      if (m + 1 <= this.maxDepth && (c || this.D < 0.45 * this.width(m + 1))) {
         const s = this.k ** m;
-        const g = this.nest.windowAt(m + 1, this.tx * s, this.ty * s, this.n);
-        want = [g.gx / k - w.gx, g.gy / k - w.gy, (g.gx + g.n) / k - w.gx, (g.gy + g.n) / k - w.gy];
+        let g = this.nest.windowAt(m + 1, this.tx * s, this.ty * s, this.n);
+        if (c && Math.abs(g.gx - c.gx) < 32 && Math.abs(g.gy - c.gy) < 32) g = c;
+        want = [g.gx / k - w.gx + inset, g.gy / k - w.gy + inset, (g.gx + g.n) / k - w.gx - inset, (g.gy + g.n) / k - w.gy - inset];
       }
       out.push({ depth: m, cut, want });
     }
@@ -261,10 +284,16 @@ export class App {
       this.canvas.height = H;
     }
     this.hook?.(dt);
+    // fly: WASD or arrows move over the ground, Q and E down and up; speed scales with the distance to the ground
+    const kx = (this.keys.has('d') || this.keys.has('arrowright') ? 1 : 0) - (this.keys.has('a') || this.keys.has('arrowleft') ? 1 : 0);
+    const ky = (this.keys.has('s') || this.keys.has('arrowdown') ? 1 : 0) - (this.keys.has('w') || this.keys.has('arrowup') ? 1 : 0);
+    if (kx || ky) this.pan(-kx * 600 * dt, -ky * 600 * dt);
+    if (this.keys.has('q')) this.Dgoal = this.clampD(this.Dgoal * Math.exp(-2 * dt));
+    if (this.keys.has('e')) this.Dgoal = this.clampD(this.Dgoal * Math.exp(2 * dt));
     // zoom eases toward its goal, at most 15 % a frame (the camera cannot outrun a promotion)
     const ratio = Math.min(1.15, Math.max(1 / 1.15, this.Dgoal / this.D));
     this.D = this.clampD(this.D * ratio);
-    this.levels();
+    if (!this.frozen) this.levels();
     const hx = Math.fround(this.tx);
     const hy = Math.fround(this.ty);
     const ndc = this.sculptAt ? [(this.sculptAt.x / this.canvas.clientWidth) * 2 - 1, 1 - (this.sculptAt.y / this.canvas.clientHeight) * 2] : [0, 0];
@@ -278,6 +307,7 @@ export class App {
       this.timed('edit', -1, () => this.nest.edit({ op, radius, amount: (op === 'melt' ? 0 : 0.04) * radius, rate: 0.1 }));
     }
     this.render.draw(this.drawList());
+    this.post?.();
     this.text();
     requestAnimationFrame(() => this.frame());
   }
@@ -293,7 +323,7 @@ export class App {
       `Camera ${(this.D * ROOT_COLUMN_M).toFixed(this.D * ROOT_COLUMN_M < 10 ? 2 : 0)} m from the ground. Frame ${avg.toFixed(1)} ms.`,
       `Pages: ${st.used} used of ${st.cap}.`,
       live < this.maxDepth + 1 ? 'Zoom in close to the ground to open a finer level.' : 'This is the finest level.',
-      this.mode === 'move' ? 'Drag to move. Pinch or scroll to zoom.' : this.mode === 'orbit' ? 'Drag to turn the view.' : `Drag on the ground to ${this.mode}.`,
+      this.mode === 'move' ? 'Drag to move. Pinch or scroll to zoom. Keys: WASD to fly, Q and E down and up.' : this.mode === 'orbit' ? 'Drag to turn the view.' : `Drag on the ground to ${this.mode}.`,
     ];
     if (st.refused || st.mismatch || st.tableFull) lines.push(`Error: ${st.refused} pages refused, ${st.mismatch} blocks mismatched, table full ${st.tableFull} times.`);
     this.info.textContent = lines.join('\n');

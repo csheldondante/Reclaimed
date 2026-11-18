@@ -258,11 +258,18 @@ export class Nest {
         const E = this.enhanceBlock(parent, child.f, px, py);
         for (let b = 0; b < k; b++)
           for (let a = 0; a < k; a++) {
-            const e = E[b * k + a];
+            const e = fromLayers(E[b * k + a]);
             const r = res.get(this.key(depth, px * k + a, py * k + b));
-            const v = e.v.map((x, i) => (r ? x + r[i] : x));
-            for (let i = 1; i < v.length; i++) v[i] = Math.max(0, v[i]);
-            child.set(px * k + a, py * k + b, fromLayers({ mat: e.mat, v }));
+            // the residual per bound; the bounds kept in order (a no-op when nothing changed under them)
+            let prev = Infinity;
+            const n = e.mat.length;
+            const add = (v: number, at: number) => (r ? v + r[at] + r[at + 1] : v);
+            for (let i = n - 1; i >= 0; i--) {
+              e.z1[i] = Math.min(add(e.z1[i], 4 * (n - 1 - i)), prev);
+              if (i > 0) e.z0[i] = Math.min(add(e.z0[i], 4 * (n - 1 - i) + 2), e.z1[i]);
+              prev = e.z0[i];
+            }
+            child.set(px * k + a, py * k + b, e);
           }
       }
   }
@@ -279,9 +286,15 @@ export class Nest {
         for (let b = 0; b < k; b++)
           for (let a = 0; a < k; a++) {
             const key = this.key(depth, px * k + a, py * k + b);
-            const live = toLayers(child.at(px * k + a, py * k + b)!);
-            const e = E[b * k + a];
-            const r = live.v.map((x, i) => x - e.v[i]);
+            const live = child.at(px * k + a, py * k + b)!;
+            const e = fromLayers(E[b * k + a]);
+            // per bound, top down: [z1, z0] of each interval (interval 0: z1 only, its z0 is open)
+            // per bound, top down, two floats each: z1 then z0 of each interval (interval 0: z1 only, its z0 is open)
+            const r: number[] = [];
+            for (let i = e.mat.length - 1; i >= 0; i--) {
+              r.push(...resPair(live.z1[i], e.z1[i]));
+              if (i > 0) r.push(...resPair(live.z0[i], e.z0[i]));
+            }
             if (r.some((x) => x !== 0)) res.set(key, r);
             else res.delete(key);
           }
@@ -353,9 +366,13 @@ export class Nest {
       if (!u) continue;
       const pr = { x0: Math.max(u.x0, cover.x0), y0: Math.max(u.y0, cover.y0), x1: Math.min(u.x1, cover.x1), y1: Math.min(u.y1, cover.y1) };
       if (pr.x0 >= pr.x1 || pr.y0 >= pr.y1) continue;
+      // at and above the edit the live columns stay and the residual takes up the parent's change; below, the live
+      // columns follow their parent
       if (m <= depth) this.residual(m, pr);
-      this.derive(m, pr);
-      changed[m] = { x0: pr.x0 * k, y0: pr.y0 * k, x1: pr.x1 * k, y1: pr.y1 * k };
+      else {
+        this.derive(m, pr);
+        changed[m] = { x0: pr.x0 * k, y0: pr.y0 * k, x1: pr.x1 * k, y1: pr.y1 * k };
+      }
     }
   }
 
@@ -366,6 +383,13 @@ export class Nest {
     const s = this.k ** depth;
     return { x: this.levels[depth].f.gx / s, y: this.levels[depth].f.gy / s, z, s };
   }
+}
+
+/** a bound's residual as two floats: (e + hi) + lo === live exactly, so deriving reproduces the live column (one float
+ *  cannot when live's ulp is finer than e's; gpu: nest.wgsl putRes) */
+export function resPair(live: number, e: number): [number, number] {
+  const hi = live - e;
+  return [hi, live - (e + hi)];
 }
 
 /** fractal value noise, roughly [-1, 1] */

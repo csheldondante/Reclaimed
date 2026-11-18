@@ -42,6 +42,22 @@ user) · `deferred` (agreed for later).
 - NS-11 (limit) A level's z origin is picked when it is promoted somewhere new and kept across slides, so a long
   slide at depth >= 2 over steep ground can carry its local heights past the 1000-unit range. Re-pick on a
   slide that leaves the range (a full re-promote, faded).
+- NS-12 (perf) Promoting a 256² level is one GPU burst of ~50 ms on the desktop iGPU (a phone will be slower). The
+  fade hides it on screen, but the frame that carries it stalls. Spread a promote over frames, chunks nearest the
+  focus first (the table already allows a partly filled level).
+- NS-13 (hack) The pool's worst-case reserve is loose (the self-test's pool grew to 4096 pages for ~300 in use; an
+  edit reserves pages for every level's brush box). Tighten it, or let the GPU report pages it could not get and
+  re-run the op after growing.
+- NS-14 (limit) Table tombstones are never compacted; after very many slides lookups that miss get longer.
+  Measured fine for this lab's runs (an edit at depth 2: 14 ms on a fresh table, 6.8 ms after 12 slides and 6
+  promotes). Rehash in place when tombstones pass a share.
+- NS-15 (limit) The fly-through's frame times are vsync-bound (10 ms at 100 Hz headless). An uncapped run before the
+  depth-2 fix gave p50 1.3-2.5 ms, p95 1.8-3.4 ms. The owner's phone bench is the real number.
+- NS-16 (limit) The block-mean correction is a sin²·sin² bump per parent column. It is exact and C1 but shows as a
+  faint egg-crate where a block's detail mean is large. A smooth exact correction (B-spline coefficients solved
+  per block) would remove it.
+- NS-17 (limit) The test runner's server answers "not found" for a bare /nested.html (any query works). Vite's dev
+  server serves it either way.
 
 ## Terrain: rivers first (2026-11-17, `terrain-rivers`; docs/design/TERRAIN_RIVERS.md, DECISIONS 2026-11-17)
 

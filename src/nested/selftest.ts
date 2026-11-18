@@ -229,6 +229,6 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
   await device.queue.onSubmittedWorkDone();
   await new Promise((r) => setTimeout(r, 50));
   const st = g.stats;
-  check('the pool grew under load with nothing refused; no mismatches, table never full', st.grows > 0 && s.ctl[1] === 0 && s.ctl[4] === 0 && s.ctl[5] === 0, `started at 16 pages, grew ${st.grows} times to ${g.cap}; refused ${s.ctl[1]}, mismatches ${s.ctl[4]}, table full ${s.ctl[5]}`);
+  check('the pool grew under load with nothing refused; no mismatches, table never full, every residual exact', st.grows > 0 && s.ctl[1] === 0 && s.ctl[4] === 0 && s.ctl[5] === 0 && s.ctl[6] === 0, `started at 16 pages, grew ${st.grows} times to ${g.cap}; refused ${s.ctl[1]}, mismatches ${s.ctl[4]}, table full ${s.ctl[5]}, inexact residuals ${s.ctl[6]}`);
   return out;
 }

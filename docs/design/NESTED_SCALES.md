@@ -169,6 +169,16 @@ self-test).
   chunks with a chunk of slack. Depth 2 and 3 are the same code (0.63 cm columns at depth 3, k = 8).
 - Detail: wavelengths 2..k/2 child columns, amplitude 0.08 x wavelength. With wavelength k the block-mean
   correction showed as regular pits (it peaks at 4x a block's mean).
+- Step 4 (2026-11-18): free camera (Turn mode or right drag orbits, pitch 0.12-1.5; WASD flies, Q/E down and up;
+  speed and zoom limited by the distance to the ground; the eye kept above the ground on the GPU). `?fly=1` runs
+  an op benchmark and the fly-through (DEVLOG). Two design-level fixes came out of it:
+  - **Residuals are per bound and two floats.** A residual is (hi, lo) for each z0 and z1, with (e + hi) + lo ==
+    live exactly, so deriving a level reproduces its live columns bit for bit. One float cannot (when live's ulp is
+    finer than e's). Per-bound residuals also keep a dug-out layer at zero thickness when its parent rises (NS-8
+    eased).
+  - **At and above the edited level, live columns stay; only residuals are recomputed** (design point 3, as
+    written). Below, live columns follow their parent over the enhance support. Re-deriving the levels above too
+    made the next level's region its whole window (an edit at depth 2: 104 ms; now 6.8 ms).
 
 ## Open questions
 

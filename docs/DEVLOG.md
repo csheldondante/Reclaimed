@@ -26244,5 +26244,46 @@ d1-edit-from-root (zoomed out to the root only) and d1-edit-back-in (zoomed in a
 residual); finest-depth3.png (four levels, 0.63 cm columns); zoom-map-to-finest.gif. Frame time in the headless
 desktop runs: 9.8-10 ms with two to four levels (vsync-bound at 100 Hz; measured properly in step 4).
 
+## 2026-11-18 — Nested scales lab, step 4: free camera, the streaming measurement, two design-level fixes
+
+**Free camera.** Turn mode (or right drag) orbits, pitch 0.12-1.5 rad; WASD flies at a speed set by the distance to
+the ground; Q/E down and up; zoom eases at most 15 % a frame; the camera pass keeps the eye 0.08 x distance above the
+ground under it. local/nested/free-camera(-tint).png: three levels to the horizon, no crack in the plain view.
+
+**The op benchmark (`?fly=1`, each op submitted alone and awaited, levels frozen; desktop iGPU, D3D11).** First run:
+promote depth 2 (65k columns) 45 ms, slide by two chunks 3.8 ms, edit at depth 1 5.6 ms, **edit at depth 2 107 ms**,
+melt at depth 2 101 ms. Not the hash table's tombstones (104 ms on a fresh table too). The cause: after deriving a
+level the plan marked its derive region as changed; one level down that region grew by the enhance support times k
+and covered the whole window, so the depth-2 residual and derive ran on all 256 chunks. The design's point 3 says
+the levels at and above an edit keep their live columns and their residuals take up the parent's change; so they
+need no derive, if derive reproduces a live column exactly. It did not quite: residual = live - e in one f32 cannot
+always give e + r == live (the oracle found cases where live's ulp is finer than e's). Residuals are now per bound
+(z0, z1) and two floats (hi = live - e, lo = live - (e + hi)), and (e + hi) + lo == live exactly; the GPU counts
+any miss (0 in the self-test). The plan runs only the residual at and above the edit, and derives below it over
+the exact block rect (derive and residual now touch only the columns of the rect's blocks; a fresh residual page
+has zero counts, so columns left alone read as zero). After: edit at depth 2 **6.8 ms** (14 ms the first time),
+melt 8.7 ms, edit at depth 1 4.0 ms, slide 4.0 ms, promote of a 256² level 50 ms (NS-12). Unit tests 8/8 and the
+self-test 20/20 pass with the new residual (bit-identical demote/promote, three-level chain, 100 cycles).
+
+**The fly-through.** Each zoom: settle, then 3 s at two camera distances a second along x (pitch 1.0 rad, no sky in
+view), then stop. The info target is read back every second frame (measurement only).
+
+| zoom | speed | frame p50 / p95 / max (vsync) | holes | not sharp, mean / max | settle after stop | slides | GPU done after a slide, mean / max |
+|---|---|---|---|---|---|---|---|
+| depth 1 open (40 cm) | 76.8 m/s | 10.0 / 10.2 / 10.8 ms | 0 px in 187 frames | 20.2 % / 34.4 % | 0.40 s | 18 | 17 / 27 ms |
+| depth 2 open (5 cm) | 9.6 m/s | 10.0 / 10.2 / 10.6 ms | 0 px in 186 frames | 16.7 % / 29.1 % | 0.39 s | 20 | 12 / 29 ms |
+| depth 3 open (0.63 cm) | 1.28 m/s | 10.0 / 10.3 / 11.0 ms | 0 px in 185 frames | 27.9 % / 39.3 % | 0.38 s | 21 | 12 / 16 ms |
+
+"Not sharp" = pixels drawn by a parent inside where its child should be, or by a child chunk still fading in. A
+slide's entering chunks are sharp at GPU-done + the 0.4 s fade (~0.42-0.43 s). Uncapped frame times (an earlier run,
+`--chromeargs disable-gpu-vsync,disable-frame-rate-limit`): p50 1.3 / 1.9 / 2.5 ms, p95 1.8 / 3.4 / 3.3 ms.
+
+**Did the owner's hope hold?** The parent as an always-present proxy: yes. No pixel ever lacked a surface (0 holes in
+558 read frames over three zooms at speed), and nothing popped: every promote and slide starts equal to the parent
+and sharpens over 0.4 s. But at a fast traverse (two camera distances a second) a fifth to a quarter of the screen
+is still fading at any moment (up to 39 %), because the windows slide in two-chunk steps and each step fades. The
+fade length, the slack, and the speed limit trade sharpness against pop; the phone will need its own numbers.
+
+
 
 
