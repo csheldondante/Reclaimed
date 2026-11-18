@@ -147,6 +147,7 @@ export class Renderer {
   private uniforms(levels: DrawLevel[], now: number, instB: number[] = []): void {
     const st = new ArrayBuffer(DU * MAX_LEVELS);
     for (const lv of levels) {
+      if (!this.nest.wins[lv.depth]) continue;
       const w = this.nest.wins[lv.depth]!;
       const p = lv.depth > 0 ? this.nest.wins[lv.depth - 1]! : null;
       const i = new Int32Array(st, lv.depth * DU, 8);
@@ -186,11 +187,13 @@ export class Renderer {
     this.draw(levels); // (the bind group current)
     const out = [];
     for (const lv of levels) {
+      // (a level demoted while this awaited: skipped)
+      if (!this.nest.wins[lv.depth]) continue;
       const n = this.nest.wins[lv.depth]!.n;
       const res = [];
       for (const [pipe, count] of [
         [this.capPipes.a, n * n],
-        [this.capPipes.b, inst[lv.depth] * 18],
+        [this.capPipes.b, inst[lv.depth] * 36],
       ] as const) {
         const size = Math.max(16, count * 16);
         const buf = this.device.createBuffer({ size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
@@ -202,7 +205,10 @@ export class Renderer {
         p.setPipeline(pipe);
         p.setBindGroup(0, this.bg!, [lv.depth * DU]);
         p.setBindGroup(1, bg1);
-        if (count > 0) p.dispatchWorkgroups(Math.ceil(count / 64));
+        // (two dimensions: a level's items can need more than 65,535 workgroups)
+        const groups = Math.ceil(count / 64);
+        const gx = Math.min(groups, 65535);
+        if (count > 0) p.dispatchWorkgroups(gx, Math.ceil(groups / gx));
         p.end();
         this.device.queue.submit([e.finish()]);
         res.push(new Float32Array(await read(buf, size)));

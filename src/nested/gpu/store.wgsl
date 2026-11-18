@@ -125,8 +125,10 @@ const GAP_ID: u32 = 16u;
 const GREC: u32 = 3u;
 const MESH_ID: u32 = 24u;
 const MESH_HDR: u32 = 4u;
-const ITEM_W: u32 = 29u;
-const IPP: u32 = 573u; // (PW - MESH_HDR) / ITEM_W
+const ITEM_W: u32 = 32u; // (a region item, kind 0: 29 words; a slab item, kind 1: 32)
+const IPP: u32 = 519u; // (PW - MESH_HDR) / ITEM_W
+/** vertices a B instance: a slab item's two faces (up to three triangles each) and its wall (up to three quads) */
+const VPI: u32 = 36u;
 /** an air gap thinner than this (local units: a quarter column) is below the level's resolution (a finer level's tunnel
  *  restricted to its mean air) and is drawn as solid (NS-30) */
 const GAP_MIN: f32 = 0.25;

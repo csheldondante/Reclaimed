@@ -152,6 +152,7 @@ user) · `deferred` (agreed for later).
 - NS-46 (open, round 4 step 1) The watertight checks (scripts/nested-watertight.mjs: the manifold check of every level's
   drawn mesh and the screen check from 40 poses) fail today: open edges at the half-way walls and cut ceilings of B
   (17,000 over five eyes), 7,400 hole pixels over 40 poses. They join ?selftest=1 once they pass (footprints, NS-18).
+  F4 (2026-11-18): 8,215 open edges, 5,920 hole pixels; the classes left are NS-55, NS-56, NS-57.
 - NS-47 (hack, test only) The self-test grows the pool at once (syncGrow) and sums the worst cases of the ops it runs
   back to back (it grew to 16,561 pages for 67 in use). The sandbox grows ahead and refuses an op that does not fit.
 - NS-48 (bug, round 4 step 1) The camera reported the nearest solid 5.5 world units away with the mound's surface ~1.4
@@ -176,9 +177,25 @@ user) · `deferred` (agreed for later).
   another interval count decide alone (reuse a near gap, else split). Where a ball spans columns of different structure
   (an old tunnel's edge, a material boundary at the centre's height) neighbouring columns can still end with different
   counts, or the same count with the gap in different intervals; the draw then falls back (F4) for those triangles.
-- NS-54 (limit, footprints F3) Add with no new interval (a ball within reach of the ground at its centre) is laid on the
-  ground: a span floating in air at the footprint's edge is filled from the solid below it, so such a ball is a mound,
-  not an overhang. A ball whose centre is in the air beyond its radius makes an overhang as before.
+- NS-54 `done` (F4: add inserts or reuses; the fill from below is gone) Add with no new interval was laid on the ground
+  by filling from below (the stalk's blob became a pillar).
+- NS-55 (open, F4: the main remaining crack class) Triangles whose corners differ in interval count are drawn by the old
+  region items (half-way cuts); where they meet slab items an edge opens (150-590 a scene at L1 and L2). Two ways: keep
+  counts equal in the data (the brush's decision carried through a stroke, NS-53; a restrict that gives a parent's
+  neighbours the same structure), or a per-edge construction for mixed triangles that both sides compute the same.
+- NS-56 (open, F4) A row of top-sheet edges along one edge of the L2 window opens (~110-140 in the two L2 eyes): the
+  triangles of the window's first row are flagged for B but B draws nothing there. Not diagnosed (the window's rim row,
+  where the tunnel's structure from L1 crosses it).
+- NS-57 (open, F4) ~50-90 top-sheet edges open at a fixed place at L1 in every eye: the mid-air blob's ring edge, where
+  ring columns (a zero-thickness ghost in the sky) meet columns without it; the triangle across is a region item that
+  should draw the same floor. Not diagnosed.
+- NS-58 (perf, F4) A B instance is 36 vertices (was 18) and inside a tunnel every triangle is B's (the L2 window in the
+  tunnel: 260,000 item slots, 9.4 M vertex invocations a frame). Cheaper: an item a face or a wall, not both; or a
+  compute-baked vertex buffer per changed chunk.
+- NS-59 (look, F4) The mound and tunnel still show the stripes along the stroke (alternating floor and ceiling faces
+  seen from above in the diagnostic colours) and the ragged walls of NS-44, as before footprints.
+- NS-60 (process) One DEVLOG entry (F1-F3) was appended with a quoted shell heredoc, against the round's rule (Edit /
+  Write only); the text was checked intact.
 
 ## Terrain: rivers first (2026-11-17, `terrain-rivers`; docs/design/TERRAIN_RIVERS.md, DECISIONS 2026-11-17)
 

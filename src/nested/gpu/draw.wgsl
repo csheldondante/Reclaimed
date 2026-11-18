@@ -162,7 +162,8 @@ fn vertA(vv: u32) -> VOut {
   o.col = c;
   o.fade = fade;
   o.wp = worldOf(L, lp);
-  o.bOwn = select(0.0, 1.0, gc > 1u);
+  // (B draws every triangle with a flagged corner: more than one air run, or an edge the slab draw cuts)
+  o.bOwn = select(0.0, 1.0, gc > 1u || (hasGapPages(L, X, Y) && ((recW(GAP_ID + L, X, Y, 0u, 2u) >> 16u) & 1u) == 1u));
   o.lz = lp.z;
   return o;
 }
@@ -202,6 +203,255 @@ struct Cn {
 /** B: an item (one region of one triangle) as up to three parts of six vertices: its floor, its ceiling (where it is
  *  finite), and the wall along the cut where the region ends inside the triangle (marching triangles on the presence
  *  field; an enclosed region's wall from floor to ceiling, facing the air; the sky's down its solid run, facing out). */
+// ---- the slab draw (footprints, F4; nest.wgsl writeSlab): an item is slab s of one triangle whose corners have one
+// interval count. Every point on a triangle edge is computed from that edge's two corners alone, in one order (the
+// corner first in (y, x)), so the faces on both sides of an edge, and the walls ending on it, share it bit for bit; points
+// inside the triangle (where two slabs' edges cross) are computed by one function from the same corner data in every
+// item that uses them. Watertight by construction.
+/** a polygon or wall point: a corner (k 0), a point on edge r0-r1 at t from r0 (k 1, r0 the canonical first), or inside
+ *  with barycentric weights w (k 2) */
+struct PV {
+  k: u32,
+  r0: u32,
+  r1: u32,
+  t: f32,
+  w: vec3<f32>,
+}
+var<private> sP: array<vec2<f32>, 3>;
+var<private> sRank: array<u32, 3>;
+fn pvVal(v: PV, x: array<f32, 3>) -> f32 {
+  if (v.k == 0u) { return x[v.r0]; }
+  if (v.k == 1u) { return x[v.r0] + (x[v.r1] - x[v.r0]) * v.t; }
+  return v.w.x * x[0] + v.w.y * x[1] + v.w.z * x[2];
+}
+fn pvPos(v: PV) -> vec2<f32> {
+  if (v.k == 0u) { return sP[v.r0]; }
+  if (v.k == 1u) { return sP[v.r0] + (sP[v.r1] - sP[v.r0]) * v.t; }
+  return v.w.x * sP[0] + v.w.y * sP[1] + v.w.z * sP[2];
+}
+/** where field x crosses 0 on edge ra-rb (canonical order) */
+fn edgeCut(x: array<f32, 3>, ra: u32, rb: u32) -> PV {
+  var u = ra;
+  var v = rb;
+  if (sRank[rb] < sRank[ra]) {
+    u = rb;
+    v = ra;
+  }
+  return PV(1u, u, v, x[u] / (x[u] - x[v]), vec3<f32>(0.0));
+}
+/** where fields x and y (x the lower slab's) are both 0; w.x < -1: not inside the triangle */
+fn crossPt(x: array<f32, 3>, y: array<f32, 3>) -> PV {
+  let c = cross(vec3<f32>(x[0], x[1], x[2]), vec3<f32>(y[0], y[1], y[2]));
+  let sum = c.x + c.y + c.z;
+  var w = vec3<f32>(-9.0);
+  if (sum != 0.0) { w = c / sum; }
+  if (w.x < 0.0 || w.y < 0.0 || w.z < 0.0) { w = vec3<f32>(-9.0); }
+  return PV(2u, 0u, 0u, 0.0, w);
+}
+/** vertex j of the fan of the region {sf * x >= 0, sg * y >= 0} of the triangle (x the lower slab's field); ok false: none */
+struct PolyV {
+  v: PV,
+  ok: bool,
+}
+fn regionVert(x: array<f32, 3>, y: array<f32, 3>, sf: f32, sg: f32, tri: u32, j: u32) -> PolyV {
+  var pts: array<PV, 6>;
+  var np = 0u;
+  let ps = crossPt(x, y);
+  for (var r = 0u; r < 3u; r++) {
+    let r1 = (r + 1u) % 3u;
+    let fin = sf * x[r] > 0.0;
+    let gin = sg * y[r] > 0.0;
+    if (fin && gin) {
+      pts[np] = PV(0u, r, 0u, 0.0, vec3<f32>(0.0));
+      np++;
+    }
+    // crossings on this edge, in walk order (parameter from r)
+    var c0 = PV(0u, 0u, 0u, 0.0, vec3<f32>(0.0));
+    var c1 = c0;
+    var w0 = 2.0;
+    var w1 = 2.0;
+    var e0 = false;
+    var e1 = false;
+    if ((x[r] > 0.0) != (x[r1] > 0.0)) {
+      let c = edgeCut(x, r, r1);
+      let tw = select(1.0 - c.t, c.t, c.r0 == r);
+      if (sg * pvVal(c, y) >= 0.0) {
+        c0 = c;
+        w0 = tw;
+        e0 = fin;
+      }
+    }
+    if ((y[r] > 0.0) != (y[r1] > 0.0)) {
+      let c = edgeCut(y, r, r1);
+      let tw = select(1.0 - c.t, c.t, c.r0 == r);
+      if (sf * pvVal(c, x) >= 0.0) {
+        c1 = c;
+        w1 = tw;
+        e1 = gin;
+      }
+    }
+    for (var q = 0u; q < 2u; q++) {
+      // (the nearer first)
+      let first = w0 <= w1;
+      let take0 = select(q == 1u, q == 0u, first);
+      let wv = select(w1, w0, take0);
+      if (wv > 1.5) { continue; }
+      if (take0) { pts[np] = c0; } else { pts[np] = c1; }
+      np++;
+      // an exit (inside before the crossing): the boundary goes inside, through the corner of the two lines if any
+      if (select(e1, e0, take0) && ps.w.x > -1.0) {
+        pts[np] = ps;
+        np++;
+      }
+    }
+  }
+  var out = PolyV(PV(0u, 0u, 0u, 0.0, vec3<f32>(0.0)), false);
+  if (tri + 2u >= np) { return out; }
+  var q = 0u;
+  if (j == 1u) { q = tri + 1u; } else if (j == 2u) { q = tri + 2u; }
+  out.v = pts[q];
+  out.ok = true;
+  return out;
+}
+
+fn vertSlab(vv: u32, b: u32, h0: u32) -> VOut {
+  var o: VOut;
+  o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+  o.fade = 1.0;
+  o.bOwn = 0.0;
+  o.lz = 3e38;
+  let w = d.lvl;
+  let L = u32(w.w);
+  let t = (h0 >> 8u) & 1u;
+  let s = h0 >> 11u;
+  var tc = array<u32, 3>(0u, 1u, 3u);
+  if (t == 1u) { tc = array<u32, 3>(0u, 3u, 2u); }
+  var lo: array<f32, 3>;
+  var hi: array<f32, 3>;
+  var am: array<f32, 3>;
+  var a0: array<f32, 3>;
+  var a1: array<f32, 3>;
+  var nu: array<vec3<f32>, 3>;
+  var mt = vec2<u32>(0u);
+  var fade = 1.0;
+  for (var r = 0u; r < 3u; r++) {
+    let q = b + 2u + r * 10u;
+    sP[r] = sBase + vec2<f32>(cornerOf(tc[r])) + 0.5;
+    sRank[r] = tc[r];
+    lo[r] = bitcast<f32>(pgLoad(q));
+    hi[r] = bitcast<f32>(pgLoad(q + 1u));
+    let e2 = unpack2x16float(pgLoad(q + 2u));
+    am[r] = e2.x;
+    a0[r] = e2.y;
+    a1[r] = unpack2x16float(pgLoad(q + 3u)).x;
+    nu[r] = unpackN(pgLoad(q + 4u), false);
+    if (r == 0u) { mt = vec2<u32>(pgLoad(q + 5u) & 0xffu, (pgLoad(q + 5u) >> 8u) & 0xffu); }
+    let birth = bitcast<f32>(pgLoad(q + 8u));
+    let bw = bandW(sP[r], birth);
+    fade = min(fade, bw.y);
+    // the top sheet's rim morph and fade, the same per column (draw A's vertA): every bound of the column moves with it
+    if (d.par.w != 0 && bw.x < 1.0) {
+      let top = bitcast<f32>(pgLoad(q + 6u));
+      let mv = mix(bitcast<f32>(pgLoad(q + 7u)), top, bw.x);
+      hi[r] = select(hi[r] + (mv - top), mv, hi[r] == top);
+      lo[r] = select(lo[r] + (mv - top), mv, lo[r] == top);
+    }
+  }
+  let part = vv / 9u;
+  var lp = vec3<f32>(0.0);
+  var nrm = vec3<f32>(0.0, 0.0, 1.0);
+  var mat = mt.x;
+  if (part < 2u) {
+    // the faces at H_s: up where slab s is solid and s + 1 air, down where s is air and s + 1 solid
+    let up = part == 0u;
+    let pv = regionVert(a0, a1, select(1.0, -1.0, up), select(-1.0, 1.0, up), (vv % 9u) / 3u, vv % 3u);
+    if (!pv.ok) { return o; }
+    lp = vec3<f32>(pvPos(pv.v), pvVal(pv.v, hi));
+    var nn = array<f32, 3>(nu[0].x, nu[1].x, nu[2].x);
+    let nx = pvVal(pv.v, nn);
+    nn = array<f32, 3>(nu[0].y, nu[1].y, nu[2].y);
+    let ny = pvVal(pv.v, nn);
+    nrm = normalize(vec3<f32>(nx, ny, sqrt(max(0.0, 1.0 - nx * nx - ny * ny))));
+    if (!up) {
+      nrm = -nrm;
+      mat = mt.y;
+    }
+  } else {
+    // slab s's wall along a_s = 0, from H_{s-1} to H_s, split where slab s - 1's and s + 1's edges cross it
+    if (s == 0u) { return o; }
+    var ends: array<PV, 2>;
+    var ne = 0u;
+    for (var r = 0u; r < 3u; r++) {
+      let r1 = (r + 1u) % 3u;
+      if ((a0[r] > 0.0) != (a0[r1] > 0.0) && ne < 2u) {
+        ends[ne] = edgeCut(a0, r, r1);
+        ne++;
+      }
+    }
+    if (ne < 2u) { return o; }
+    let pa = pvPos(ends[0]);
+    let dir = pvPos(ends[1]) - pa;
+    var pts = array<PV, 4>(ends[0], ends[1], ends[1], ends[1]);
+    var prm = array<f32, 4>(0.0, 1.0, 2.0, 2.0);
+    var np = 2u;
+    for (var q = 0u; q < 2u; q++) {
+      var c = crossPt(am, a0);
+      if (q == 1u) { c = crossPt(a0, a1); }
+      if (c.w.x > -1.0) {
+        let pp = clamp(dot(pvPos(c) - pa, dir) / max(dot(dir, dir), 1e-12), 0.0, 1.0);
+        // insert in order
+        var k = np;
+        loop {
+          if (k == 0u || prm[k - 1u] <= pp) { break; }
+          pts[k] = pts[k - 1u];
+          prm[k] = prm[k - 1u];
+          k--;
+        }
+        pts[k] = c;
+        prm[k] = pp;
+        np++;
+      }
+    }
+    let wv = vv - 18u;
+    let piece = wv / 6u;
+    if (piece + 1u >= np) { return o; }
+    let A = pts[piece];
+    let B = pts[piece + 1u];
+    let sv = wv % 6u;
+    let pA = pvPos(A);
+    let pB = pvPos(B);
+    let quad = array<vec3<f32>, 4>(vec3<f32>(pA, pvVal(A, lo)), vec3<f32>(pB, pvVal(B, lo)), vec3<f32>(pB, pvVal(B, hi)), vec3<f32>(pA, pvVal(A, hi)));
+    let idx = array<u32, 6>(0u, 1u, 2u, 0u, 2u, 3u);
+    lp = quad[idx[sv]];
+    // facing the air (the side where slab s is air)
+    var hn = normalize(vec2<f32>(-dir.y, dir.x) + vec2<f32>(1e-9, 0.0));
+    // (the gradient of a_s over the triangle points to the air)
+    let g = slabGrad(a0);
+    if (dot(hn, g) < 0.0) { hn = -hn; }
+    nrm = vec3<f32>(hn, 0.0);
+  }
+  o.pos = vpOf(L) * vec4<f32>(lp, 1.0);
+  o.local = lp.xy;
+  o.nrm = nrm;
+  o.col = matColor(mat, select(length(nrm.xy) / max(abs(nrm.z), 1e-3), 2.0, part == 2u));
+  if (d.misc2.z == 1u) { o.col = array<vec3<f32>, 3>(vec3<f32>(0.2, 0.3, 1.0), vec3<f32>(0.1, 0.9, 0.2), vec3<f32>(1.0, 0.1, 0.1))[part]; }
+  o.fade = fade;
+  o.wp = worldOf(L, lp);
+  o.lz = lp.z;
+  o.bOwn = 2.0; // (the capture's tag: a slab item; B's fragment stage ignores it)
+  return o;
+}
+/** the gradient (local xy) of a field over the triangle sP */
+fn slabGrad(x: array<f32, 3>) -> vec2<f32> {
+  let e1 = sP[1] - sP[0];
+  let e2 = sP[2] - sP[0];
+  let det = e1.x * e2.y - e1.y * e2.x;
+  let d1 = x[1] - x[0];
+  let d2 = x[2] - x[0];
+  return vec2<f32>(d1 * e2.y - d2 * e1.y, d2 * e1.x - d1 * e2.x) / det;
+}
+var<private> sBase: vec2<f32>;
+
 @vertex
 fn vsB(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VOut { return vertB(vv, inst); }
 fn vertB(vv: u32, inst: u32) -> VOut {
@@ -225,6 +475,13 @@ fn vertB(vv: u32, inst: u32) -> VOut {
   let base = vec2<i32>(i32(key & 0xffffu) * 16 + i32(h0 & 15u), i32(key >> 16u) * 16 + i32((h0 >> 4u) & 15u));
   // (an item baked before a slide may reach past the window's new edge)
   if (base.x < w.x || base.y < w.y || base.x + 1 >= w.x + w.z || base.y + 1 >= w.y + w.z) { return o; }
+  // footprints: a slab item (kind 1) is cut on its corners' distances (F4); a region item (kind 0, triangles of corners
+  // of different interval counts) as before, half way (NS-55)
+  if (((h0 >> 10u) & 1u) == 1u) {
+    sBase = vec2<f32>(base - w.xy);
+    return vertSlab(vv, b, h0);
+  }
+  if (vv >= 18u) { return o; }
   var tc = array<u32, 3>(0u, 1u, 3u);
   if (t == 1u) { tc = array<u32, 3>(0u, 3u, 2u); }
   var cn: array<Cn, 3>;
@@ -347,18 +604,21 @@ fn vertB(vv: u32, inst: u32) -> VOut {
 // x, y, z local; w: A, 1 when the vertex's triangles are B's (bOwn); B, 0 for a vertex not drawn
 @group(1) @binding(0) var<storage, read_write> capOut: array<vec4<f32>>;
 @compute @workgroup_size(64)
-fn captureA(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn captureA(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
   let n = u32(d.lvl.z);
-  if (gid.x >= n * n) { return; }
-  let o = vertA(gid.x);
-  capOut[gid.x] = vec4<f32>(o.local, o.lz, o.bOwn);
+  let i = gid.x + gid.y * nw.x * 64u;
+  if (i >= n * n) { return; }
+  let o = vertA(i);
+  capOut[i] = vec4<f32>(o.local, o.lz, o.bOwn);
 }
 @compute @workgroup_size(64)
-fn captureB(@builtin(global_invocation_id) gid: vec3<u32>) {
-  let inst = gid.x / 18u;
+fn captureB(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
+  let i = gid.x + gid.y * nw.x * 64u;
+  let inst = i / VPI;
   if (inst >= d.misc2.w) { return; }
-  let o = vertB(gid.x % 18u, inst);
-  capOut[gid.x] = vec4<f32>(o.local, o.lz, select(1.0, 0.0, o.lz > 1e38));
+  let o = vertB(i % VPI, inst);
+  // (w: 0 not drawn, 1 a region item's, 2 a slab item's)
+  capOut[i] = vec4<f32>(o.local, o.lz, select(select(1.0, 2.0, o.bOwn == 2.0), 0.0, o.lz > 1e38));
 }
 
 const TINTS = array<vec3<f32>, 6>(vec3<f32>(0.35, 0.55, 1.0), vec3<f32>(1.0, 0.35, 0.3), vec3<f32>(1.0, 0.9, 0.25), vec3<f32>(0.35, 1.0, 0.45), vec3<f32>(0.9, 0.4, 1.0), vec3<f32>(0.3, 1.0, 1.0));

@@ -316,6 +316,9 @@ self-test).
   in the GPU record's fourth word (two f16; pages 65 KB), through enhance, restrict and the residual; ghosts; every
   reader ghost-aware; the ball brushes write the analytic distances and a ring of ghosts, one structural decision a
   brush. The draw still cuts half way (F4 next).
+- Round 4 step 3, F4 (2026-11-18): the slab draw (above, "Changes made while building (F4)"): open edges 17,170 -> 8,215,
+  hole pixels 7,372 -> 5,920 over the watertight scenes; not zero (NS-46, NS-55..57). `?cut=old` for comparison. F5 (the
+  rim morph of e) not built.
 
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
@@ -430,6 +433,25 @@ rim-crossing still, tint on and off.
   identity on e). The GPU compares the sums, not the quotient (its f32 division is not exact).
 - *Ghosts are never dropped* (the design's "e < -1.5 is dropped when next rewritten"): dropping one changes a column's
   count beside its neighbours. They accumulate (NS-52).
+
+**Changes made while building (F4, 2026-11-18).**
+- *The draw is per slab, not per region.* A triangle of corners of one interval count draws, for each slab s that has a
+  face or a wall there, one item: the face at H_s where slab s and s + 1 differ (solid below and air above: up; the other
+  way: down), and slab s's wall along its own zero line. The design's "a corner's s is the region's e" became one air
+  field per slab (an interval's -eS, a gap's eG), so floors, ceilings, overhang undersides and the blob's sky all come
+  from the same rule. Cut points on an edge from the edge's two corners in one order; crossings of two slabs' lines inside
+  a triangle from one function: walls split there, faces have a vertex there.
+- *Thin slabs are neutral.* A slab thinner than GAP_MIN (zero-thickness ghosts, dug-out layers) takes the occupancy of
+  the nearest thick slab below it (else zero-thickness air between two solids drew two faces back to back).
+- *Triangles whose corners differ in count* keep the old region items (half-way cuts); where they meet slab items an
+  edge can still open (NS-55). The brush rules are what keep such triangles rare: carve reuses a gap a brush made within
+  reach, or in the air run holding its centre (thin slabs do not break a run); add revives a ghost interval in that air
+  run, else reuses an interval a brush made within reach, else inserts into the air holding the centre (or just above the
+  solid holding it). (The F3 add rule that laid a ball on the ground by filling from below is gone: it made the stalk's
+  blob a pillar.)
+- *The top sheet's ownership is per vertex* (a flag: more than one air run, or a cut edge); B draws every triangle with a
+  flagged corner. A ring of 3 columns was tried so those triangles' corners all share the structure: no fewer open edges,
+  more ghosts; RING stays 1.5.
 
 **Build order** (each step shown; the manifold and screen checks run at every step): F1 the oracle (e in the columns,
 enhance, restrict, residual; unit tests). F2 the GPU store's fourth word and readers; self-test parity. F3 the ball

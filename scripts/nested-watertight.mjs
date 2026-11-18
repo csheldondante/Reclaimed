@@ -15,7 +15,7 @@ await run({ name: 'nested-watertight', kind: 'behaviour', size: '960x640', dpr: 
   page.on('console', (m) => {
     if (m.type() === 'error' || m.type() === 'warning') console.log(`[page ${m.type()}] ${m.text()}`);
   });
-  await page.goto(`https://localhost:${port}/nested.html?k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140${maxbuf !== '0' ? `&maxbuf=${maxbuf}` : ''}`, { waitUntil: 'load' });
+  await page.goto(`https://localhost:${port}/nested.html?k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140${maxbuf !== '0' ? `&maxbuf=${maxbuf}` : ''}${R.opt('cut', '') ? `&cut=${R.opt('cut', '')}` : ''}`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.nested && nested.app.frameCount > 60, { timeout: 120000, polling: 100 });
   await sleep(2500);
   const scene = await page.evaluate(async () => {
@@ -49,7 +49,9 @@ await run({ name: 'nested-watertight', kind: 'behaviour', size: '960x640', dpr: 
     'mid-air blob': { yaw: Math.PI / 2, pitch: 0.2, eye: [hx + 4, hy - 8, hz + 3.5] },
   };
   let openAll = 0;
+  const onlyEyes = R.opt('eyes', '');
   for (const [name, v] of Object.entries(R.opt('manifold', '1') === '1' ? eyes : {})) {
+    if (onlyEyes && !name.includes(onlyEyes)) continue;
     await page.evaluate((v) => nested.setView(v), v);
     await sleep(250);
     const early = await page.evaluate(() => nested.manifold());
@@ -61,10 +63,58 @@ await run({ name: 'nested-watertight', kind: 'behaviour', size: '960x640', dpr: 
     ]) {
       const open = rep.reduce((s, r) => s + r.open, 0);
       openAll += open;
-      console.log(`manifold ${name} (${when}): ${rep.map((r) => `L${r.depth} ${r.tris} tris, ${r.edges} edges, open ${r.open}, over ${r.over}${r.open ? ` at ${JSON.stringify(r.where.slice(0, 3))}` : ''}`).join('; ')}`);
+      console.log(`manifold ${name} (${when}): ${rep.map((r) => `L${r.depth} ${r.tris} tris ${JSON.stringify(r.trisBy)} from ${r.items} item slots, ${r.edges} edges, open ${r.open}, over ${r.over}${r.open ? ` by source ${JSON.stringify(r.bySrc)} at ${JSON.stringify(r.whereBy)}` : ''}`).join('; ')}`);
     }
   }
   R.check('manifold: no open interior edge on any level', openAll === 0, `${openAll} open edges in total`);
+  const at = R.opt('probeAt', '');
+  if (at) {
+    // (diagnostics) the columns round a level's local point: L,x,y
+    const [L, x, y] = at.split(',').map(Number);
+    const lines = await page.evaluate(async ([L, x, y]) => {
+      const a = nested.app;
+      const s = await a.nest.readAll();
+      const w = a.nest.wins[L];
+      const out = [];
+      for (let j = -2; j <= 2; j++)
+        for (let i = -2; i <= 2; i++) {
+          const c = s.column(L, w.gx + Math.floor(x) + i, w.gy + Math.floor(y) + j);
+          out.push(`${Math.floor(x) + i},${Math.floor(y) + j}: n ${c.mat.length} ` + c.mat.map((m, q) => `[${m} ${c.z0[q].toFixed(2)}..${c.z1[q].toFixed(2)} eS ${c.eS[q].toFixed(2)} eG ${c.eG[q].toFixed(2)}]`).join(' '));
+        }
+      return out;
+    }, [L, x, y]);
+    for (const l of lines) console.log(`col ${l}`);
+  }
+  if (R.opt('probe', '0') === '1') {
+    // (diagnostics) per live level: the B flags and gap-table pages along the window's first and last rows
+    const pr = await page.evaluate(async () => {
+      const a = nested.app;
+      const s = await a.nest.readAll();
+      const out = [];
+      for (let L = 0; L < a.nest.live; L++) {
+        const w = a.nest.wins[L];
+        for (const row of [0, 1, 2, w.n - 3, w.n - 2, w.n - 1]) {
+          let flagged = 0;
+          let pages = 0;
+          let counts = {};
+          for (let i = 0; i < w.n; i++) {
+            const X = w.gx + i;
+            const Y = w.gy + row;
+            const p = s.page(16 + L, X >> 4, Y >> 4, 0);
+            const n = s.column(L, X, Y).mat.length;
+            counts[n] = (counts[n] ?? 0) + 1;
+            if (p < 0 || p >= 0xfffffffe) continue;
+            pages++;
+            const c = (Y & 15) * 16 + (X & 15);
+            if ((s.pg[p * 16640 + 256 + c * 16 * 4 + 2] >>> 16) & 1) flagged++;
+          }
+          out.push(`L${L} row ${row}: ${pages} with gap pages, ${flagged} flagged, counts ${JSON.stringify(counts)}`);
+        }
+      }
+      return out;
+    });
+    for (const l of pr) console.log(`probe ${l}`);
+  }
   // (ii) the screen check: 40 poses
   const poses = [];
   for (let i = 0; i < 16; i++) {

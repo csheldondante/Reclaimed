@@ -26510,3 +26510,32 @@ footprints match the oracle within f16 rounding (worst relative 1.95e-3; GPU f32
 found: f32 division is not correctly rounded (624 / 39 came out under 16, so the saturation test compares sums), and
 `from` is a reserved word in WGSL. Carve with sync 82 ms at depth 1 and 43 ms at depth 2 in the self-test's small pool
 (was 84 / 40).
+
+## 2026-11-18 — Nested scales lab, round 4 step 3, F4: the slab draw cuts on the footprints (watertight where corners match; not yet zero)
+
+**Why.** The acceptance test of the round: the manifold check at 0 open edges and the screen check at 0 hole pixels. The
+old items cut half way per region per triangle; a region could reach a corner through the third one, so two triangles
+sharing an edge could cut it differently (the cracks).
+
+**What** (NESTED_SCALES.md "Footprints", changes F4). A triangle whose three corners have one interval count is drawn
+per SLAB (interval 0, gap 1, interval 1, ..., the sky): an item for slab s holds, per corner, H_{s-1}, H_s and the air
+fields of slabs s - 1, s, s + 1 (an interval's -eS, a gap's eG; a slab thinner than GAP_MIN takes the occupancy of the
+nearest thick slab below). The vertex stage draws the face at H_s (the triangle clipped by the two fields: up where s is
+solid and s + 1 air, down the other way; a convex polygon of up to 5 points, fanned) and slab s's wall along its field's
+zero line from H_{s-1} to H_s, split where slab s - 1's and s + 1's lines cross it. Every point on a triangle edge is
+computed from that edge's two corners in one order; points inside from one function of the same corner data: watertight
+by construction where corners match. Triangles with corners of different counts keep the old region items (NS-55). The
+top sheet hands a triangle to B when a corner has a flag (more than one air run, or an edge some slab changes sign on).
+Items 32 words, 36 vertices an instance. Brush rules changed on the way (each found by probing the columns at the open
+edges): add inserts or reuses instead of filling from below; a ball in an air run over an earlier gap reuses it (a
+tunnel through open air split again at every ball: 7-8 zero-thickness intervals a column); thin slabs do not break an
+air run. The watertight capture now dispatches in two dimensions (a level with 260,000 item slots exceeded 65,535
+workgroups and was captured as empty). `?cut=old` bakes the old cut for comparison.
+
+**Measured** (scripts/nested-watertight.mjs, the five eyes, fading and settled; 40 poses). Before footprints: 17,170
+open edges, 7,372 hole pixels. Now: 8,215 open edges, 5,920 hole pixels (worst pose 0: 656). Settled, per eye: mound
+outside L1 396 (top sheet 91, slab 114, region 191); tunnel inside L1 265, L2 452; tunnel mouth L1 225, L2 761; blob on a
+stalk L1 396; mid-air blob L0 13, L1 327. L0 0 in four eyes. What remains: (1) region items next to slab items, where
+neighbouring columns differ in count (a tunnel cutting an add's overhang edge, ring edges, NS-53, NS-55); (2) a row of
+top-sheet edges at an L2 window edge (~110-140, NS-56); (3) a fixed spot at the mid-air blob's ring edge at L1 (~50-90 top
+sheet edges, NS-57). The checks are not yet in ?selftest=1 (NS-46 open). Self-test 26/26, unit tests 14/14.

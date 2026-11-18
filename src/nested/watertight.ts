@@ -14,6 +14,11 @@ export interface EdgeReport {
   over: number;
   /** a few open edges' midpoints (local units) */
   where: [number, number, number][];
+  /** open edges by the source of their one triangle (A the top sheet, R a region item, S a slab item), a few each */
+  bySrc: Record<string, number>;
+  whereBy: Record<string, [number, number, number][]>;
+  trisBy: Record<string, number>;
+  items: number;
 }
 
 /** weld quantum, local units */
@@ -24,7 +29,11 @@ export function manifold(cap: { depth: number; n: number; a: Float32Array; b: Fl
   const vk = (arr: Float32Array, i: number) => `${Math.round(arr[i * 4] * Q)},${Math.round(arr[i * 4 + 1] * Q)},${Math.round(arr[i * 4 + 2] * Q)}`;
   const edges = new Map<string, number>();
   const pos = new Map<string, [number, number, number]>();
+  // (the source of an edge's last triangle: A the top sheet, R a region item, S a slab item)
+  const srcOf = new Map<string, string>();
+  let src = 'A';
   let tris = 0;
+  const trisBy: Record<string, number> = {};
   const tri = (arr: Float32Array, i0: number, i1: number, i2: number) => {
     const k = [vk(arr, i0), vk(arr, i1), vk(arr, i2)];
     if (k[0] === k[1] || k[1] === k[2] || k[0] === k[2]) return;
@@ -35,11 +44,13 @@ export function manifold(cap: { depth: number; n: number; a: Float32Array; b: Fl
     const cr = Math.hypot(u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]);
     if (cr < 1e-7) return;
     tris++;
+    trisBy[src] = (trisBy[src] ?? 0) + 1;
     for (let e = 0; e < 3; e++) {
       const s = k[e];
       const t = k[(e + 1) % 3];
       const key = s < t ? `${s}|${t}` : `${t}|${s}`;
       edges.set(key, (edges.get(key) ?? 0) + 1);
+      srcOf.set(key, src);
       pos.set(key, [(p[e][0] + p[(e + 1) % 3][0]) / 2, (p[e][1] + p[(e + 1) % 3][1]) / 2, (p[e][2] + p[(e + 1) % 3][2]) / 2]);
     }
   };
@@ -51,14 +62,15 @@ export function manifold(cap: { depth: number; n: number; a: Float32Array; b: Fl
       tri(a, v, v + 1, v + n + 1);
       tri(a, v, v + n + 1, v + n);
     }
-  const items = b.length / 4 / 18;
+  // (36 vertices an item, 12 triangles: draw.wgsl VPI; a region item uses the first 18)
+  const items = b.length / 4 / 36;
   for (let it = 0; it < items; it++)
-    for (let part = 0; part < 3; part++)
-      for (let t = 0; t < 2; t++) {
-        const o = it * 18 + part * 6 + t * 3;
-        if (b[o * 4 + 3] === 0 || b[(o + 1) * 4 + 3] === 0 || b[(o + 2) * 4 + 3] === 0) continue;
-        tri(b, o, o + 1, o + 2);
-      }
+    for (let t = 0; t < 12; t++) {
+      const o = it * 36 + t * 3;
+      if (b[o * 4 + 3] === 0 || b[(o + 1) * 4 + 3] === 0 || b[(o + 2) * 4 + 3] === 0) continue;
+      src = b[o * 4 + 3] === 2 ? 'S' : 'R';
+      tri(b, o, o + 1, o + 2);
+    }
   const inside = (x: number, y: number) => {
     if (x < 1.5 || y < 1.5 || x > n - 1.5 || y > n - 1.5) return false;
     if (cut && cut[0] < cut[2] && x > cut[0] - 1.5 && y > cut[1] - 1.5 && x < cut[2] + 1.5 && y < cut[3] + 1.5) return false;
@@ -67,6 +79,8 @@ export function manifold(cap: { depth: number; n: number; a: Float32Array; b: Fl
   let open = 0;
   let over = 0;
   let count = 0;
+  const bySrc: Record<string, number> = {};
+  const whereBy: Record<string, [number, number, number][]> = {};
   const where: [number, number, number][] = [];
   for (const [key, c] of edges) {
     const [s, t] = key.split('|').map((v) => v.split(',').map((x) => Number(x) / Q));
@@ -74,10 +88,14 @@ export function manifold(cap: { depth: number; n: number; a: Float32Array; b: Fl
     count++;
     if (c === 1) {
       open++;
-      if (where.length < 6) where.push(pos.get(key)!.map((x) => +x.toFixed(2)) as [number, number, number]);
+      const sk = srcOf.get(key)!;
+      bySrc[sk] = (bySrc[sk] ?? 0) + 1;
+      const p = pos.get(key)!.map((x) => +x.toFixed(2)) as [number, number, number];
+      if (where.length < 6) where.push(p);
+      (whereBy[sk] ??= []).length < 4 && whereBy[sk].push(p);
     } else if (c > 2) over++;
   }
-  return { depth: cap.depth, tris, edges: count, open, over, where };
+  return { depth: cap.depth, tris, edges: count, open, over, where, bySrc, whereBy, trisBy, items: b.length / 4 / 36 };
 }
 
 /** the last holePixels call's frame at half resolution, holes magenta */

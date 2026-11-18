@@ -19,7 +19,7 @@ export const DETAIL_AMP = 0.08;
 /** "present, far from any edge": the value of a column no footprint has touched */
 export const E_FAR = 1024;
 /** the ring of ghosts a brush writes outside its footprint (columns): marching needs the neighbour across every edge,
- *  the diagonal one included (sqrt 2 < 1.5) */
+ *  the diagonal one included (sqrt 2 < 1.5). (3 was tried, F4: no fewer open edges, more ghosts.) */
 export const RING = 1.5;
 /** restrict clamps child distances to +-E_SAT * k before the mean (a block's far values do not swamp a contour in it) */
 export const E_SAT = 2;
@@ -706,19 +706,63 @@ export function splitIdx(c: Col, cz: number): number {
   for (let i = 1; i < c.mat.length; i++) if (solidAt(c, i) && c.z0[i] <= cz) s = i;
   return s;
 }
+/** the air run holding height z: the consecutive air slabs (present gaps, ghost intervals, the sky) round it, as slab
+ *  indices [a, b] (interval i is slab 2i, the gap below it 2i - 1, the sky 2n - 1); null when z is in solid */
+export function airRunAt(c: Col, z: number): [number, number] | null {
+  const n = c.mat.length;
+  const lo = (s: number) => (s === 0 ? -Infinity : s % 2 === 0 ? c.z0[s / 2] : c.z1[(s - 1) / 2]);
+  const hi = (s: number) => (s === 2 * n - 1 ? Infinity : s % 2 === 0 ? c.z1[s / 2] : c.z0[(s + 1) / 2]);
+  const air = (s: number) => (s === 2 * n - 1 ? true : s % 2 === 0 ? !solidAt(c, s / 2) : present(egOf(c, (s + 1) / 2)));
+  let at = -1;
+  for (let s = 0; s < 2 * n; s++) if (air(s) && lo(s) <= z && z <= hi(s)) at = s;
+  if (at < 0) return null;
+  // (a slab thinner than GAP_MIN does not break the run: the draw treats it as its surroundings)
+  const thru = (s: number) => air(s) || hi(s) - lo(s) < GAP_MIN;
+  let a = at;
+  let b = at;
+  while (a > 0 && thru(a - 1)) a--;
+  while (b < 2 * n - 1 && thru(b + 1)) b++;
+  return [a, b];
+}
 export function ballSite(c: Col, op: 'carve' | 'add', cz: number, r: number): BallSite {
   const n = c.mat.length;
-  // reuse: a gap (carve) or an interval (add), ghost or not, within the ball's reach in z makes no new structure (a
-  // stroke's balls reuse the first one's gap and ring instead of splitting again)
-  for (let i = 1; i < n; i++) {
-    if (op === 'carve' && reusableGap(c, i) && c.z0[i] >= cz - r && c.z1[i - 1] <= cz + r) return { kind: 0, idx: -1, n };
-    if (op === 'add' && (c.z0[i] <= cz && cz <= c.z1[i]) && !solidAt(c, i)) return { kind: 2, idx: i, n };
+  const run = airRunAt(c, cz);
+  // reuse: a gap (carve) or an interval (add) a brush made, within the ball's reach in z or in the air run holding the
+  // centre, makes no new structure (a stroke's balls reuse the first one's gap and ring instead of splitting again; a
+  // ball in open air over earlier balls' gaps too)
+  if (op === 'carve') {
+    for (let i = 1; i < n; i++) if (reusableGap(c, i) && ((c.z0[i] >= cz - r && c.z1[i - 1] <= cz + r) || (run !== null && run[0] <= 2 * i - 1 && 2 * i - 1 <= run[1]))) return { kind: 0, idx: -1, n };
+    return { kind: 1, idx: splitIdx(c, cz), n };
   }
-  if (op === 'carve') return { kind: 1, idx: splitIdx(c, cz), n };
-  for (let i = 0; i < n; i++) if ((i === 0 || c.z0[i] <= cz + r) && cz - r <= c.z1[i] && solidAt(c, i)) return { kind: 0, idx: -1, n };
-  for (let i = 1; i < n; i++) if (op === 'add' && c.z1[i - 1] < cz && cz < c.z0[i]) return { kind: 1, idx: i, n };
-  if (op === 'add' && cz > c.z1[n - 1]) return { kind: 1, idx: n, n };
-  return { kind: 0, idx: -1, n };
+  // add: a ghost interval a brush made in the air run holding the centre is revived (the nearest)
+  if (run !== null) {
+    let ghost = -1;
+    let gd = Infinity;
+    for (let i = 1; i < n; i++) {
+      if (2 * i < run[0] || 2 * i > run[1] || esOf(c, i) >= E_FAR) continue;
+      const dz = Math.max(c.z0[i] - cz, cz - c.z1[i], 0);
+      if (dz < gd) {
+        ghost = i;
+        gd = dz;
+      }
+    }
+    if (ghost > 0) return { kind: 2, idx: ghost, n };
+  }
+  // add: the nearest interval a brush made (a footprint nearer than E_FAR) within reach is reused (a stroke's balls grow
+  // one interval); else a new interval goes into the air holding the centre, or the air just above the solid holding it
+  let best = -1;
+  let bd = Infinity;
+  for (let i = 1; i < n; i++) {
+    const dz = Math.max(c.z0[i] - cz, cz - c.z1[i], 0);
+    if (esOf(c, i) < E_FAR && dz <= r && dz < bd) {
+      best = i;
+      bd = dz;
+    }
+  }
+  if (best >= 0) return { kind: 2, idx: best, n };
+  for (let i = 0; i < n; i++) if ((i === 0 || c.z0[i] <= cz) && cz <= c.z1[i]) return { kind: 1, idx: i + 1, n };
+  for (let i = 1; i < n; i++) if (c.z1[i - 1] < cz && cz < c.z0[i]) return { kind: 1, idx: i, n };
+  return { kind: 1, idx: n, n };
 }
 
 /** A ball of radius r at height cz on one column at plan distance dd from its centre (the oracle's brush; gpu: nest.wgsl
@@ -755,8 +799,10 @@ export function applyBall(c0: Col, op: 'carve' | 'add', cz: number, r: number, d
       // the decision does not depend on the span's length)
       let near = -1;
       let nd = Infinity;
+      const run = airRunAt(c, cz);
       for (let g = 1; g < n0; g++) {
-        const dz = Math.max(c.z1[g - 1] - cz, cz - c.z0[g], 0);
+        // (a gap in the air run holding the centre counts as at the centre)
+        const dz = run !== null && run[0] <= 2 * g - 1 && 2 * g - 1 <= run[1] ? 0 : Math.max(c.z1[g - 1] - cz, cz - c.z0[g], 0);
         if (reusableGap(c, g) && dz <= r && dz < nd) {
           near = g;
           nd = dz;
@@ -801,7 +847,9 @@ export function applyBall(c0: Col, op: 'carve' | 'add', cz: number, r: number, d
       if (near) c.eG![g] = Math.max(c.eG![g], eBall);
     }
   } else {
-    if (site.kind === 1 && n0 === site.n) {
+    // (a column of another structure than the centre's decides alone, the same way)
+    if (n0 !== site.n) site = ballSite(c, 'add', cz, r);
+    if (site.kind === 1) {
       const g = site.idx;
       const f = c.z1[g - 1];
       const cc = g < n0 ? c.z0[g] : Infinity;
@@ -810,11 +858,21 @@ export function applyBall(c0: Col, op: 'carve' | 'add', cz: number, r: number, d
       // the new interval takes index g; the gap below it keeps the old gap's footprint, as does the one above it
       ins(g, MAT.soil, a, b, eBall, g < n0 ? c.eG![g] : E_FAR);
       made = g;
-    } else if (site.kind === 2 && n0 === site.n) {
+    } else if (site.kind === 2) {
+      // the reused interval takes the span: a present one grows to hold it (a swept capsule), a ghost one is laid there
       const j = site.idx;
       if (inside) {
-        c.z0[j] = Math.min(c.z0[j], Math.max(lo, c.z1[j - 1]));
-        c.z1[j] = Math.max(c.z1[j], Math.min(hi, j + 1 < n0 ? c.z0[j + 1] : Infinity));
+        const f = c.z1[j - 1];
+        const cc = j + 1 < n0 ? c.z0[j + 1] : Infinity;
+        const a = Math.min(cc, Math.max(lo, f));
+        const b = Math.max(f, Math.min(hi, cc));
+        if (solidAt(c, j)) {
+          c.z0[j] = Math.min(c.z0[j], a);
+          c.z1[j] = Math.max(c.z1[j], b);
+        } else {
+          c.z0[j] = a;
+          c.z1[j] = b;
+        }
       }
       c.eS![j] = Math.max(c.eS![j], eBall);
       made = j;
@@ -827,9 +885,7 @@ export function applyBall(c0: Col, op: 'carve' | 'add', cz: number, r: number, d
         const f = c.z1[g - 1];
         const cc = g < n ? c.z0[g] : Infinity;
         if (!(cc > lo && f < hi)) continue;
-        // (a span strictly inside an air piece, with no new interval made: filled from the solid below, so the
-        // structure stays; a ball touching the ground at its centre is laid on the ground)
-        if (lo <= f || (made < 0 && hi < cc)) {
+        if (lo <= f) {
           c.z1[g - 1] = Math.min(hi, cc);
           if (g - 1 > 0) c.eS![g - 1] = Math.max(c.eS![g - 1], eBall);
         } else if (hi >= cc && g < n) {

@@ -985,7 +985,7 @@ fn edit(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
 // structure stays constant across the footprint and its ring. Footprints analytic: the ball's air eG = r - d, a bound
 // it reaches cut away (eS = min(eS, d - r_slice(z))), a laid interval eS = r - d. A column grows by one at most; pages
 // are ensured per chunk first; it is rewritten in place (top down).
-const RING: f32 = 1.5;
+const RING: f32 = 1.5; // (the oracle's RING)
 /** (the plan, one thread) the brush's site: kind | idx << 2 (kind 0 none, 1 carve: split interval idx / add: insert
  *  into gap idx (idx = n: the sky), 2 add: revive ghost interval idx) */
 /** a gap a carve may reuse: real air (some thickness) or one a brush made (a ghost, or a footprint nearer than E_FAR);
@@ -1004,24 +1004,97 @@ fn splitIdx(L: u32, X: i32, Y: i32, cz: f32) -> u32 {
   }
   return s;
 }
+/** slab s (interval i = s / 2 for even s, the gap below interval (s + 1) / 2 for odd s, the sky 2n - 1) is air: a present
+ *  gap, a ghost interval, the sky (the raw presence, no thickness rule) */
+fn rawAir(L: u32, X: i32, Y: i32, s: u32, n: u32) -> bool {
+  if (s >= 2u * n - 1u) { return true; }
+  if ((s & 1u) == 0u) { return !solidIv(ivlAt(L, X, Y, s / 2u), s / 2u); }
+  return present(eG(ivlAt(L, X, Y, (s + 1u) / 2u)));
+}
+/** the air run holding height z (the oracle's airRunAt): slab indices (a, b), or (1, 0) when z is in solid */
+fn airRun(L: u32, X: i32, Y: i32, z: f32) -> vec2<u32> {
+  let n = colCount(L, X, Y);
+  var at = -1;
+  for (var s = 0u; s < 2u * n; s++) {
+    var lo = -3.0e38;
+    var hi = 3.0e38;
+    if (s > 0u) {
+      if ((s & 1u) == 0u) { lo = ivlAt(L, X, Y, s / 2u).z0; } else { lo = ivlAt(L, X, Y, (s - 1u) / 2u).z1; }
+    }
+    if (s < 2u * n - 1u) {
+      if ((s & 1u) == 0u) { hi = ivlAt(L, X, Y, s / 2u).z1; } else { hi = ivlAt(L, X, Y, (s + 1u) / 2u).z0; }
+    }
+    if (rawAir(L, X, Y, s, n) && lo <= z && z <= hi) { at = i32(s); }
+  }
+  if (at < 0) { return vec2<u32>(1u, 0u); }
+  // (a slab thinner than GAP_MIN does not break the run: the draw treats it as its surroundings)
+  var a = u32(at);
+  var b = u32(at);
+  loop {
+    if (a == 0u || !(rawAir(L, X, Y, a - 1u, n) || slabTh(L, X, Y, a - 1u, n) < GAP_MIN)) { break; }
+    a--;
+  }
+  loop {
+    if (b >= 2u * n - 1u || !(rawAir(L, X, Y, b + 1u, n) || slabTh(L, X, Y, b + 1u, n) < GAP_MIN)) { break; }
+    b++;
+  }
+  return vec2<u32>(a, b);
+}
+/** slab s's thickness (interval 0 and the sky: unbounded) */
+fn slabTh(L: u32, X: i32, Y: i32, s: u32, n: u32) -> f32 {
+  if (s == 0u || s >= 2u * n - 1u) { return 3.0e38; }
+  if ((s & 1u) == 0u) {
+    let iv = ivlAt(L, X, Y, s / 2u);
+    return iv.z1 - iv.z0;
+  }
+  return ivlAt(L, X, Y, (s + 1u) / 2u).z0 - ivlAt(L, X, Y, (s - 1u) / 2u).z1;
+}
 fn ballSiteOf(L: u32, X: i32, Y: i32, cz: f32, r: f32, add: bool) -> u32 {
   let n = colCount(L, X, Y);
-  // reuse: a gap (carve) or an interval (add), ghost or not, within the ball's reach in z makes no new structure
+  let run = airRun(L, X, Y, cz);
+  if (!add) {
+    // carve: a gap a brush made within the ball's reach in z, or in the air run holding the centre, is reused (no new
+    // structure); else a split
+    for (var i = 1u; i < n; i++) {
+      let inRun = run.x <= 2u * i - 1u && 2u * i - 1u <= run.y;
+      if (reusableGap(L, X, Y, i) && ((ivlAt(L, X, Y, i).z0 >= cz - r && ivlAt(L, X, Y, i - 1u).z1 <= cz + r) || inRun)) { return 0u; }
+    }
+    return 1u | (splitIdx(L, X, Y, cz) << 2u);
+  }
+  // add: a ghost interval a brush made in the air run holding the centre is revived (the nearest)
+  var ghost = 0u;
+  var gd = 3.0e38;
   for (var i = 1u; i < n; i++) {
     let iv = ivlAt(L, X, Y, i);
-    if (!add && reusableGap(L, X, Y, i) && iv.z0 >= cz - r && ivlAt(L, X, Y, i - 1u).z1 <= cz + r) { return 0u; }
-    if (add && iv.z0 <= cz && cz <= iv.z1 && !solidIv(iv, i)) { return 2u | (i << 2u); }
+    if (2u * i < run.x || 2u * i > run.y || eS(iv) >= E_FAR) { continue; }
+    let dz = max(max(iv.z0 - cz, cz - iv.z1), 0.0);
+    if (dz < gd) {
+      ghost = i;
+      gd = dz;
+    }
   }
-  if (!add) { return 1u | (splitIdx(L, X, Y, cz) << 2u); }
+  if (ghost > 0u) { return 2u | (ghost << 2u); }
+  // add: the nearest interval a brush made within reach is reused; else a new interval into the air holding the centre,
+  // or the air just above the solid holding it (the oracle's ballSite)
+  var best = 0u;
+  var bd = 3.0e38;
+  for (var i = 1u; i < n; i++) {
+    let iv = ivlAt(L, X, Y, i);
+    let dz = max(max(iv.z0 - cz, cz - iv.z1), 0.0);
+    if (eS(iv) < E_FAR && dz <= r && dz < bd) {
+      best = i;
+      bd = dz;
+    }
+  }
+  if (best > 0u) { return 2u | (best << 2u); }
   for (var i = 0u; i < n; i++) {
     let iv = ivlAt(L, X, Y, i);
-    if ((i == 0u || iv.z0 <= cz + r) && cz - r <= iv.z1 && solidIv(iv, i)) { return 0u; }
+    if ((i == 0u || iv.z0 <= cz) && cz <= iv.z1) { return 1u | ((i + 1u) << 2u); }
   }
   for (var i = 1u; i < n; i++) {
-    if (add && ivlAt(L, X, Y, i - 1u).z1 < cz && cz < ivlAt(L, X, Y, i).z0) { return 1u | (i << 2u); }
+    if (ivlAt(L, X, Y, i - 1u).z1 < cz && cz < ivlAt(L, X, Y, i).z0) { return 1u | (i << 2u); }
   }
-  if (add && n > 0u && cz > ivlAt(L, X, Y, n - 1u).z1) { return 1u | (n << 2u); }
-  return 0u;
+  return 1u | (n << 2u);
 }
 /** the ball (or a stroke's capsule) at a column: x the plan distance to its centre line, y the centre's height there */
 fn ballAt(X: i32, Y: i32, L: u32) -> vec2<f32> {
@@ -1107,8 +1180,11 @@ fn ball(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     if (kind == 1u && atSite) { split = i32(sIdx); }
     if (split < 0) {
       // the nearest reusable gap within the ball's radius of its centre in z (the same test inside and in the ring)
+      let run = airRun(L, X, Y, czc);
       for (var g = 1u; g < n; g++) {
-        let dz = max(max(ivlAt(L, X, Y, g - 1u).z1 - czc, czc - ivlAt(L, X, Y, g).z0), 0.0);
+        // (a gap in the air run holding the centre counts as at the centre)
+        var dz = max(max(ivlAt(L, X, Y, g - 1u).z1 - czc, czc - ivlAt(L, X, Y, g).z0), 0.0);
+        if (run.x <= 2u * g - 1u && 2u * g - 1u <= run.y) { dz = 0.0; }
         if (reusableGap(L, X, Y, g) && dz <= r && (nearG < 0 || dz < nearD)) {
           nearG = i32(g);
           nearD = dz;
@@ -1117,8 +1193,16 @@ fn ball(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
       if (nearG < 0) { split = i32(splitIdx(L, X, Y, czc)); }
     }
   }
+  // add: the site's decision, or (another structure than the centre's) the column's own, made the same way
+  var aKind = kind;
+  var aIdx = sIdx;
+  if (hit && add && !atSite) {
+    let ls = ballSiteOf(L, X, Y, czc, r, true);
+    aKind = ls & 3u;
+    aIdx = ls >> 2u;
+  }
   var nn = n;
-  if (hit && (split >= 0 || (add && kind == 1u && atSite))) { nn = n + 1u; }
+  if (hit && (split >= 0 || (add && aKind == 1u))) { nn = n + 1u; }
   if (li == 0u) { atomicStore(&wmax, 0u); }
   workgroupBarrier();
   atomicMax(&wmax, max(nn, colCount(L, X, Y)));
@@ -1188,8 +1272,8 @@ fn ball(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
       if (near && eBall > eG(iv)) { setIvl(L, X, Y, g, iv.z0, iv.z1, iv.m, packE(eS(iv), eBall)); }
     }
   } else {
-    if (kind == 1u && atSite) {
-      let g = sIdx;
+    if (aKind == 1u) {
+      let g = aIdx;
       let f = ivlAt(L, X, Y, g - 1u).z1;
       var cc = 3.0e38;
       var egOld = E_FAR;
@@ -1207,16 +1291,25 @@ fn ball(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
       // the new interval takes index g; the gap below it keeps the old gap's footprint, as does the one above it
       setIvl(L, X, Y, g, a, b, MAT_SOIL, packE(eBall, egOld));
       made = i32(g);
-    } else if (kind == 2u && atSite) {
-      let j = sIdx;
+    } else if (aKind == 2u) {
+      // the reused interval takes the span: a present one grows to hold it, a ghost one is laid there
+      let j = aIdx;
       let iv = ivlAt(L, X, Y, j);
       var b0 = iv.z0;
       var b1 = iv.z1;
       if (inside) {
-        b0 = min(iv.z0, max(lo, ivlAt(L, X, Y, j - 1u).z1));
+        let f = ivlAt(L, X, Y, j - 1u).z1;
         var up = 3.0e38;
         if (j + 1u < n) { up = ivlAt(L, X, Y, j + 1u).z0; }
-        b1 = max(iv.z1, min(hi, up));
+        let a = min(up, max(lo, f));
+        let bb = max(f, min(hi, up));
+        if (present(eS(iv))) {
+          b0 = min(iv.z0, a);
+          b1 = max(iv.z1, bb);
+        } else {
+          b0 = a;
+          b1 = bb;
+        }
       }
       setIvl(L, X, Y, j, b0, b1, iv.m, packE(max(eS(iv), eBall), eG(iv)));
       made = i32(j);
@@ -1230,8 +1323,7 @@ fn ball(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         var cc = 3.0e38;
         if (g < i32(nn)) { cc = ivlAt(L, X, Y, u32(g)).z0; }
         if (!(cc > lo && f < hi)) { continue; }
-        // (a span strictly inside an air piece, no new interval made: filled from the solid below)
-        if (lo <= f || (made < 0 && hi < cc)) {
+        if (lo <= f) {
           var es = eS(below);
           if (g - 1 > 0) { es = max(es, eBall); }
           setIvl(L, X, Y, u32(g - 1), below.z0, min(hi, cc), below.m, packE(es, eG(below)));
@@ -1983,6 +2075,71 @@ fn diff1(own: f32, lo: f32, hasLo: bool, hi: f32, hasHi: bool) -> f32 {
   return 0.0;
 }
 
+// ---- slabs (footprints, F4): a column of n intervals read bottom up as 2n slabs: slab 0 interval 0 (solid), slab 2i - 1
+// the gap below interval i, slab 2i interval i, slab 2n - 1 the sky. Each slab's AIR FIELD a (air where a > 0): an
+// interval's -eS (a ghost is air); a gap's eG where it is GAP_MIN thick or more, else min(eG, thickness - GAP_MIN) (a thin
+// gap is solid, its edge where it thins out); never 0 (the cut's t needs a sign on both sides). H_s: the top of slab s.
+// Neighbouring columns of one interval count match slab for slab (ghosts keep the count constant across a footprint's
+// edge), so a triangle of such columns is cut per slab from its corners alone (draw.wgsl vsB, kind 1).
+/** slab s's own field (an interval's -eS, a gap's eG) and thickness */
+fn slabOwn(L: u32, X: i32, Y: i32, s: u32) -> vec2<f32> {
+  if ((s & 1u) == 0u) {
+    let iv = cIvl(L, X, Y, s / 2u);
+    return vec2<f32>(-eS(iv), iv.z1 - iv.z0);
+  }
+  let iv = cIvl(L, X, Y, (s + 1u) / 2u);
+  return vec2<f32>(eG(iv), iv.z0 - cIvl(L, X, Y, (s - 1u) / 2u).z1);
+}
+/** a slab thinner than GAP_MIN takes the occupancy of the nearest slab below it that is not (a zero-thickness ghost
+ *  between two solids is solid, a thin one under the sky over a tunnel is air): no zero-thickness faces back to back.
+ *  Its own field keeps its sign where it agrees, else it is nudged to just across 0 (the cut lands at its column). */
+fn slabA(L: u32, X: i32, Y: i32, s: u32, n: u32) -> f32 {
+  if (s == 0u) { return -E_FAR; }
+  if (s >= 2u * n - 1u) { return E_FAR; }
+  let own = slabOwn(L, X, Y, s);
+  var a = own.x;
+  if (own.y < GAP_MIN) {
+    var air = false;
+    var q = s - 1u;
+    loop {
+      if (q == 0u) { break; }
+      let o = slabOwn(L, X, Y, q);
+      if (o.y >= GAP_MIN) {
+        air = o.x > 0.0;
+        break;
+      }
+      q--;
+    }
+    if (air) { a = max(a, 1.0 / 1024.0); } else { a = min(a, -1.0 / 1024.0); }
+  }
+  return select(a, -1.0 / 1024.0, a == 0.0);
+}
+/** the top of slab s (s <= 2n - 2) */
+fn slabH(L: u32, X: i32, Y: i32, s: u32) -> f32 {
+  if ((s & 1u) == 0u) { return cIvl(L, X, Y, s / 2u).z1; }
+  return cIvl(L, X, Y, (s + 1u) / 2u).z0;
+}
+/** slab s's material when solid: an interval's own; a gap's, the interval above it's */
+fn slabM(L: u32, X: i32, Y: i32, s: u32) -> u32 { return cIvl(L, X, Y, (s + 1u) / 2u).m; }
+/** columns a and b (neighbours) of one interval count, with some slab air in one and solid in the other: an edge the
+ *  slab draw cuts (the top sheet must leave both its triangles to B) */
+fn contourEdge(L: u32, a: vec2<i32>, b: vec2<i32>) -> bool {
+  if (!inWin(L, b.x, b.y)) { return false; }
+  let n = cCount(L, a.x, a.y);
+  if (n == 0u || cCount(L, b.x, b.y) != n) { return false; }
+  for (var s = 1u; s + 1u < 2u * n; s++) {
+    if ((slabA(L, a.x, a.y, s, n) > 0.0) != (slabA(L, b.x, b.y, s, n) > 0.0)) { return true; }
+  }
+  return false;
+}
+/** a column's B flag (bit 16 of its gap record 0's material word): B draws every triangle with a flagged corner, the top
+ *  sheet the rest */
+fn bFlagC(L: u32, X: i32, Y: i32) -> bool {
+  let p = cPage(GAP_ID + L, X, Y);
+  if (p >= NOT_LOADED || !inWin(L, X, Y)) { return false; }
+  return ((pgLoad(p * PW + 256u + colIn(X, Y) * K * RW + 2u) >> 16u) & 1u) == 1u;
+}
+
 /** (over a slot's chunks) a chunk's gap table: written where some column has more than one gap, let go elsewhere */
 @compute @workgroup_size(16, 16)
 fn gapsBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
@@ -2004,11 +2161,14 @@ fn gapsBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id)
   // a table where some column, or a neighbour of one, has more than one gap: the top sheet beside an overhang takes
   // its normal from the table (the floor its neighbours' matching gaps continue), not from the top surface's steps
   var near = G > 1u;
+  // the B flag: more than one air run, or an edge (of the six a triangle uses) the slab draw cuts
+  var flag = G > 1u;
   for (var d = 0u; d < 6u; d++) {
     let b = vec2<i32>(X, Y) + dirOff(d);
     if (d % 3u != 2u && inWin(L, b.x, b.y) && gapCountI(L, b.x, b.y) > 1u) { near = true; }
+    if (!flag && u.e.w == 0 && contourEdge(L, vec2<i32>(X, Y), b)) { flag = true; }
   }
-  if (near) { atomicOr(&wany, 1u); }
+  if (near || flag) { atomicOr(&wany, 1u); }
   let mg = workgroupUniformLoad(&wmax);
   let anyNear = workgroupUniformLoad(&wany);
   let need = select(0u, (GREC * mg + K - 1u) / K, anyNear != 0u);
@@ -2039,7 +2199,7 @@ fn gapsBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id)
     if (G > 1u || near) { nF = normalize(vec3<f32>(-diff1(a.f, zf[3], hf[3], zf[0], hf[0]), -diff1(a.f, zf[4], hf[4], zf[1], hf[1]), 1.0)).xy; }
     var nC = vec2<f32>(0.0, 0.0);
     if (a.c < 1e29) { nC = normalize(vec3<f32>(diff1(a.c, zc[3], hc[3], zc[0], hc[0]), diff1(a.c, zc[4], hc[4], zc[1], hc[1]), -1.0)).xy; }
-    setRec(GAP_ID + L, X, Y, GREC * g, bitcast<u32>(a.f), bitcast<u32>(a.c), a.fm | (a.cm << 8u));
+    setRec(GAP_ID + L, X, Y, GREC * g, bitcast<u32>(a.f), bitcast<u32>(a.c), a.fm | (a.cm << 8u) | (select(0u, 1u, flag && g == 0u) << 16u));
     setRec(GAP_ID + L, X, Y, GREC * g + 1u, bitcast<u32>(a.rb), pack2x16snorm(nF), pack2x16snorm(nC));
     setRec(GAP_ID + L, X, Y, GREC * g + 2u, lk[0], lk[1], lk[2]);
   }
@@ -2231,6 +2391,73 @@ fn writeItem(L: u32, cmp: vec3<i32>, i: u32, lx: u32, ly: u32, t: u32, birth: u3
     pgStore(o + 8u, bitcast<u32>(x8));
   }
 }
+/** the slab draw's item (kind 1) for slab s of the triangle mC (corners of n intervals each): face s (between slab s and
+ *  s + 1, at H_s) and slab s's wall. Per corner (10 words from 2 + r * 10): H_{s-1}, H_s, air fields (a_{s-1}, a_s) and
+ *  (a_{s+1}, 0) as f16 pairs, the face's up normal (xy snorm16), materials (slab s, slab s + 1), the top present
+ *  surface and the parent's sheet there (the top sheet's rim morph, so B moves with A), the chunk's birth (its fade). */
+fn writeSlab(L: u32, s: u32, n: u32, i: u32, lx: u32, ly: u32, t: u32) {
+  let p = pageOf(MESH_ID + L, mChunk.x, mChunk.y, i / IPP);
+  if (p >= NOT_LOADED) { return; }
+  let b = p * PW + MESH_HDR + (i % IPP) * ITEM_W;
+  pgStore(b, lx | (ly << 4u) | (t << 8u) | (1u << 10u) | (s << 11u));
+  pgStore(b + 1u, 0u);
+  for (var r = 0u; r < 3u; r++) {
+    let C = mC[r];
+    let o = b + 2u + r * 10u;
+    var lo = -1e30;
+    var am = -E_FAR;
+    if (s > 0u) {
+      lo = slabH(L, C.x, C.y, s - 1u);
+      am = slabA(L, C.x, C.y, s - 1u, n);
+    }
+    let h = slabH(L, C.x, C.y, s);
+    // the face's normal: central differences of H_s over the neighbours of the same interval count
+    var hh = array<f32, 4>(0.0, 0.0, 0.0, 0.0);
+    var ok = array<bool, 4>(false, false, false, false);
+    for (var q = 0u; q < 4u; q++) {
+      let N = C + select(vec2<i32>(select(-1, 1, q == 0u), 0), vec2<i32>(0, select(-1, 1, q == 2u)), q >= 2u);
+      ok[q] = inWin(L, N.x, N.y) && cCount(L, N.x, N.y) == n;
+      if (ok[q]) { hh[q] = slabH(L, N.x, N.y, s); }
+    }
+    let nr = normalize(vec3<f32>(-diff1(h, hh[1], ok[1], hh[0], ok[0]), -diff1(h, hh[3], ok[3], hh[2], ok[2]), 1.0));
+    var top = h;
+    var tgt = h;
+    var birth = -1e9;
+    if (L > 0u) {
+      top = sAtC(L, C.x, C.y);
+      tgt = parentSheet(L, parentTri(C.x, C.y));
+      let sl = tFind(tKey0(C.x >> 4, C.y >> 4), tKey1(L, 0u));
+      if (sl != NONE) { birth = bitcast<f32>(atomicLoad(&tab[sl * 4u + 3u])); }
+    }
+    pgStore(o, bitcast<u32>(lo));
+    pgStore(o + 1u, bitcast<u32>(h));
+    pgStore(o + 2u, pack2x16float(vec2<f32>(am, slabA(L, C.x, C.y, s, n))));
+    pgStore(o + 3u, pack2x16float(vec2<f32>(slabA(L, C.x, C.y, s + 1u, n), 0.0)));
+    pgStore(o + 4u, pack2x16snorm(nr.xy));
+    pgStore(o + 5u, slabM(L, C.x, C.y, s) | (select(0u, slabM(L, C.x, C.y, s + 1u), s + 1u < 2u * n - 1u) << 8u));
+    pgStore(o + 6u, bitcast<u32>(top));
+    pgStore(o + 7u, bitcast<u32>(tgt));
+    pgStore(o + 8u, bitcast<u32>(birth));
+    pgStore(o + 9u, 0u);
+  }
+}
+/** whether slab s of the triangle mC needs an item: a face (some corner solid on one side of H_s and air on the other, or
+ *  both fields change sign across the triangle) or a wall (slab s changes between corners) */
+fn slabNeeded(L: u32, s: u32, n: u32) -> bool {
+  var diff = false;
+  var a0 = 0u;
+  var a1 = 0u;
+  for (var r = 0u; r < 3u; r++) {
+    let x = slabA(L, mC[r].x, mC[r].y, s, n) > 0.0;
+    let y = slabA(L, mC[r].x, mC[r].y, s + 1u, n) > 0.0;
+    if (x != y) { diff = true; }
+    a0 += select(0u, 1u, x);
+    a1 += select(0u, 1u, y);
+  }
+  let v0 = a0 != 0u && a0 != 3u;
+  let v1 = a1 != 0u && a1 != 3u;
+  return diff || (v0 && v1) || (v0 && s > 0u);
+}
 /** a quad's regions, both triangles: counted, or written from slot `at` (returns the count). Every region is seeded at
  *  the first corner (0, 1, 2) that has it; one loop and one write site (the D3D11 compiler inlines every call). */
 fn quadItems(L: u32, base: vec2<i32>, write: bool, at: u32, lx: u32, ly: u32, birth: u32) -> u32 {
@@ -2239,6 +2466,7 @@ fn quadItems(L: u32, base: vec2<i32>, write: bool, at: u32, lx: u32, ly: u32, bi
     // (the diagonal from (i, j) to (i + 1, j + 1), as the top sheet's index buffer)
     var tc = array<u32, 3>(0u, 1u, 3u);
     if (t == 1u) { tc = array<u32, 3>(0u, 3u, 2u); }
+    // B draws the triangle when a corner is flagged (more than one air run, or an edge the slab draw cuts)
     var multi = false;
     for (var r = 0u; r < 3u; r++) {
       mC[r] = base + vec2<i32>(i32(tc[r] & 1u), i32(tc[r] >> 1u));
@@ -2248,9 +2476,20 @@ fn quadItems(L: u32, base: vec2<i32>, write: bool, at: u32, lx: u32, ly: u32, bi
         if (mPg[r] < NOT_LOADED) { c = cCount(GAP_ID + L, mC[r].x, mC[r].y) / GREC; } else { c = 1u; }
       }
       mG[r] = c;
-      if (c > 1u) { multi = true; }
+      if (bFlagC(L, mC[r].x, mC[r].y)) { multi = true; }
     }
     if (!multi) { continue; }
+    // corners of one interval count: the slab draw, an item per slab that has a face or a wall here
+    let n0 = cCount(L, mC[0].x, mC[0].y);
+    if (u.e.w == 0 && n0 > 0u && cCount(L, mC[1].x, mC[1].y) == n0 && cCount(L, mC[2].x, mC[2].y) == n0) {
+      for (var s = 0u; s + 1u < 2u * n0; s++) {
+        if (!slabNeeded(L, s, n0)) { continue; }
+        if (write) { writeSlab(L, s, n0, at + n, lx, ly, t); }
+        n++;
+      }
+      continue;
+    }
+    // (otherwise: the region items, half-way cuts, as before footprints: NS-55)
     for (var r = 0u; r < 3u; r++) {
       for (var x = 0; x < i32(mG[r]); x++) {
         var cmp = vec3<i32>(-1, -1, x);
@@ -2336,7 +2575,7 @@ fn dirBuild(@builtin(global_invocation_id) gid: vec3<u32>) {
 @compute @workgroup_size(1)
 fn dirFinish() {
   for (var L = 0u; L < 8u; L++) {
-    dargs[L * 4u] = 18u;
+    dargs[L * 4u] = VPI;
     dargs[L * 4u + 1u] = atomicLoad(&dir[L]) * IPP;
     dargs[L * 4u + 2u] = 0u;
     dargs[L * 4u + 3u] = 0u;

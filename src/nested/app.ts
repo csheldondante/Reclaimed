@@ -100,6 +100,8 @@ export class App {
     this.render = new Renderer(device, ctx, this.nest);
     this.render.tint = q.get('tint') === '1';
     if (q.has('detail')) this.nest.detailAmp = Number(q.get('detail'));
+    // (?cut=old: the draw's cut before footprints, half way between columns: comparison stills, NS-42)
+    this.nest.oldCut = q.get('cut') === 'old';
     if (q.has('yaw')) this.yaw = Number(q.get('yaw'));
     if (q.has('pitch')) this.pitch = Number(q.get('pitch'));
     this.nest.root(this.rootN);
@@ -551,9 +553,10 @@ export class App {
       },
       /** (test only, readbacks) the manifold check of every level's drawn mesh at time `now` (default: this frame) */
       manifold: async (now?: number) => {
-        const list = this.drawList();
+        // (a level demoted while the check awaits has no window)
+        const list = this.drawList().filter((l) => this.nest.wins[l.depth]);
         const caps = await this.render.capture(list, now ?? this.nest.now());
-        return caps.map((c, i) => manifold(c, list[i].cut));
+        return caps.map((c) => manifold(c, list.find((l) => l.depth === c.depth)!.cut));
       },
       /** (test only) pixels with no surface in the last frame */
       holes: () => holePixels(this.device, this.render, () => this.render.draw(this.drawList())),

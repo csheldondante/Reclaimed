@@ -25,7 +25,7 @@ const BAKE_SLOT = 40;
 /** level ids of the baked draw (store.wgsl GAP_ID, MESH_ID) and a mesh page's item slots (IPP) */
 export const GAP_ID = 16;
 export const MESH_ID = 24;
-export const IPP = 573;
+export const IPP = 519;
 const CTL_STACK = 16;
 /** a brush's radius at most, in the edited level's columns (nest.wgsl MAX_R; the melt scratch is sized by it: NS-9) */
 const MAX_BRUSH = 76;
@@ -443,10 +443,14 @@ export class GpuNest {
       this.run('dilate', this.uni(({ a, e }) => ((a[3] = L), e.set([s, t, 0, 0]))), 1);
       return t;
     });
-    for (const t of dil) this.runIndirect('gapsBake', this.uni(({ a, r }) => ((a[3] = L), (r[0] = t))), t);
+    // (u.e.w = 1: the old cut, half way, region items everywhere: ?cut=old, for comparison)
+    const old = this.oldCut ? 1 : 0;
+    for (const t of dil) this.runIndirect('gapsBake', this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = t), (e[3] = old))), t);
     if (this.bakeOff === 'mesh') return;
-    for (const t of dil) this.runIndirect('meshBake', this.uni(({ a, r }) => ((a[3] = L), (r[0] = t))), t);
+    for (const t of dil) this.runIndirect('meshBake', this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = t), (e[3] = old))), t);
   }
+  /** the draw's cut before footprints (half way between columns, region items): a measurement switch (NS-42) */
+  oldCut = false;
   /** the draw's list of mesh pages, rebuilt from the table (after an op's bakes and releases) */
   private directory(): void {
     this.run('dirClear', this.uni(), 1);
