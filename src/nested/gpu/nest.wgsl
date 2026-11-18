@@ -671,7 +671,10 @@ fn release(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (k1 >= BUSY) { return; }
   // the level's columns and its baked draw (gap table, mesh items)
   let lid = k1 & 0xffu;
-  if (lid != u.a.w && lid != GAP_ID + u.a.w && lid != MESH_ID + u.a.w) { return; }
+  // (mode 7: a stroke's snapshot only, at its end)
+  if (u.a.z == 7u) {
+    if (lid != SNAP_ID + u.a.w) { return; }
+  } else if (lid != u.a.w && lid != GAP_ID + u.a.w && lid != MESH_ID + u.a.w && lid != SNAP_ID + u.a.w) { return; }
   let k0 = atomicLoad(&tab[s * 4u]);
   let cx = i32(k0 & 0xffffu);
   let cy = i32(k0 >> 16u);
@@ -680,6 +683,43 @@ fn release(@builtin(global_invocation_id) gid: vec3<u32>) {
   let p = atomicLoad(&tab[s * 4u + 2u]);
   if (p < NOT_LOADED) { freePage(p); }
   atomicStore(&tab[s * 4u + 1u], TOMB);
+}
+
+// ---- a stroke's snapshot (round 4; the owner: "sweep the carve along a trajectory of the original uncarved surface so
+// you carve one layer at a time"). Level id SNAP_ID + depth: a copy of a chunk's column pages made the first time a
+// stroke is about to change that chunk (copy on write), let go at the stroke's end. The pick (solidDist) reads it
+// where it exists, so during a stroke the ball rides the surface as it was when the stroke began. u.r.z & STROKE: a
+// stroke is on (carve, add).
+const SNAP_ID: u32 = 32u;
+const STROKE: u32 = 2u;
+@compute @workgroup_size(256)
+fn snap(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  let L = u.a.w;
+  let o = slotOrigin(u.r.x, li);
+  let cx = o.x + i32(wid.x);
+  let cy = o.y + i32(wid.y);
+  if (!inWin(L, cx * 16, cy * 16)) { return; }
+  if (li == 0u) {
+    atomicStore(&wany, select(0u, 1u, pageOf(SNAP_ID + L, cx, cy, 0u) < NOT_LOADED));
+    var n = 0u;
+    loop {
+      if (pageOf(L, cx, cy, n) >= NOT_LOADED) { break; }
+      n++;
+    }
+    atomicStore(&wmax, n);
+  }
+  let have = workgroupUniformLoad(&wany);
+  let n = workgroupUniformLoad(&wmax);
+  if (have != 0u || n == 0u) { return; }
+  if (li == 0u) { ensurePages(SNAP_ID + L, cx, cy, n, u.d.x); }
+  storageBarrier();
+  workgroupBarrier();
+  for (var cz = 0u; cz < n; cz++) {
+    let src = pageOf(L, cx, cy, cz);
+    let dst = pageOf(SNAP_ID + L, cx, cy, cz);
+    if (src >= NOT_LOADED || dst >= NOT_LOADED) { continue; }
+    for (var i = li; i < PW; i += 256u) { pgStore(dst * PW + i, pgLoad(src * PW + i)); }
+  }
 }
 
 /** the pages let go since the last merge join the free stack (its own pass: no push races a pop) */
@@ -741,6 +781,31 @@ fn plan() {
   let cxg = f32(w.x) + hx;
   let cyg = f32(w.y) + hy;
   var box = vec4<i32>(i32(floor(cxg - r)), i32(floor(cyg - r)), i32(ceil(cxg + r)) + 1, i32(ceil(cyg + r)) + 1);
+  // a stroke (carve, add): the ball sweeps from the last centre of the stroke to this one (a capsule), so a fast drag
+  // leaves no gaps. cam 300-303: the last centre (level, x, y, z in that level's window units), 304: 1 once the stroke
+  // has one; 305-307: it in level d's units (ballSpan's)
+  if ((u.r.z & STROKE) != 0u) {
+    let cz = bitcast<f32>(reg[13]);
+    var pc = vec3<f32>(hx, hy, cz);
+    if (cam[304] > 0.5) {
+      let pd = u32(cam[300]);
+      let wp = u.lv[pd];
+      let s = pow(f32(k), f32(d) - f32(pd));
+      // (window units of level pd to level d: global columns scaled, z through the world)
+      pc = vec3<f32>((f32(wp.x) + cam[301]) * s - f32(w.x), (f32(wp.y) + cam[302]) * s - f32(w.y), ((zOrig(pd) + cam[303] / kpow(pd)) - zOrig(u32(d))) * kpow(u32(d)));
+    }
+    cam[305] = pc.x;
+    cam[306] = pc.y;
+    cam[307] = pc.z;
+    cam[300] = f32(d);
+    cam[301] = hx;
+    cam[302] = hy;
+    cam[303] = cz;
+    cam[304] = 1.0;
+    let px = f32(w.x) + pc.x;
+    let py = f32(w.y) + pc.y;
+    box = unionR(box, vec4<i32>(i32(floor(px - r)), i32(floor(py - r)), i32(ceil(px + r)) + 1, i32(ceil(py + r)) + 1));
+  }
   box = vec4<i32>(max(box.x, w.x), max(box.y, w.y), min(box.z, w.x + w.z), min(box.w, w.y + w.z));
   if (box.x >= box.z || box.y >= box.w) {
     reg[8] = -1;
@@ -841,13 +906,26 @@ fn edit(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
 // when it grows, bottom up when it shrinks).
 fn ballSpan(X: i32, Y: i32, L: u32) -> vec3<f32> {
   let w = u.lv[L];
-  let c = vec2<f32>(f32(w.x) + bitcast<f32>(reg[9]), f32(w.y) + bitcast<f32>(reg[10]));
+  let c1 = vec3<f32>(f32(w.x) + bitcast<f32>(reg[9]), f32(w.y) + bitcast<f32>(reg[10]), bitcast<f32>(reg[13]));
+  var c0 = c1;
+  // (a stroke: the capsule from the last centre; its span on a vertical line is one interval, the union of the balls'
+  // spans along the segment, sampled at a quarter radius at most)
+  if ((u.r.z & STROKE) != 0u) { c0 = vec3<f32>(f32(w.x) + cam[305], f32(w.y) + cam[306], cam[307]); }
   let r = bitcast<f32>(reg[11]);
-  let dd = length(vec2<f32>(f32(X) + 0.5, f32(Y) + 0.5) - c);
-  if (dd >= r) { return vec3<f32>(0.0, 0.0, -1.0); }
-  let h = sqrt(r * r - dd * dd);
-  let cz = bitcast<f32>(reg[13]);
-  return vec3<f32>(cz - h, cz + h, 1.0);
+  let q = vec2<f32>(f32(X) + 0.5, f32(Y) + 0.5);
+  let steps = u32(clamp(ceil(length(c1 - c0) / (0.25 * r)), 0.0, 256.0));
+  var lo = 1e30;
+  var hi = -1e30;
+  for (var i = 0u; i <= steps; i++) {
+    let c = mix(c0, c1, select(1.0, f32(i) / f32(steps), steps > 0u));
+    let dd = length(q - c.xy);
+    if (dd >= r) { continue; }
+    let h = sqrt(r * r - dd * dd);
+    lo = min(lo, c.z - h);
+    hi = max(hi, c.z + h);
+  }
+  if (hi < lo) { return vec3<f32>(0.0, 0.0, -1.0); }
+  return vec3<f32>(lo, hi, 1.0);
 }
 fn ballCount(L: u32, X: i32, Y: i32, n: u32, lo: f32, hi: f32, add: bool) -> u32 {
   var c = 0u;
@@ -1109,10 +1187,13 @@ fn solidDist(m: u32, p: vec3<f32>) -> f32 {
   if (p.x < 0.0 || p.y < 0.0 || p.x >= f32(w.z) || p.y >= f32(w.z)) { return 1e9; }
   let X = w.x + i32(floor(p.x));
   let Y = w.y + i32(floor(p.y));
-  let n = colCount(m, X, Y);
+  // (during a stroke the pick sees the surface as it was when the stroke began: the snapshot where the stroke changed it)
+  var lid = m;
+  if ((u.r.z & STROKE) != 0u && pageOf(SNAP_ID + m, X >> 4, Y >> 4, 0u) < NOT_LOADED) { lid = SNAP_ID + m; }
+  let n = colCount(lid, X, Y);
   var d = 1e9;
   for (var i = 0u; i < n; i++) {
-    let iv = ivlAt(m, X, Y, i);
+    let iv = ivlAt(lid, X, Y, i);
     if (p.z >= iv.z0 && p.z <= iv.z1) { return -min(p.z - iv.z0, iv.z1 - p.z); }
     d = min(d, min(abs(p.z - iv.z1), select(abs(p.z - iv.z0), 1e9, i == 0u)));
   }

@@ -28,6 +28,8 @@ export const IPP = 432;
 const CTL_STACK = 16;
 /** a brush's radius at most, in the edited level's columns (nest.wgsl MAX_R; the melt scratch is sized by it: NS-9) */
 const MAX_BRUSH = 76;
+/** u.r.z flag: a stroke is on (nest.wgsl STROKE) */
+const STROKE = 2;
 /** the first binding of the page segments (compute and draw) */
 export const SEG_BASE = 10;
 /** the pool grows in steps of this many pages beyond what is needed */
@@ -176,7 +178,7 @@ export class GpuNest {
     const pl = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
     const ppl = device.createPipelineLayout({ bindGroupLayouts: [this.planLayout] });
     const dpl = device.createPipelineLayout({ bindGroupLayouts: [this.dirLayout] });
-    for (const e of ['derive', 'restrictK', 'rootGen', 'zPick', 'release', 'merge', 'edit', 'meltSnap', 'meltApply', 'camera', 'pick', 'ball', 'gapsBake', 'meshBake'])
+    for (const e of ['derive', 'restrictK', 'rootGen', 'zPick', 'release', 'merge', 'edit', 'meltSnap', 'meltApply', 'camera', 'pick', 'ball', 'gapsBake', 'meshBake', 'snap'])
       this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: pl, compute: { module, entryPoint: e } });
     for (const e of ['plan', 'dilate']) this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: ppl, compute: { module, entryPoint: e } });
     for (const e of ['dirClear', 'dirBuild', 'dirFinish']) this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: dpl, compute: { module, entryPoint: e } });
@@ -549,9 +551,11 @@ export class GpuNest {
       const r = Math.min(MAX_BRUSH, spec.radius * this.k ** m);
       bound += Math.ceil((2 * r + 4 * this.k + 4) / 16 + 2) ** 2;
     }
-    // (carve and add can add intervals: one more overflow page; whole-column residuals take two records an interval)
+    // (carve and add can add intervals: one more overflow page; whole-column residuals take two records an interval; a
+    // stroke's snapshot copies the column pages of chunks it changes for the first time)
     const ball = spec.op === 'carve' || spec.op === 'add';
-    if (!this.reserve(bound * (this.overflowPages() + (ball ? 1 : 0)) + this.bakeBound(bound))) return false;
+    const swept = ball && this.stroke;
+    if (!this.reserve(bound * (this.overflowPages() * (swept ? 2 : 1) + (ball ? 1 : 0)) + this.bakeBound(bound))) return false;
     const opId = { raise: 1, dig: 2, melt: 3, carve: 4, add: 5 }[spec.op];
     const base = ({ a, r, c, d }: { a: Uint32Array; r: Uint32Array; c: Float32Array; d: Float32Array }) => {
       a[2] = opId;
@@ -559,10 +563,12 @@ export class GpuNest {
       // d.y: the melt's rate, or (carve, add) the forced hit's height
       d[1] = ball ? (spec.at?.z ?? 0) : Math.min(0.12, spec.rate ?? 0.1);
       d[2] = spec.at?.level ?? 0;
-      r[2] = spec.at ? 1 : 0;
+      r[2] = (spec.at ? 1 : 0) | (swept ? STROKE : 0);
     };
     if (!spec.at) this.run('pick', this.uni(base), 1);
     this.run('plan', this.uni(base), 1);
+    // a stroke: the chunks this edit will change, copied first where the stroke has not changed them yet
+    if (swept) for (let m = 0; m < live; m++) for (const s of [m * 4 + 3, m * 4 + 2, ...(m + 1 < live ? [(m + 1) * 4] : [])]) this.runIndirect('snap', this.uni((u) => (base(u), (u.a[3] = m), (u.r[0] = s))), s);
     for (let m = 0; m < live; m++) {
       const slot = m * 4 + 3;
       if (spec.op === 'melt') {
@@ -582,6 +588,22 @@ export class GpuNest {
     this.mergeFrees();
     this.submit();
     return true;
+  }
+
+  /** a stroke (carve, add; pointer down to up): its edits sweep a capsule from the last centre, and their pick sees the
+   *  surface as it was when the stroke began (nest.wgsl snap) */
+  stroke = false;
+  strokeBegin(): void {
+    this.stroke = true;
+    this.device.queue.writeBuffer(this.cam, 304 * 4, new Float32Array([0]));
+  }
+  /** the stroke's snapshot let go */
+  strokeEnd(): void {
+    if (!this.stroke) return;
+    this.stroke = false;
+    for (let m = 0; m < this.live; m++) this.run('release', this.uni(({ a, e }) => ((a[2] = 7), (a[3] = m), e.set([0, 0, 0, 0]))), TCAP / 64);
+    this.mergeFrees();
+    this.submit();
   }
 
   /** this frame's camera: the eye moved (limited by the nearest solid) and the per-level view-projections (cam buffer)

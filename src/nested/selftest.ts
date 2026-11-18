@@ -307,6 +307,70 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
     const b = identical(levelCols(hs, 1, F1), c1);
     check('page segments: a pool of 128-page buffers (pages handed out from id 100, across the end of the first buffer) gives the same level 1 bit for bit (and again after demote, promote)', a.same && b.same && h.stats.segs > 1, `${a.diff} + ${b.diff} columns differ; ${h.stats.segs} segments in use, ${hs.ctl[0]} pages handed out, refused ${hs.ctl[1]}`);
   }
+  // strokes (the owner: "sweep the carve along a trajectory of the original uncarved surface so you carve one layer at a
+  // time"): a drag of the pointer, looking down, carves through the pick on the surface as it was when the stroke began
+  {
+    const h = new GpuNest(device, K, SEED, 16, { syncGrow: true });
+    for (const op of ['edit'] as const) {
+      const f = (h[op] as (...a: unknown[]) => boolean).bind(h);
+      (h as unknown as Record<string, unknown>)[op] = (...a: unknown[]) => {
+        if (!f(...a)) throw new Error(`stroke ${op} refused`);
+        return true;
+      };
+    }
+    h.root(64);
+    const R = 2.5;
+    const res: string[] = [];
+    let ok = true;
+    for (const [name, tx, ty] of [
+      ['A', 20, 20],
+      ['B', 44, 40],
+    ] as const) {
+      const control = false;
+      // the eye 30 root columns above (tx, ty), looking down; the pointer moves across the screen
+      h.placeEye(tx, ty, 30);
+      const cam = (nx: number, ny: number, place: number) => {
+        h.camIn.set([0, 0, 0, place, 0, 1.5, 1, 4, (50 * Math.PI) / 180, nx, ny, 1 / 60]);
+        h.camera();
+      };
+      cam(0, 0, 1);
+      cam(0, 0, 0);
+      const pre = await h.readAll();
+      if (!control) h.strokeBegin();
+      const centres: [number, number][] = [];
+      const drag = async (pts: [number, number][]) => {
+        for (const [nx, ny] of pts) {
+          cam(nx, ny, 0);
+          h.edit({ op: 'carve', radius: R, amount: 0 });
+          const c = await h.readCam();
+          centres.push([c[301], c[302]]);
+        }
+      };
+      // a straight drag, then back across it diagonally (the second pass crosses the first)
+      await drag(Array.from({ length: 16 }, (_, i) => [-0.35 + (i * 0.7) / 15, 0] as [number, number]));
+      const first = centres.length;
+      await drag(Array.from({ length: 16 }, (_, i) => [-0.05 + (i * 0.1) / 15, -0.35 + (i * 0.7) / 15] as [number, number]));
+      h.strokeEnd();
+      const post = await h.readAll();
+      const top = (s: Snapshot, x: number, y: number) => {
+        const c = s.column(0, Math.floor(x), Math.floor(y));
+        return c.z1[c.z1.length - 1];
+      };
+      const depths = centres.slice(1, first - 1).map(([x, y]) => top(pre, x, y) - top(post, x, y));
+      const slope = Math.abs(top(pre, centres[first - 1][0], centres[first - 1][1]) - top(pre, centres[0][0], centres[0][1])) / Math.max(1e-6, Math.hypot(centres[first - 1][0] - centres[0][0], centres[first - 1][1] - centres[0][1]));
+      // the crossing: the column of the second pass nearest the first pass's middle
+      const mid = centres[(first / 2) | 0];
+      const cross = centres.slice(first).reduce((b, c) => (Math.hypot(c[0] - mid[0], c[1] - mid[1]) < Math.hypot(b[0] - mid[0], b[1] - mid[1]) ? c : b));
+      const dCross = top(pre, cross[0], cross[1]) - top(post, cross[0], cross[1]);
+      const lo = Math.min(...depths);
+      const hi = Math.max(...depths);
+      const pass = lo > 0.8 * R && hi < 1.2 * R && dCross < 1.2 * R;
+      if (!control) ok &&= pass;
+      res.push(`${name} (slope ${slope.toFixed(2)}): depth along the drag ${lo.toFixed(2)}..${hi.toFixed(2)} for r ${R}; at the crossing ${dCross.toFixed(2)}; snapshot pages after the stroke ${post.pagesOf(32)}`);
+      ok &&= post.pagesOf(32) === 0;
+    }
+    check('strokes: a drag carves one even layer on the surface as it was (depth within 20 % of the radius, flat and sloped), crossing its own path digs no deeper; the snapshot is let go', ok, res.join('; '));
+  }
   check('the pool grew under load with nothing refused; no mismatches, table never full, every residual exact', st.grows > 0 && s.ctl[1] === 0 && s.ctl[4] === 0 && s.ctl[5] === 0 && s.ctl[6] === 0, `started at 16 pages, grew ${st.grows} times to ${g.cap} (${st.segs} segments of ${st.segPages}; ${st.used} used); refused ${s.ctl[1]}, mismatches ${s.ctl[4]}, table full ${s.ctl[5]}, inexact residuals ${s.ctl[6]}`);
   return out;
 }

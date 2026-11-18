@@ -298,6 +298,20 @@ self-test).
   in flight, `?maxbuf=<MB>` to clamp the device's buffers, the device's limits and the pool on the page; the near plane
   no longer follows the measured nearest solid; the watertight checks (scripts/nested-watertight.mjs; NS-46) and the
   stress run (scripts/nested-stress.mjs).
+- Round 4 step 2 (2026-11-18): strokes for Carve and Add. Press: a ball of 6 px radius at the touched surface point;
+  held still it grows 40 px a second, up to 0.15 of the distance to the surface in the screen's centre (a ring round the
+  finger and the radius in the info line); a drag sweeps it at its size. A stroke's edits sweep a capsule from the last
+  centre to this one (nest.wgsl ballSpan; a fast drag leaves no gaps) and their pick reads a snapshot of the surface as it
+  was when the stroke began: the first time an edit of the stroke is about to change a chunk (the brushed, restricted
+  and derived regions, every level), its column pages are copied to level id 32 + depth (nest.wgsl snap: copy on write,
+  from the one pool, no cap); the pick (solidDist) reads the copy where it exists; the stroke's end lets the copies go.
+  So a drag removes or lays one even layer and going over it again changes nothing; the next stroke starts from the new
+  surface. Levels hold still during a stroke (no promote, slide or demote: a new level would have no snapshot). At most
+  one op in flight (step 1); an edit only when the ball grew or moved. A stroke that crosses a level rim: the pick takes
+  the finest level whose interior it lands in, each level against its own snapshot; when the hit moves to another level
+  the last centre is carried into that level's units and the capsule is swept there (at that level's resolution; the
+  coarser level's part of the stroke is a coarser layer). Raise, Dig and Melt keep their per-frame edits, now one op in
+  flight.
 
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 

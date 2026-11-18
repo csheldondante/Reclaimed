@@ -26460,6 +26460,26 @@ refused 0; ?maxbuf=256: 827 of 2,624 (126 MB, 1 segment). Before: froze at 256 M
 Watertight (desktop, no clamp): open edges L0 0, L1 ~700-1,000, L2 ~1,700-3,300 per eye; screen 7,438 hole pixels over 40
 poses x 3 samples (was 190,549 with the near plane bug); both still FAIL (NS-46, step 3).
 
+## 2026-11-18 — Nested scales lab, round 4 step 2: strokes — hold to grow, sweep along the surface as it was
+
+**Why.** The owner: "I might have carve only carve from the surface at touch and then slowly grow in size as you hold it"
+and "I would sweep the carve along a trajectory of the original uncarved surface so you carve one layer at a time". A held
+finger used to fire an edit every frame at a fixed size, its pick falling into the fresh hole and digging deeper.
+
+**What** (NESTED_SCALES.md "Built so far", round 4 step 2). Hold to grow (6 px, +40 px/s while still, capped at 0.15 of
+the distance to the surface at the screen's centre; a ring and a number). A stroke sweeps a capsule from its last centre
+(ballSpan samples balls every quarter radius along the segment). The pick reads a copy-on-write snapshot of the chunks
+the stroke changed (level id 32 + depth; nest.wgsl `snap` after `plan`, before the brush), released at pointer up. Levels
+hold still during a stroke. Edits only when the ball grew or moved, one op in flight.
+
+**Measured.** Self-test 25/25; new: two drags looking straight down at the root (slopes 0.20 and 0.17), radius 2.5
+columns: removed depth along the drag 2.46..3.00 and 2.45..2.88 (within 20 %), at the place a second pass crosses the
+first 2.47 and 2.88 (no deeper), no snapshot page left after the stroke. Through real pointer events
+(scripts/nested-brush.mjs): the ring reached 66 px after 1.5 s held (77 cm at that distance); 82 edits while held (one
+every other frame: each waits for the last), 173 over the stroke; refused 0. Stills: local/nested/brush-carve-hold.png
+(the ring), brush-add-after.png (one layer laid along the drag). The shapes' walls are still the half-way staircase
+(step 3).
+
 
 
 

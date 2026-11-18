@@ -139,8 +139,12 @@ export class App {
     c.addEventListener('pointerdown', (e) => {
       c.setPointerCapture(e.pointerId);
       this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (this.pointers.size === 1 && this.mode !== 'move' && this.mode !== 'orbit' && e.button === 0) this.sculptAt = { x: e.clientX, y: e.clientY };
+      if (this.pointers.size === 1 && this.mode !== 'move' && this.mode !== 'orbit' && e.button === 0) {
+        this.sculptAt = { x: e.clientX, y: e.clientY };
+        if (this.mode === 'carve' || this.mode === 'add') this.beginStroke();
+      }
       if (this.pointers.size === 2) {
+        this.endStroke();
         this.sculptAt = null;
         this.pinch = this.pinchOf();
       }
@@ -163,6 +167,7 @@ export class App {
       }
       if (this.sculptAt) {
         this.sculptAt = { x: e.clientX, y: e.clientY };
+        if (this.strokeOn) this.strokeMoved = true;
         return;
       }
       if (this.mode === 'orbit' || e.buttons === 2) this.orbit(dx, dy);
@@ -171,7 +176,10 @@ export class App {
     const up = (e: PointerEvent) => {
       this.pointers.delete(e.pointerId);
       if (this.pointers.size < 2) this.pinch = null;
-      if (this.pointers.size === 0) this.sculptAt = null;
+      if (this.pointers.size === 0) {
+        this.sculptAt = null;
+        this.endStroke();
+      }
     };
     c.addEventListener('pointerup', up);
     c.addEventListener('pointercancel', up);
@@ -188,6 +196,42 @@ export class App {
       m[e.key.toLowerCase()]?.();
     });
   }
+  // ---- strokes (carve, add): hold to grow, sweep along the surface as it was when the stroke began -----------------------
+  static readonly GROW_PX_S = 40;
+  static readonly START_PX = 6;
+  strokeOn = false;
+  private strokeMoved = false;
+  private strokeFirst = false;
+  strokePx = 0;
+  private strokeEditPx = 0;
+  private ring: HTMLDivElement | null = null;
+  private beginStroke(): void {
+    this.strokeOn = true;
+    this.strokeFirst = true;
+    this.strokeMoved = false;
+    this.strokePx = App.START_PX;
+    this.strokeEditPx = 0;
+    this.nest.strokeBegin();
+  }
+  private endStroke(): void {
+    if (!this.strokeOn) return;
+    this.strokeOn = false;
+    this.nest.strokeEnd();
+  }
+  /** the ball's radius as a ring round the finger (screen size at the distance of the screen's centre: NS-25) */
+  private ringShow(): void {
+    if (!this.ring) {
+      this.ring = document.createElement('div');
+      this.ring.style.cssText = 'position:fixed;pointer-events:none;border:2px solid rgba(255,255,255,0.85);border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,0.4);display:none';
+      document.body.appendChild(this.ring);
+    }
+    const on = this.strokeOn && this.sculptAt;
+    this.ring.style.display = on ? 'block' : 'none';
+    if (!on) return;
+    const r = this.strokePx;
+    Object.assign(this.ring.style, { left: `${this.sculptAt!.x - r}px`, top: `${this.sculptAt!.y - r}px`, width: `${2 * r}px`, height: `${2 * r}px` });
+  }
+
   private setMode(m: Mode): void {
     this.mode = m;
     for (const id of ['carve', 'add', 'raise', 'dig', 'melt', 'move', 'orbit']) this.buttons.get(id)!.classList.toggle('on', id === m);
@@ -363,7 +407,8 @@ export class App {
     }
     // at most one op in flight: an op runs only once the pool's header has come back after the last one (its pages
     // known exactly, so the next reserve is exact and no op piles up behind another)
-    if (!this.frozen && this.nest.settled) this.levels();
+    // (levels hold still during a stroke: its snapshot is of the levels open when it began)
+    if (!this.frozen && this.nest.settled && !this.strokeOn) this.levels();
     const ndc = this.sculptAt ? [(this.sculptAt.x / this.canvas.clientWidth) * 2 - 1, 1 - (this.sculptAt.y / this.canvas.clientHeight) * 2] : [0, 0];
     const qd = this.nest.settled ? this.queue.shift() : undefined;
     if (qd) ndc.splice(0, 2, qd.nx, qd.ny);
@@ -372,9 +417,26 @@ export class App {
     this.placeReq = null;
     this.move = [0, 0, 0];
     this.nest.camera();
-    const op = qd?.op ?? (this.sculptAt && this.nest.settled ? (this.mode as Op) : null);
+    // hold to grow (carve, add): the ball grows while the finger is held still, up to 0.15 of the distance to the surface
+    // in the screen's centre; a drag sweeps it at its current size. An edit only when the ball grew or moved.
+    let strokeEdit = false;
+    if (this.strokeOn && this.sculptAt) {
+      const capPx = (0.15 * this.dRef()) / this.perPx();
+      if (!this.strokeMoved) this.strokePx = Math.min(capPx, this.strokePx + App.GROW_PX_S * dt);
+      strokeEdit = this.strokeFirst || this.strokeMoved || this.strokePx > this.strokeEditPx + 0.5;
+    }
+    this.ringShow();
+    const held = this.sculptAt && this.nest.settled && (!this.strokeOn || strokeEdit);
+    const op = qd?.op ?? (held ? (this.mode as Op) : null);
     if (op) {
-      const radius = (qd?.px ?? this.brushPx) * this.perPx() * (op === 'carve' || op === 'add' ? 0.5 : 1);
+      const ballOp = op === 'carve' || op === 'add';
+      const px = qd?.px !== undefined ? qd.px * (ballOp ? 0.5 : 1) : this.strokeOn && !qd ? this.strokePx : this.brushPx * (ballOp ? 0.5 : 1);
+      const radius = px * this.perPx();
+      if (this.strokeOn && !qd) {
+        this.strokeFirst = false;
+        this.strokeMoved = false;
+        this.strokeEditPx = this.strokePx;
+      }
       const ok = this.timed('edit', -1, () => this.nest.edit({ op, radius, amount: (op === 'melt' ? 0 : 0.04) * radius, rate: 0.1 }));
       if (!ok && qd) this.queue.unshift(qd);
     }
@@ -397,6 +459,10 @@ export class App {
       live < this.maxDepth + 1 ? 'Zoom in close to the ground to open a finer level.' : 'This is the finest level.',
       this.mode === 'move' ? 'Drag to move. Pinch or scroll to zoom. Keys: WASD to fly, Q and E down and up.' : this.mode === 'orbit' ? 'Drag to look around.' : `Drag on the ground to ${this.mode}.`,
     ];
+    if (this.strokeOn) {
+      const cm = this.strokePx * this.perPx() * ROOT_COLUMN_M * 100;
+      lines.push(`Brush radius ${cm >= 100 ? `${(cm / 100).toFixed(2)} m` : `${cm.toFixed(1)} cm`} (hold still to grow it).`);
+    }
     if (this.lifts) lines.push(`The camera was lifted out of solid ${this.lifts} times.`);
     if (st.refused || st.mismatch || st.tableFull) lines.push(`Error: ${st.refused} pages refused, ${st.mismatch} blocks mismatched, table full ${st.tableFull} times.`);
     if (st.error) lines.push(`Memory: ${st.error}`);

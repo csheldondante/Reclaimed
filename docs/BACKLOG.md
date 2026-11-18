@@ -157,6 +157,11 @@ user) · `deferred` (agreed for later).
 - NS-48 (bug, round 4 step 1) The camera reported the nearest solid 5.5 world units away with the mound's surface ~1.4
   away (NS-36's overestimate, seen again in pose 13 of the screen check). The near plane no longer depends on it (a
   tenth of the margin); the eye's collision still does. Not diagnosed.
+- NS-49 (limit, round 4 step 2) Levels hold still during a carve or add stroke (a level promoted mid-stroke would have
+  no snapshot of the pre-stroke surface). A long drag toward the window's edge therefore runs onto the coarser level.
+  Snapshot a promoted level from its parent's snapshot instead.
+- NS-50 (limit, round 4 step 2) The ring is drawn at the finger with the radius scaled at the distance of the screen's
+  centre (NS-25), not at the hit; on a steep view the ring and the ball differ in size.
 
 ## Terrain: rivers first (2026-11-17, `terrain-rivers`; docs/design/TERRAIN_RIVERS.md, DECISIONS 2026-11-17)
 
