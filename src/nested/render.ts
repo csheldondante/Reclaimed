@@ -6,7 +6,7 @@
 // view-projection in its own units). A second target carries per-pixel info for the measurements.
 import storeWgsl from './gpu/store.wgsl?raw';
 import drawWgsl from './gpu/draw.wgsl?raw';
-import { MAX_LEVELS, TCAP, type GpuNest } from './gpu/nest';
+import { MAX_LEVELS, SEG_BASE, TCAP, segWgsl, type GpuNest } from './gpu/nest';
 
 const DU = 256;
 const DU_SIZE = 112;
@@ -22,6 +22,7 @@ export class Renderer {
   private pipeA: GPURenderPipeline;
   private pipeB: GPURenderPipeline;
   private layout: GPUBindGroupLayout;
+  private module: GPUShaderModule;
   private ubuf: GPUBuffer;
   private bg: GPUBindGroup | null = null;
   private bgFor: GPUBuffer[] = [];
@@ -44,16 +45,17 @@ export class Renderer {
   ) {
     this.format = navigator.gpu.getPreferredCanvasFormat();
     ctx.configure({ device, format: this.format, alphaMode: 'opaque', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
-    const V = GPUShaderStage.VERTEX;
+    // (compute too: the watertight check's capture runs the vertex code in a compute pass)
+    const V = GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE;
     const ro = { type: 'read-only-storage' as const };
     this.layout = device.createBindGroupLayout({
       label: 'nest draw',
       entries: [
         { binding: 0, visibility: V | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: DU_SIZE } },
-        ...[1, 2, 3, 4, 5].map((binding) => ({ binding, visibility: V, buffer: ro })),
+        ...[1, 3, 4, 5, ...Array.from({ length: nest.S }, (_, j) => SEG_BASE + j)].map((binding) => ({ binding, visibility: V, buffer: ro })),
       ],
     });
-    const module = device.createShaderModule({ label: 'nest draw', code: `const TCAP: u32 = ${TCAP}u;\n${storeWgsl}\n${drawWgsl}` });
+    const module = (this.module = device.createShaderModule({ label: 'nest draw', code: `const TCAP: u32 = ${TCAP}u;\n${segWgsl(nest.S, nest.segP, true)}\n${storeWgsl}\n${drawWgsl}` }));
     const pl = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
     const mk = (entryPoint: string, fs: string) =>
       device.createRenderPipeline({
@@ -95,39 +97,27 @@ export class Renderer {
     this.info = this.device.createTexture({ size: [w, h], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
   }
 
-  draw(levels: DrawLevel[]): void {
+  draw(levels: DrawLevel[]): GPUTexture {
     const tex = this.ctx.getCurrentTexture();
     this.targets(tex.width, tex.height);
-    if (this.bgFor[0] !== this.nest.pg || this.bgFor[1] !== this.nest.dir) {
+    const segs = this.nest.segBuffers();
+    const want = [this.nest.dir, ...segs];
+    if (want.length !== this.bgFor.length || want.some((b, i) => b !== this.bgFor[i])) {
       this.bg = this.device.createBindGroup({
         label: 'nest draw',
         layout: this.layout,
         entries: [
           { binding: 0, resource: { buffer: this.ubuf, size: DU_SIZE } },
           { binding: 1, resource: { buffer: this.nest.tab } },
-          { binding: 2, resource: { buffer: this.nest.pg } },
           { binding: 3, resource: { buffer: this.nest.cam } },
           { binding: 4, resource: { buffer: this.nest.reg } },
           { binding: 5, resource: { buffer: this.nest.dir } },
+          ...segs.map((buffer, j) => ({ binding: SEG_BASE + j, resource: { buffer } })),
         ],
       });
-      this.bgFor = [this.nest.pg, this.nest.dir];
+      this.bgFor = want;
     }
-    const st = new ArrayBuffer(DU * MAX_LEVELS);
-    const now = this.nest.now();
-    for (const lv of levels) {
-      const w = this.nest.wins[lv.depth]!;
-      const p = lv.depth > 0 ? this.nest.wins[lv.depth - 1]! : null;
-      const i = new Int32Array(st, lv.depth * DU, 8);
-      const f = new Float32Array(st, lv.depth * DU + 32, 16);
-      i.set([w.gx, w.gy, w.n, lv.depth, p?.gx ?? 0, p?.gy ?? 0, p?.n ?? 0, p ? 1 : 0]);
-      f.set(lv.cut ?? [1, 1, 0, 0], 0);
-      f.set([now, this.fadeSeconds, this.tint ? 1 : 0, this.nest.k], 4);
-      f.set(lv.want ?? [1, 1, 0, 0], 8);
-      f.set([0.45, -0.35, 0.82, 0], 12);
-      new Uint32Array(st, lv.depth * DU + 96, 4).set([this.nest.cap, this.noMorphB ? 1 : 0, this.diagB ? 1 : 0, 0]);
-    }
-    this.device.queue.writeBuffer(this.ubuf, 0, st);
+    this.uniforms(levels, this.nest.now());
     const enc = this.device.createCommandEncoder({ label: 'nest draw' });
     const pass = enc.beginRenderPass({
       colorAttachments: [
@@ -150,5 +140,76 @@ export class Renderer {
     }
     pass.end();
     this.device.queue.submit([enc.finish()]);
+    return tex;
+  }
+
+  /** the per-level uniforms at time `now` (instB: the capture's instance count a level) */
+  private uniforms(levels: DrawLevel[], now: number, instB: number[] = []): void {
+    const st = new ArrayBuffer(DU * MAX_LEVELS);
+    for (const lv of levels) {
+      const w = this.nest.wins[lv.depth]!;
+      const p = lv.depth > 0 ? this.nest.wins[lv.depth - 1]! : null;
+      const i = new Int32Array(st, lv.depth * DU, 8);
+      const f = new Float32Array(st, lv.depth * DU + 32, 16);
+      i.set([w.gx, w.gy, w.n, lv.depth, p?.gx ?? 0, p?.gy ?? 0, p?.n ?? 0, p ? 1 : 0]);
+      f.set(lv.cut ?? [1, 1, 0, 0], 0);
+      f.set([now, this.fadeSeconds, this.tint ? 1 : 0, this.nest.k], 4);
+      f.set(lv.want ?? [1, 1, 0, 0], 8);
+      f.set([0.45, -0.35, 0.82, 0], 12);
+      new Uint32Array(st, lv.depth * DU + 96, 4).set([this.nest.cap, this.noMorphB ? 1 : 0, this.diagB ? 1 : 0, instB[lv.depth] ?? 0]);
+    }
+    this.device.queue.writeBuffer(this.ubuf, 0, st);
+  }
+
+  private capPipes: { a: GPUComputePipeline; b: GPUComputePipeline; layout: GPUBindGroupLayout } | null = null;
+  /** (the watertight check, test only: a readback) every vertex the draw places for each level at time `now`, local
+   *  units: A's grid (n x n, w = bOwn) and B's items (18 a slot, w = 0 when not drawn) */
+  async capture(levels: DrawLevel[], now: number): Promise<{ depth: number; n: number; a: Float32Array; b: Float32Array }[]> {
+    if (!this.capPipes) {
+      const layout = this.device.createBindGroupLayout({ label: 'nest capture', entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }] });
+      const pl = this.device.createPipelineLayout({ bindGroupLayouts: [this.layout, layout] });
+      const mk = (entryPoint: string) => this.device.createComputePipeline({ label: `nest ${entryPoint}`, layout: pl, compute: { module: this.module, entryPoint } });
+      this.capPipes = { a: mk('captureA'), b: mk('captureB'), layout };
+    }
+    const read = async (src: GPUBuffer, size: number) => {
+      const tmp = this.device.createBuffer({ size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+      const e = this.device.createCommandEncoder();
+      e.copyBufferToBuffer(src, 0, tmp, 0, size);
+      this.device.queue.submit([e.finish()]);
+      await tmp.mapAsync(GPUMapMode.READ);
+      const out = tmp.getMappedRange().slice(0);
+      tmp.destroy();
+      return out;
+    };
+    const args = new Uint32Array(await read(this.nest.drawArgs, MAX_LEVELS * 16));
+    const inst = levels.map((lv) => args[lv.depth * 4 + 1]);
+    this.draw(levels); // (the bind group current)
+    const out = [];
+    for (const lv of levels) {
+      const n = this.nest.wins[lv.depth]!.n;
+      const res = [];
+      for (const [pipe, count] of [
+        [this.capPipes.a, n * n],
+        [this.capPipes.b, inst[lv.depth] * 18],
+      ] as const) {
+        const size = Math.max(16, count * 16);
+        const buf = this.device.createBuffer({ size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+        const bg1 = this.device.createBindGroup({ layout: this.capPipes.layout, entries: [{ binding: 0, resource: { buffer: buf } }] });
+        // (the uniforms again before each dispatch: a frame's draw may have rewritten them while we awaited)
+        this.uniforms(levels, now, inst);
+        const e = this.device.createCommandEncoder();
+        const p = e.beginComputePass();
+        p.setPipeline(pipe);
+        p.setBindGroup(0, this.bg!, [lv.depth * DU]);
+        p.setBindGroup(1, bg1);
+        if (count > 0) p.dispatchWorkgroups(Math.ceil(count / 64));
+        p.end();
+        this.device.queue.submit([e.finish()]);
+        res.push(new Float32Array(await read(buf, size)));
+        buf.destroy();
+      }
+      out.push({ depth: lv.depth, n, a: res[0], b: res[1] });
+    }
+    return out;
   }
 }

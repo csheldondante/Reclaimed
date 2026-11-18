@@ -20,13 +20,12 @@ struct DrawU {
 
 @group(0) @binding(0) var<uniform> d: DrawU;
 @group(0) @binding(1) var<storage, read> tab: array<u32>;
-@group(0) @binding(2) var<storage, read> pg: array<u32>;
 @group(0) @binding(3) var<storage, read> cam: array<f32>;
 @group(0) @binding(4) var<storage, read> reg: array<i32>;
 @group(0) @binding(5) var<storage, read> dir: array<u32>;
+// (the pages: segments from binding 10 on, with pgLoad, declared by render.ts from nest.ts segWgsl)
 
 fn tabLoad(i: u32) -> u32 { return tab[i]; }
-fn pgLoad(i: u32) -> u32 { return pg[i]; }
 
 struct VOut {
   @builtin(position) pos: vec4<f32>,
@@ -36,6 +35,7 @@ struct VOut {
   @location(3) fade: f32,
   @location(4) wp: vec3<f32>, // world position (the pattern's coordinates, the same on every level)
   @location(5) bOwn: f32, // (A) > 0: a corner of this triangle has more than one gap (B draws it)
+  @location(6) lz: f32, // the local height (the watertight capture; 3e38: a vertex not drawn)
 }
 
 /** a level's z origin in world units (reg words 1..L: each level's origin in its parent's units) */
@@ -101,7 +101,8 @@ fn cornerOf(q: u32) -> vec2<i32> { return vec2<i32>(i32(q & 1u), i32(q >> 1u)); 
 
 /** A: the top sheet (the floor of the sky), an indexed grid: one vertex a column */
 @vertex
-fn vs(@builtin(vertex_index) vv: u32) -> VOut {
+fn vs(@builtin(vertex_index) vv: u32) -> VOut { return vertA(vv); }
+fn vertA(vv: u32) -> VOut {
   let w = d.lvl;
   let L = u32(w.w);
   let i = i32(vv % u32(w.z));
@@ -162,6 +163,7 @@ fn vs(@builtin(vertex_index) vv: u32) -> VOut {
   o.fade = fade;
   o.wp = worldOf(L, lp);
   o.bOwn = select(0.0, 1.0, gc > 1u);
+  o.lz = lp.z;
   return o;
 }
 
@@ -201,21 +203,23 @@ struct Cn {
  *  finite), and the wall along the cut where the region ends inside the triangle (marching triangles on the presence
  *  field; an enclosed region's wall from floor to ceiling, facing the air; the sky's down its solid run, facing out). */
 @vertex
-fn vsB(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VOut {
+fn vsB(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VOut { return vertB(vv, inst); }
+fn vertB(vv: u32, inst: u32) -> VOut {
   var o: VOut;
   o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
   o.fade = 1.0;
   o.bOwn = 0.0;
+  o.lz = 3e38;
   let w = d.lvl;
   let L = u32(w.w);
   let e = 16u + (L * d.misc2.x + inst / IPP) * 2u;
   let page = dir[e];
   let key = dir[e + 1u];
   let slot = inst % IPP;
-  if (slot >= pg[page * PW]) { return o; }
+  if (slot >= pgLoad(page * PW)) { return o; }
   let b = page * PW + MESH_HDR + slot * ITEM_W;
-  let h0 = pg[b];
-  let birth = bitcast<f32>(pg[b + 1u]);
+  let h0 = pgLoad(b);
+  let birth = bitcast<f32>(pgLoad(b + 1u));
   let enclosed = ((h0 >> 9u) & 1u) == 1u;
   let t = (h0 >> 8u) & 1u;
   let base = vec2<i32>(i32(key & 0xffffu) * 16 + i32(h0 & 15u), i32(key >> 16u) * 16 + i32((h0 >> 4u) & 15u));
@@ -226,16 +230,16 @@ fn vsB(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VO
   var cn: array<Cn, 3>;
   for (var r = 0u; r < 3u; r++) {
     let q = b + 2u + r * 9u;
-    let m = pg[q + 3u];
+    let m = pgLoad(q + 3u);
     let own = ((m >> 16u) & 1u) == 1u;
     let p = vec2<f32>(base - w.xy + cornerOf(tc[r])) + 0.5;
     let bw = bandW(p, birth);
-    var f = bitcast<f32>(pg[q]);
-    var c = bitcast<f32>(pg[q + 1u]);
-    var rb = bitcast<f32>(pg[q + 2u]);
-    let pf = bitcast<f32>(pg[q + 6u]);
-    let pc = bitcast<f32>(pg[q + 7u]);
-    let x8 = bitcast<f32>(pg[q + 8u]);
+    var f = bitcast<f32>(pgLoad(q));
+    var c = bitcast<f32>(pgLoad(q + 1u));
+    var rb = bitcast<f32>(pgLoad(q + 2u));
+    let pf = bitcast<f32>(pgLoad(q + 6u));
+    let pc = bitcast<f32>(pgLoad(q + 7u));
+    let x8 = bitcast<f32>(pgLoad(q + 8u));
     var s = select(0.0, 1.0, own);
     if (enclosed) {
       s = mix(x8, s, bw.x);
@@ -244,7 +248,7 @@ fn vsB(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VO
     }
     f = mix(pf, f, bw.x);
     if (c < 1e29) { c = mix(pc, c, bw.x); }
-    cn[r] = Cn(p, select(own, s >= 0.5, enclosed), s, f, c, rb, unpackN(pg[q + 4u], false), unpackN(pg[q + 5u], true), m & 0xffu, (m >> 8u) & 0xffu, bw.y);
+    cn[r] = Cn(p, select(own, s >= 0.5, enclosed), s, f, c, rb, unpackN(pgLoad(q + 4u), false), unpackN(pgLoad(q + 5u), true), m & 0xffu, (m >> 8u) & 0xffu, bw.y);
   }
   let part = vv / 6u;
   let sv = vv % 6u;
@@ -335,7 +339,26 @@ fn vsB(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VO
   if (d.misc2.z == 1u) { o.col = array<vec3<f32>, 3>(vec3<f32>(0.2, 0.3, 1.0), vec3<f32>(0.1, 0.9, 0.2), vec3<f32>(1.0, 0.1, 0.1))[part]; }
   o.fade = fade;
   o.wp = worldOf(L, lp);
+  o.lz = lp.z;
   return o;
+}
+
+// ---- the watertight check's capture (test only): every vertex the draw would place, in local units -------------------
+// x, y, z local; w: A, 1 when the vertex's triangles are B's (bOwn); B, 0 for a vertex not drawn
+@group(1) @binding(0) var<storage, read_write> capOut: array<vec4<f32>>;
+@compute @workgroup_size(64)
+fn captureA(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let n = u32(d.lvl.z);
+  if (gid.x >= n * n) { return; }
+  let o = vertA(gid.x);
+  capOut[gid.x] = vec4<f32>(o.local, o.lz, o.bOwn);
+}
+@compute @workgroup_size(64)
+fn captureB(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let inst = gid.x / 18u;
+  if (inst >= d.misc2.w) { return; }
+  let o = vertB(gid.x % 18u, inst);
+  capOut[gid.x] = vec4<f32>(o.local, o.lz, select(1.0, 0.0, o.lz > 1e38));
 }
 
 const TINTS = array<vec3<f32>, 6>(vec3<f32>(0.35, 0.55, 1.0), vec3<f32>(1.0, 0.35, 0.3), vec3<f32>(1.0, 0.9, 0.25), vec3<f32>(0.35, 1.0, 0.45), vec3<f32>(0.9, 0.4, 1.0), vec3<f32>(0.3, 1.0, 1.0));

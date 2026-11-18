@@ -4,6 +4,7 @@
 // camera's inputs, which levels are wanted where, the buttons and the measurements.
 import { GpuNest, type Op, type Win } from './gpu/nest';
 import { Renderer, type DrawLevel } from './render';
+import { holePixels, lastImage, manifold } from './watertight';
 
 /** a root column, in metres (the info line) */
 const ROOT_COLUMN_M = 3.2;
@@ -59,6 +60,8 @@ export class App {
   brushPx = 60;
   /** (the benchmark) the levels left as they are */
   frozen = false;
+  private limitsText = '';
+  frameCount = 0;
 
   static async start(device: GPUDevice, q: URLSearchParams): Promise<App> {
     const app = new App(device, q);
@@ -90,7 +93,10 @@ export class App {
     this.info = document.getElementById('info')!;
     const ctx = this.canvas.getContext('webgpu');
     if (!ctx) throw new Error('This browser has WebGPU but would not give the page a WebGPU canvas.');
-    this.nest = new GpuNest(device, this.k, Number(q.get('seed') ?? 7), 1536);
+    // (the pool starts small and grows by need, ahead of the ops: NS-13)
+    this.nest = new GpuNest(device, this.k, Number(q.get('seed') ?? 7), 1024);
+    const lim = device.limits;
+    this.limitsText = `${Math.round(Math.min(lim.maxBufferSize, lim.maxStorageBufferBindingSize) / 2 ** 20)} MB${q.has('maxbuf') ? `, clamped by ?maxbuf` : ''}`;
     this.render = new Renderer(device, ctx, this.nest);
     this.render.tint = q.get('tint') === '1';
     if (q.has('detail')) this.nest.detailAmp = Number(q.get('detail'));
@@ -269,24 +275,25 @@ export class App {
         const cur = this.nest.wins[m]!;
         // follow the focus by whole chunks (whole parent cells), with a chunk of slack
         if (Math.abs(want.gx - cur.gx) >= 32 || Math.abs(want.gy - cur.gy) >= 32 || !this.nest.fits(m, cur)) {
-          this.timed('slide', m, () => this.nest.slide(m, want));
-          this.bornAt[m] = Math.max(this.bornAt[m] ?? 0, now - this.render.fadeSeconds + 0.05);
+          // (refused while the pool grows ahead: tried again next frame)
+          if (this.timed('slide', m, () => this.nest.slide(m, want))) this.bornAt[m] = Math.max(this.bornAt[m] ?? 0, now - this.render.fadeSeconds + 0.05);
         }
         continue;
       }
       if (m === live && this.dNear < 0.45 * W && now - (this.bornAt[m - 1] ?? 0) > this.render.fadeSeconds + 0.05) {
         const w = this.desired(m);
-        this.timed('promote', m, () => this.nest.promote(m, w));
-        this.bornAt[m] = now;
+        if (this.timed('promote', m, () => this.nest.promote(m, w))) this.bornAt[m] = now;
       }
       return;
     }
   }
-  private timed(what: string, depth: number, fn: () => void): void {
+  /** an op, logged when it ran (false: refused whole, nothing changed) */
+  private timed(what: string, depth: number, fn: () => boolean | void): boolean {
     const t = performance.now();
-    fn();
-    this.opLog.push({ what, depth, at: t, ms: performance.now() - t });
+    const ok = fn() !== false;
+    if (ok) this.opLog.push({ what, depth, at: t, ms: performance.now() - t });
     if (this.opLog.length > 400) this.opLog.shift();
+    return ok;
   }
 
   private drawList(): DrawLevel[] {
@@ -318,6 +325,7 @@ export class App {
     const t = performance.now();
     const dt = Math.min(0.1, (t - this.last) / 1000);
     this.frames.push(t - this.last);
+    this.frameCount++;
     if (this.frames.length > 600) this.frames.shift();
     this.last = t;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -353,19 +361,22 @@ export class App {
       const t = this.dRef() * (1 - Math.exp(step));
       for (let i = 0; i < 3; i++) this.move[i] += f[i] * t;
     }
-    if (!this.frozen) this.levels();
+    // at most one op in flight: an op runs only once the pool's header has come back after the last one (its pages
+    // known exactly, so the next reserve is exact and no op piles up behind another)
+    if (!this.frozen && this.nest.settled) this.levels();
     const ndc = this.sculptAt ? [(this.sculptAt.x / this.canvas.clientWidth) * 2 - 1, 1 - (this.sculptAt.y / this.canvas.clientHeight) * 2] : [0, 0];
-    const qd = this.queue.shift();
+    const qd = this.nest.settled ? this.queue.shift() : undefined;
     if (qd) ndc.splice(0, 2, qd.nx, qd.ny);
     if (this.placeReq) this.nest.placeEye(this.placeReq.x, this.placeReq.y, this.placeReq.d, this.placeReq.z);
     this.nest.camIn.set([this.move[0], this.move[1], this.move[2], this.placeReq ? 1 : 0, this.yaw, this.pitch, W / H, this.speed, FOVY, ndc[0], ndc[1], dt]);
     this.placeReq = null;
     this.move = [0, 0, 0];
     this.nest.camera();
-    const op = qd?.op ?? (this.sculptAt ? (this.mode as Op) : null);
+    const op = qd?.op ?? (this.sculptAt && this.nest.settled ? (this.mode as Op) : null);
     if (op) {
       const radius = (qd?.px ?? this.brushPx) * this.perPx() * (op === 'carve' || op === 'add' ? 0.5 : 1);
-      this.timed('edit', -1, () => this.nest.edit({ op, radius, amount: (op === 'melt' ? 0 : 0.04) * radius, rate: 0.1 }));
+      const ok = this.timed('edit', -1, () => this.nest.edit({ op, radius, amount: (op === 'melt' ? 0 : 0.04) * radius, rate: 0.1 }));
+      if (!ok && qd) this.queue.unshift(qd);
     }
     this.render.draw(this.drawList());
     this.post?.();
@@ -382,12 +393,13 @@ export class App {
     const lines = [
       `Levels open: ${live}. Finest column: ${col >= 100 ? `${(col / 100).toFixed(1)} m` : `${col.toFixed(col < 1 ? 2 : 1)} cm`}.`,
       `Camera ${(this.dNear * ROOT_COLUMN_M).toFixed(this.dNear * ROOT_COLUMN_M < 10 ? 2 : 0)} m from the nearest surface. Frame ${avg.toFixed(1)} ms.`,
-      `Pages: ${st.used} used of ${st.cap}.`,
+      `Pages: ${st.used} used of ${st.cap} reserved (${st.mb} MB in ${st.segs} of ${st.segSlots} buffers; the device's largest buffer ${this.limitsText}).`,
       live < this.maxDepth + 1 ? 'Zoom in close to the ground to open a finer level.' : 'This is the finest level.',
       this.mode === 'move' ? 'Drag to move. Pinch or scroll to zoom. Keys: WASD to fly, Q and E down and up.' : this.mode === 'orbit' ? 'Drag to look around.' : `Drag on the ground to ${this.mode}.`,
     ];
     if (this.lifts) lines.push(`The camera was lifted out of solid ${this.lifts} times.`);
     if (st.refused || st.mismatch || st.tableFull) lines.push(`Error: ${st.refused} pages refused, ${st.mismatch} blocks mismatched, table full ${st.tableFull} times.`);
+    if (st.error) lines.push(`Memory: ${st.error}`);
     this.info.textContent = lines.join('\n');
   }
 
@@ -471,6 +483,15 @@ export class App {
         const withBake = await run(false);
         return { withBake, gapsOnly, without };
       },
+      /** (test only, readbacks) the manifold check of every level's drawn mesh at time `now` (default: this frame) */
+      manifold: async (now?: number) => {
+        const list = this.drawList();
+        const caps = await this.render.capture(list, now ?? this.nest.now());
+        return caps.map((c, i) => manifold(c, list[i].cut));
+      },
+      /** (test only) pixels with no surface in the last frame */
+      holes: () => holePixels(this.device, this.render, () => this.render.draw(this.drawList())),
+      holeImage: () => lastImage,
       tint: (on: boolean) => {
         this.render.tint = on;
         this.buttons.get('tint')!.classList.toggle('on', on);

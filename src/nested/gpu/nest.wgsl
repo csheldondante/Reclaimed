@@ -18,7 +18,7 @@ struct U {
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var<storage, read_write> tab: array<atomic<u32>>;
 @group(0) @binding(2) var<storage, read_write> ctl: array<atomic<u32>>;
-@group(0) @binding(3) var<storage, read_write> pg: array<u32>;
+// (binding 3, retired: the pages are segments from binding 10 on, declared with pgLoad / pgStore by nest.ts)
 @group(0) @binding(4) var<storage, read_write> scr: array<f32>;
 @group(0) @binding(5) var<storage, read_write> reg: array<i32>;
 @group(0) @binding(6) var<storage, read_write> cam: array<f32>;
@@ -26,7 +26,6 @@ struct U {
 @group(0) @binding(7) var<storage, read_write> args: array<u32>;
 
 fn tabLoad(i: u32) -> u32 { return atomicLoad(&tab[i]); }
-fn pgLoad(i: u32) -> u32 { return pg[i]; }
 
 // ---- ctl: 0 end, 1 refused, 2 free count, 3 pending count, 4 mismatches, 5 table full, 6 -, 7 max cz; free stack at
 //      16, pending at 16 + cap
@@ -81,7 +80,7 @@ fn ensurePages(lid: u32, cx: i32, cy: i32, need: u32, birth: f32) {
       let p = allocPage();
       if (p != NONE) {
         // a fresh page's counts are zero: columns a pass leaves alone read as empty (a residual: zero)
-        for (var c = 0u; c < 256u; c++) { pg[p * PW + c] = 0u; }
+        for (var c = 0u; c < 256u; c++) { pgStore(p * PW + c, 0u); }
         if (tInsert(tKey0(cx, cy), tKey1(lid, cz), p, birth)) {
           atomicMax(&ctl[7], cz);
         } else {
@@ -102,9 +101,9 @@ fn ensurePages(lid: u32, cx: i32, cy: i32, need: u32, birth: f32) {
 }
 fn pgSetIvl(page: u32, c: u32, i: u32, z0: f32, z1: f32, m: u32) {
   let b = page * PW + 256u + (c * K + i) * 3u;
-  pg[b] = bitcast<u32>(z0);
-  pg[b + 1u] = bitcast<u32>(z1);
-  pg[b + 2u] = m;
+  pgStore(b, bitcast<u32>(z0));
+  pgStore(b + 1u, bitcast<u32>(z1));
+  pgStore(b + 2u, m);
 }
 fn setIvl(lid: u32, X: i32, Y: i32, i: u32, z0: f32, z1: f32, m: u32) {
   let p = pageOf(lid, X >> 4, Y >> 4, i / K);
@@ -116,7 +115,7 @@ fn setCount(lid: u32, X: i32, Y: i32, n: u32, need: u32) {
   for (var cz = 0u; cz < need; cz++) {
     let p = pageOf(lid, X >> 4, Y >> 4, cz);
     if (p >= NOT_LOADED) { continue; }
-    pg[p * PW + colIn(X, Y)] = u32(clamp(i32(n) - i32(cz * K), 0, i32(K)));
+    pgStore(p * PW + colIn(X, Y), u32(clamp(i32(n) - i32(cz * K), 0, i32(K))));
   }
 }
 
@@ -1321,8 +1320,11 @@ fn camera(@builtin(local_invocation_index) li: u32) {
   let f = viewDir(yaw, pitch);
   let r = normalize(cross(f, vec3<f32>(0.0, 0.0, 1.0)));
   let up = cross(r, f);
-  // nothing is nearer than dn; every point at dn or more inside the frustum is past half of it
-  let near = 0.5 * dn;
+  // the near plane: a tenth of the margin the eye keeps from solid (a thirtieth of the finest column), not half the
+  // measured nearest distance: that distance can be overestimated (NS-36: 5.5 reported with a surface 1.4 away), and
+  // then the near plane cut the surface in front of the eye away (61,000 hole pixels in one pose of the screen check).
+  // Reverse Z with an infinite far plane keeps the depth precise with a near plane this small.
+  let near = min(0.5 * dn, 0.1 * margin);
   cam[2] = hi.z + lo.z;
   cam[3] = near;
   for (var i = 0u; i < 3u; i++) {
@@ -1427,9 +1429,9 @@ fn setRec(lid: u32, X: i32, Y: i32, i: u32, a: u32, b: u32, c: u32) {
   let p = pageOf(lid, X >> 4, Y >> 4, i / K);
   if (p >= NOT_LOADED) { return; }
   let o = p * PW + 256u + (colIn(X, Y) * K + (i % K)) * 3u;
-  pg[o] = a;
-  pg[o + 1u] = b;
-  pg[o + 2u] = c;
+  pgStore(o, a);
+  pgStore(o + 1u, b);
+  pgStore(o + 2u, c);
 }
 // The bakes read the columns of their chunk and its eight neighbours over and over: the cz 0 pages of those nine
 // chunks (the level's and its gap table's) are looked up once a workgroup, not a hashed table probe a read.
@@ -1473,7 +1475,7 @@ fn cPage(lid: u32, X: i32, Y: i32) -> u32 {
 fn cCount(lid: u32, X: i32, Y: i32) -> u32 {
   let p = cPage(lid, X, Y);
   if (p >= NOT_LOADED) { return 0u; }
-  let m = pg[p * PW + colIn(X, Y)];
+  let m = pgLoad(p * PW + colIn(X, Y));
   if (m < K) { return m; }
   return colCount(lid, X, Y);
 }
@@ -1550,8 +1552,8 @@ fn gRecC(L: u32, X: i32, Y: i32, g: u32) -> Gap {
   if (i + 2u >= K) { return gRec(L, X, Y, g); }
   let p = cPage(GAP_ID + L, X, Y);
   let b = p * PW + 256u + (colIn(X, Y) * K + i) * 3u;
-  let m = pg[b + 2u];
-  return Gap(bitcast<f32>(pg[b]), bitcast<f32>(pg[b + 1u]), m & 0xffu, (m >> 8u) & 0xffu, bitcast<f32>(pg[b + 3u]), unpack2x16snorm(pg[b + 4u]), unpack2x16snorm(pg[b + 5u]), true);
+  let m = pgLoad(b + 2u);
+  return Gap(bitcast<f32>(pgLoad(b)), bitcast<f32>(pgLoad(b + 1u)), m & 0xffu, (m >> 8u) & 0xffu, bitcast<f32>(pgLoad(b + 3u)), unpack2x16snorm(pgLoad(b + 4u)), unpack2x16snorm(pgLoad(b + 5u)), true);
 }
 // Neighbouring columns' gaps correspond when each is the other's nearest-floor gap among those overlapping it in z
 // (mutual nearest): the ground outside an overhang meets the floor under it, not its roof; a tunnel's air meets no air
@@ -1706,7 +1708,7 @@ fn linkAt(r: u32, g: u32, d: u32) -> i32 {
   var p = mPg[r];
   if (i >= K) { p = pageOf(GAP_ID + u.a.w, mC[r].x >> 4, mC[r].y >> 4, i / K); }
   if (p >= NOT_LOADED) { return -1; }
-  let v = (pg[p * PW + 256u + (colIn(mC[r].x, mC[r].y) * K + (i % K)) * 3u + d / 2u] >> (16u * (d % 2u))) & 0xffffu;
+  let v = (pgLoad(p * PW + 256u + (colIn(mC[r].x, mC[r].y) * K + (i % K)) * 3u + d / 2u) >> (16u * (d % 2u))) & 0xffffu;
   return select(i32(v), -1, v == 0xffffu);
 }
 /** corner r's gap g: the corresponding gap at corner s, from the baked links: r's own link where its chunk has a gap
@@ -1821,8 +1823,8 @@ fn writeItem(L: u32, cmp: vec3<i32>, i: u32, lx: u32, ly: u32, t: u32, birth: u3
     if (cmp[r] >= 0 && gs[r].c > 1e29) { enclosed = false; }
   }
   let rep = gs[r0];
-  pg[b] = lx | (ly << 4u) | (t << 8u) | (select(0u, 1u, enclosed) << 9u);
-  pg[b + 1u] = birth;
+  pgStore(b, lx | (ly << 4u) | (t << 8u) | (select(0u, 1u, enclosed) << 9u));
+  pgStore(b + 1u, birth);
   for (var r = 0u; r < 3u; r++) {
     let pres = cmp[r] >= 0;
     var G = rep;
@@ -1868,15 +1870,15 @@ fn writeItem(L: u32, cmp: vec3<i32>, i: u32, lx: u32, ly: u32, t: u32, birth: u3
       if (!enclosed && !below) { x8 = G.rb + (pf - G.f); }
     }
     let o = b + 2u + r * 9u;
-    pg[o] = bitcast<u32>(G.f);
-    pg[o + 1u] = bitcast<u32>(G.c);
-    pg[o + 2u] = bitcast<u32>(G.rb);
-    pg[o + 3u] = G.fm | (G.cm << 8u) | (select(0u, 1u, pres) << 16u);
-    pg[o + 4u] = pack2x16snorm(G.nF);
-    pg[o + 5u] = pack2x16snorm(G.nC);
-    pg[o + 6u] = bitcast<u32>(pf);
-    pg[o + 7u] = bitcast<u32>(pc);
-    pg[o + 8u] = bitcast<u32>(x8);
+    pgStore(o, bitcast<u32>(G.f));
+    pgStore(o + 1u, bitcast<u32>(G.c));
+    pgStore(o + 2u, bitcast<u32>(G.rb));
+    pgStore(o + 3u, G.fm | (G.cm << 8u) | (select(0u, 1u, pres) << 16u));
+    pgStore(o + 4u, pack2x16snorm(G.nF));
+    pgStore(o + 5u, pack2x16snorm(G.nC));
+    pgStore(o + 6u, bitcast<u32>(pf));
+    pgStore(o + 7u, bitcast<u32>(pc));
+    pgStore(o + 8u, bitcast<u32>(x8));
   }
 }
 /** a quad's regions, both triangles: counted, or written from slot `at` (returns the count). Every region is seeded at
@@ -1948,7 +1950,7 @@ fn meshBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id)
         ensurePages(MESH_ID + L, cx, cy, need, u.d.x);
         for (var cz = 0u; cz < need; cz++) {
           let p = pageOf(MESH_ID + L, cx, cy, cz);
-          if (p < NOT_LOADED) { pg[p * PW] = min(IPP, total - cz * IPP); }
+          if (p < NOT_LOADED) { pgStore(p * PW, min(IPP, total - cz * IPP)); }
         }
       }
       storageBarrier();
@@ -1974,7 +1976,7 @@ fn dirBuild(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (lid < MESH_ID || lid >= MESH_ID + 8u) { return; }
   let L = lid - MESH_ID;
   let p = atomicLoad(&tab[s * 4u + 2u]);
-  if (p >= NOT_LOADED || pg[p * PW] == 0u) { return; }
+  if (p >= NOT_LOADED || pgLoad(p * PW) == 0u) { return; }
   let i = atomicAdd(&dir[L], 1u);
   let e = 16u + (L * u.r.y + i) * 2u;
   atomicStore(&dir[e], p);

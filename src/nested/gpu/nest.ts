@@ -28,6 +28,30 @@ export const IPP = 432;
 const CTL_STACK = 16;
 /** a brush's radius at most, in the edited level's columns (nest.wgsl MAX_R; the melt scratch is sized by it: NS-9) */
 const MAX_BRUSH = 76;
+/** the first binding of the page segments (compute and draw) */
+export const SEG_BASE = 10;
+/** the pool grows in steps of this many pages beyond what is needed */
+const GROW_SLACK = 64;
+
+/** the page segments' declarations and accessors (WGSL), for S segments of segP pages each: page p lives in segment
+ *  p / segP. One buffer per segment; only the last one in use grows (by a copy), full ones never move. */
+export function segWgsl(S: number, segP: number, readOnly: boolean): string {
+  const acc = readOnly ? 'read' : 'read_write';
+  const decl = Array.from({ length: S }, (_, j) => `@group(0) @binding(${SEG_BASE + j}) var<storage, ${acc}> pg${j}: array<u32>;`).join('\n');
+  const cases = (body: (j: number) => string) =>
+    Array.from({ length: S }, (_, j) => (j === S - 1 ? `    default: { ${body(j)} }` : `    case ${j}u: { ${body(j)} }`)).join('\n');
+  let out = `${decl}\nconst SEGW: u32 = ${segP * PW}u;\nfn pgLoad(i: u32) -> u32 {\n  let s = i / SEGW;\n  let o = i - s * SEGW;\n  switch (s) {\n${cases((j) => `return pg${j}[o];`)}\n  }\n}\n`;
+  if (!readOnly) out += `fn pgStore(i: u32, v: u32) {\n  let s = i / SEGW;\n  let o = i - s * SEGW;\n  switch (s) {\n${cases((j) => `pg${j}[o] = v;`)}\n  }\n}\n`;
+  return out;
+}
+export interface PoolOpts {
+  /** pages a segment holds at most (default: the device's largest buffer / binding; the self-test sets it small) */
+  segPages?: number;
+  /** segment bindings (default: as many as the device's storage-buffer limit allows, up to 4) */
+  segments?: number;
+  /** grow at once when an op does not fit (the self-test); otherwise the op is refused and the pool grows ahead */
+  syncGrow?: boolean;
+}
 
 export interface Win {
   gx: number;
@@ -44,6 +68,17 @@ export interface PoolStats {
   tableFull: number;
   maxCz: number;
   grows: number;
+  /** ops refused whole because the pool could not hold their worst case yet (it grows ahead; the op retries) */
+  waits: number;
+  /** segments in use, pages a segment, segment bindings, pages the device can hold at most */
+  segs: number;
+  segPages: number;
+  segSlots: number;
+  maxPages: number;
+  /** MB reserved (the pool's buffers) */
+  mb: number;
+  /** a plain sentence when the device refused memory or the pool is at the device's limit ('' otherwise) */
+  error: string;
 }
 export interface EditSpec {
   op: Op;
@@ -59,10 +94,19 @@ export interface EditSpec {
 export class GpuNest {
   readonly wins: (Win | null)[] = new Array(MAX_LEVELS).fill(null);
   private lastWin: (Win | null)[] = new Array(MAX_LEVELS).fill(null);
-  cap: number;
+  cap = 0;
   tab!: GPUBuffer;
   ctl!: GPUBuffer;
-  pg!: GPUBuffer;
+  /** the page segments (a binding each; unused ones bound to a stand-in) and the pages each holds */
+  segs: GPUBuffer[] = [];
+  private segCap: number[] = [];
+  readonly segP: number;
+  readonly S: number;
+  private dirLayout: GPUBindGroupLayout;
+  private dirBg!: GPUBindGroup;
+  /** a grow made ahead (buffers created, waiting for the device's word on memory), applied at the next op */
+  private ahead: { cap: number; segs: (GPUBuffer | null)[]; ok: boolean | null } | null = null;
+  readonly syncGrow: boolean;
   readonly scr: GPUBuffer;
   readonly reg: GPUBuffer;
   readonly cam: GPUBuffer;
@@ -86,7 +130,6 @@ export class GpuNest {
   readonly stats: PoolStats;
   private reading = false;
   private pendingBound = 0;
-  private maxBinding: number;
   /** the camera's inputs for the pick pass (set by the page) */
   camIn = new Float32Array(12);
   epoch = performance.now();
@@ -98,14 +141,18 @@ export class GpuNest {
     readonly k: number,
     readonly seed: number,
     pages: number,
+    opts: PoolOpts = {},
   ) {
     if (![2, 4, 8, 16].includes(k)) throw new Error(`k = ${k}: the lab nests at 2, 4, 8 or 16 (a chunk is 16 columns)`);
-    this.cap = pages;
-    this.maxBinding = device.limits.maxStorageBufferBindingSize;
-    this.stats = { cap: pages, used: 0, free: pages, refused: 0, mismatch: 0, tableFull: 0, maxCz: 0, grows: 0 };
+    const lim = device.limits;
+    this.segP = opts.segPages ?? Math.floor(Math.min(lim.maxStorageBufferBindingSize, lim.maxBufferSize) / (PW * 4));
+    // bindings: the compute layouts use at most 6 other storage buffers (tab, ctl, scr, reg, cam, args), the draw 4
+    this.S = opts.segments ?? Math.max(1, Math.min(4, lim.maxStorageBuffersPerShaderStage - 6));
+    this.syncGrow = opts.syncGrow ?? false;
+    this.stats = { cap: 0, used: 0, free: 0, refused: 0, mismatch: 0, tableFull: 0, maxCz: 0, grows: 0, waits: 0, segs: 0, segPages: this.segP, segSlots: this.S, maxPages: this.S * this.segP, mb: 0, error: '' };
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
     this.tab = device.createBuffer({ label: 'nest table', size: TCAP * 16, usage: S });
-    this.allocPool(pages);
+    this.applyGrow(Math.min(pages, this.S * this.segP), null);
     this.scr = device.createBuffer({ label: 'nest scratch', size: 160 * 160 * 8 * 4, usage: S });
     this.reg = device.createBuffer({ label: 'nest regions', size: REG_WORDS * 4, usage: S });
     this.args = device.createBuffer({ label: 'nest dispatch args', size: SLOTS * 16, usage: S | GPUBufferUsage.INDIRECT });
@@ -117,54 +164,86 @@ export class GpuNest {
     device.queue.writeBuffer(this.tab, 0, new Uint32Array(TCAP * 4).fill(0xffffffff));
     device.queue.writeBuffer(this.reg, 0, new Int32Array(REG_WORDS));
     const st = GPUShaderStage.COMPUTE;
-    this.layout = device.createBindGroupLayout({
-      label: 'nest',
-      entries: [
-        { binding: 0, visibility: st, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: UB } },
-        ...[1, 2, 3, 4, 5, 6, 8, 9].map((binding) => ({ binding, visibility: st, buffer: { type: 'storage' as const } })),
-      ],
-    });
-    const module = device.createShaderModule({ label: 'nest', code: `const TCAP: u32 = ${TCAP}u;\n${storeWgsl}\n${nestWgsl}` });
-    this.planLayout = device.createBindGroupLayout({
-      label: 'nest plan',
-      entries: [
-        { binding: 0, visibility: st, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: UB } },
-        ...[1, 2, 3, 4, 5, 6, 7].map((binding) => ({ binding, visibility: st, buffer: { type: 'storage' as const } })),
-      ],
-    });
+    const uniE = { binding: 0, visibility: st, buffer: { type: 'uniform' as const, hasDynamicOffset: true, minBindingSize: UB } };
+    const sto = (bs: number[]) => bs.map((binding) => ({ binding, visibility: st, buffer: { type: 'storage' as const } }));
+    const segB = Array.from({ length: this.S }, (_, j) => SEG_BASE + j);
+    this.layout = device.createBindGroupLayout({ label: 'nest', entries: [uniE, ...sto([1, 2, 4, 5, 6, ...segB])] });
+    const module = device.createShaderModule({ label: 'nest', code: `const TCAP: u32 = ${TCAP}u;\n${segWgsl(this.S, this.segP, false)}\n${storeWgsl}\n${nestWgsl}` });
+    this.planLayout = device.createBindGroupLayout({ label: 'nest plan', entries: [uniE, ...sto([1, 2, 4, 5, 6, 7, ...segB])] });
+    // the draw's directory passes (the mesh page list and draw B's arguments): their own layout, so no layout holds more
+    // than 6 storage buffers besides the segments
+    this.dirLayout = device.createBindGroupLayout({ label: 'nest directory', entries: [uniE, ...sto([1, 8, 9, ...segB])] });
     const pl = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
     const ppl = device.createPipelineLayout({ bindGroupLayouts: [this.planLayout] });
-    for (const e of ['derive', 'restrictK', 'rootGen', 'zPick', 'release', 'merge', 'edit', 'meltSnap', 'meltApply', 'camera', 'pick', 'ball', 'gapsBake', 'meshBake', 'dirClear', 'dirBuild', 'dirFinish'])
+    const dpl = device.createPipelineLayout({ bindGroupLayouts: [this.dirLayout] });
+    for (const e of ['derive', 'restrictK', 'rootGen', 'zPick', 'release', 'merge', 'edit', 'meltSnap', 'meltApply', 'camera', 'pick', 'ball', 'gapsBake', 'meshBake'])
       this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: pl, compute: { module, entryPoint: e } });
     for (const e of ['plan', 'dilate']) this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: ppl, compute: { module, entryPoint: e } });
+    for (const e of ['dirClear', 'dirBuild', 'dirFinish']) this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: dpl, compute: { module, entryPoint: e } });
     this.rebind();
   }
 
-  private allocPool(pages: number): void {
-    const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-    if (pages * PW * 4 > this.maxBinding) throw new Error(`the page pool would need ${((pages * PW * 4) / 2 ** 20).toFixed(0)} MB, past this device's largest storage binding (${(this.maxBinding / 2 ** 20).toFixed(0)} MB): NS-4`);
-    this.pg = this.device.createBuffer({ label: 'nest pages', size: pages * PW * 4, usage: S });
-    this.ctl = this.device.createBuffer({ label: 'nest pool control', size: (CTL_STACK + 2 * pages) * 4, usage: S });
+  /** the segment bindings' buffers (a stand-in for the unused ones) */
+  segBuffers(): GPUBuffer[] {
+    // (a stand-in each: two writable bindings may not share a buffer)
+    return Array.from({ length: this.S }, (_, j) => (this.segs[j] ??= this.device.createBuffer({ label: 'nest page segment (unused)', size: 16, usage: GPUBufferUsage.STORAGE })));
+  }
+  /** the pool at `cap` pages: segments filled in order; only segments whose size changes get a new buffer (the one
+   *  that held pages copied in on the GPU); ctl and the directory follow. `made`: buffers created ahead (grow). */
+  private applyGrow(cap: number, made: (GPUBuffer | null)[] | null): void {
+    const U = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+    const old = { segs: this.segs.slice(), ctl: this.ctl, cap: this.cap };
+    const enc = this.device.createCommandEncoder({ label: 'nest grow' });
+    const drop: GPUBuffer[] = [];
+    for (let j = 0; j < this.S; j++) {
+      const want = Math.max(0, Math.min(this.segP, cap - j * this.segP));
+      const have = this.segCap[j] ?? 0;
+      if (want <= have) continue;
+      const b = made?.[j] ?? this.device.createBuffer({ label: `nest pages ${j}`, size: want * PW * 4, usage: U });
+      if (have > 0) enc.copyBufferToBuffer(old.segs[j], 0, b, 0, have * PW * 4);
+      if (old.segs[j]) drop.push(old.segs[j]);
+      this.segs[j] = b;
+      this.segCap[j] = want;
+    }
+    this.ctl = this.device.createBuffer({ label: 'nest pool control', size: (CTL_STACK + 2 * cap) * 4, usage: U });
+    if (old.ctl) {
+      // (pending frees are empty between ops: every op ends merged)
+      enc.copyBufferToBuffer(old.ctl, 0, this.ctl, 0, (CTL_STACK + old.cap) * 4);
+      drop.push(old.ctl);
+    }
+    this.device.queue.submit([enc.finish()]);
+    for (const b of drop) b.destroy();
     // the draw's list of mesh pages: up to the pool's pages a level (rebuilt by every op, so a grow needs no copy)
     this.dir?.destroy();
-    this.dir = this.device.createBuffer({ label: 'nest mesh directory', size: (16 + MAX_LEVELS * pages * 2) * 4, usage: S });
+    this.dir = this.device.createBuffer({ label: 'nest mesh directory', size: (16 + MAX_LEVELS * cap * 2) * 4, usage: U });
+    this.cap = cap;
+    Object.assign(this.stats, { cap, segs: this.segCap.filter((c) => c > 0).length, mb: Math.round((cap * PW * 4) / 2 ** 20), free: cap - this.stats.used });
+    if (old.cap > 0) this.stats.grows++;
+    if (this.layout) {
+      this.rebind();
+      // the draw's page list again at once: its stride is the pool's pages, and the new list starts empty (an op
+      // refused after this grow would otherwise leave draw B reading an empty list: missing faces)
+      this.directory();
+      this.submit();
+    }
   }
   private rebind(): void {
     const entries: GPUBindGroupEntry[] = [
       { binding: 0, resource: { buffer: this.ubuf, size: UB } },
       { binding: 1, resource: { buffer: this.tab } },
       { binding: 2, resource: { buffer: this.ctl } },
-      { binding: 3, resource: { buffer: this.pg } },
       { binding: 4, resource: { buffer: this.scr } },
       { binding: 5, resource: { buffer: this.reg } },
       { binding: 6, resource: { buffer: this.cam } },
     ];
-    this.bg = this.device.createBindGroup({
-      label: 'nest',
-      layout: this.layout,
-      entries: [...entries, { binding: 8, resource: { buffer: this.dir } }, { binding: 9, resource: { buffer: this.drawArgs } }],
+    const segE = this.segBuffers().map((buffer, j) => ({ binding: SEG_BASE + j, resource: { buffer } }));
+    this.bg = this.device.createBindGroup({ label: 'nest', layout: this.layout, entries: [...entries, ...segE] });
+    this.planBg = this.device.createBindGroup({ label: 'nest plan', layout: this.planLayout, entries: [...entries, { binding: 7, resource: { buffer: this.args } }, ...segE] });
+    this.dirBg = this.device.createBindGroup({
+      label: 'nest directory',
+      layout: this.dirLayout,
+      entries: [entries[0], entries[1], { binding: 8, resource: { buffer: this.dir } }, { binding: 9, resource: { buffer: this.drawArgs } }, ...segE],
     });
-    this.planBg = this.device.createBindGroup({ label: 'nest plan', layout: this.planLayout, entries: [...entries, { binding: 7, resource: { buffer: this.args } }] });
   }
 
   /** live levels: the chain's length */
@@ -213,7 +292,7 @@ export class GpuNest {
     if (x <= 0 || y <= 0) return;
     const p = this.begin();
     p.setPipeline(this.pipes[entry]);
-    p.setBindGroup(0, entry === 'plan' || entry === 'dilate' ? this.planBg : this.bg, [off]);
+    p.setBindGroup(0, entry === 'plan' || entry === 'dilate' ? this.planBg : entry.startsWith('dir') ? this.dirBg : this.bg, [off]);
     p.dispatchWorkgroups(x, y);
   }
   private runIndirect(entry: string, off: number, slot: number): void {
@@ -256,42 +335,95 @@ export class GpuNest {
       () => {
         const h = new Uint32Array(tmp.getMappedRange().slice(0));
         tmp.destroy();
+        // (the bump end passes the cap only by refused allocations; ctl's cap may be an older, smaller one)
         const end = Math.min(h[0], this.cap);
-        Object.assign(this.stats, { cap: this.cap, used: end - h[2], free: this.cap - end + h[2], refused: h[1], mismatch: h[4], tableFull: h[5], maxCz: h[7] });
+        Object.assign(this.stats, { used: end - h[2], free: this.cap - end + h[2], refused: h[1], mismatch: h[4], tableFull: h[5], maxCz: h[7] });
         this.pendingBound = Math.max(0, this.pendingBound - bound);
         this.reading = false;
+        this.settled = this.pendingBound === 0;
+        // (ops submitted while this read was in flight: read again, so their worst cases do not linger)
+        if (!this.settled) this.readStats();
+        this.growAhead();
       },
       () => {
         this.reading = false;
       },
     );
   }
-  /** before an op that may take `pages` (worst case): grow the pool when it would not fit (never awaited) */
-  private reserve(pages: number): void {
+  /** whether the pool's header read back after the last op (the next op's reserve then sees exact numbers) */
+  settled = true;
+  /** the last op's worst case (the ahead grow keeps room for one more) */
+  private lastBound = 0;
+  /** before an op that may take `pages` (worst case): true when it fits. A grow made ahead and confirmed by the device
+   *  is applied first. When it does not fit the op is refused whole (it changed nothing) and a grow to what is needed
+   *  is made ahead; the caller retries (a held brush: next frame). The self-test grows at once (syncGrow). */
+  reserve(pages: number): boolean {
+    this.lastBound = Math.max(pages, this.lastBound * 0.9);
+    if (this.ahead?.ok) {
+      this.submit();
+      const a = this.ahead;
+      this.ahead = null;
+      this.applyGrow(a.cap, a.segs);
+    }
     const need = this.stats.used + this.pendingBound + pages;
+    if (need > this.cap) {
+      if (need > this.stats.maxPages) {
+        this.stats.error = `This device can hold ${this.stats.maxPages} pages (${this.S} buffers of ${Math.round((this.segP * PW * 4) / 2 ** 20)} MB); this change needs ${need} (${this.stats.used} in use, ${this.pendingBound} held for changes in flight, ${pages} for its worst case). It was not made.`;
+        this.stats.waits++;
+        return false;
+      }
+      if (this.syncGrow) {
+        this.submit();
+        this.applyGrow(Math.min(this.stats.maxPages, need + GROW_SLACK), null);
+      } else {
+        this.stats.waits++;
+        this.requestGrow(need + GROW_SLACK);
+        return false;
+      }
+    }
     this.pendingBound += pages;
-    if (need <= this.cap * 0.9) return;
-    let cap = this.cap;
-    while (need > cap * 0.9) cap *= 2;
-    this.grow(cap);
+    this.settled = false;
+    return true;
   }
-  /** a bigger pool: the pages and the control words copied on the GPU (pending frees are empty: every op ends merged) */
-  grow(cap: number): void {
-    this.submit();
-    const oldPg = this.pg;
-    const oldCtl = this.ctl;
-    const oldCap = this.cap;
-    this.allocPool(cap);
-    const enc = this.device.createCommandEncoder({ label: 'nest grow' });
-    enc.copyBufferToBuffer(oldPg, 0, this.pg, 0, oldPg.size);
-    enc.copyBufferToBuffer(oldCtl, 0, this.ctl, 0, (CTL_STACK + oldCap) * 4);
-    this.device.queue.submit([enc.finish()]);
-    oldPg.destroy();
-    oldCtl.destroy();
-    this.cap = cap;
-    this.stats.cap = cap;
-    this.stats.grows++;
-    this.rebind();
+  /** keep room for one more op like the last: grow ahead when the pool's free pages fall under it */
+  private growAhead(): void {
+    if (this.syncGrow) return;
+    const need = this.stats.used + this.pendingBound + this.lastBound;
+    if (need > this.cap) this.requestGrow(need + GROW_SLACK);
+  }
+  /** buffers for a bigger pool made ahead; the device says asynchronously whether it had the memory. Applied (copied,
+   *  rebound) at the next op's reserve, in queue order. */
+  private requestGrow(target: number): void {
+    const cap = Math.min(this.stats.maxPages, Math.ceil(target / GROW_SLACK) * GROW_SLACK);
+    if (cap <= this.cap || (this.ahead && this.ahead.cap >= cap) || this.stats.error) return;
+    if (this.ahead) {
+      // (a smaller one still waiting: replaced)
+      for (const b of this.ahead.segs) b?.destroy();
+      this.ahead = null;
+    }
+    const U = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+    this.device.pushErrorScope('out-of-memory');
+    const segs: (GPUBuffer | null)[] = [];
+    let bytes = 0;
+    for (let j = 0; j < this.S; j++) {
+      const want = Math.max(0, Math.min(this.segP, cap - j * this.segP));
+      if (want <= (this.segCap[j] ?? 0)) {
+        segs.push(null);
+        continue;
+      }
+      segs.push(this.device.createBuffer({ label: `nest pages ${j}`, size: want * PW * 4, usage: U }));
+      bytes += want * PW * 4;
+    }
+    const a = { cap, segs, ok: null as boolean | null };
+    this.ahead = a;
+    this.device.popErrorScope().then((e) => {
+      if (this.ahead !== a) return;
+      if (e) {
+        for (const b of a.segs) b?.destroy();
+        this.ahead = null;
+        this.stats.error = `The device refused ${Math.round(bytes / 2 ** 20)} MB more memory for pages (${this.stats.mb} MB held). Changes that need more were not made.`;
+      } else a.ok = true;
+    });
   }
   private overflowPages(): number {
     return 1 + this.stats.maxCz;
@@ -326,8 +458,9 @@ export class GpuNest {
   // ---- operations -----------------------------------------------------------------------------------------------------
   /** the root: n x n columns (n a multiple of 16); a stripe column (self-test) of `stripe.count` intervals */
   root(n: number, stripe?: { x: number; y: number; count: number }): void {
+    if (!this.reserve((n / 16) ** 2 * (stripe ? 4 : 1) + this.bakeBound((n / 16) ** 2)))
+      throw new Error(`The page pool cannot hold the root terrain on this device. ${this.stats.error}`);
     this.wins[0] = { gx: 0, gy: 0, n };
-    this.reserve((n / 16) ** 2 * (stripe ? 4 : 1) + this.bakeBound((n / 16) ** 2));
     const off = this.uni(({ e }) => e.set(stripe ? [stripe.x, stripe.y, stripe.count, 0] : [-1, -1, 0, 0]));
     this.run('rootGen', off, n / 16, n / 16);
     this.bake(0, [this.cpuSlot(0, { x0: 0, y0: 0, x1: n / 16, y1: n / 16 })]);
@@ -339,11 +472,11 @@ export class GpuNest {
     this.run('merge', this.uni(), 1);
   }
   /** a child level at depth L over window w (chunk aligned; inside its parent with room for the enhance support) */
-  promote(L: number, w: Win): void {
+  promote(L: number, w: Win): boolean {
     if (L !== this.live) throw new Error(`promote depth ${L}: ${this.live} levels live`);
     this.checkWin(L, w);
+    if (!this.reserve((w.n / 16) ** 2 * this.overflowPages() + this.bakeBound((w.n / 16) ** 2))) return false;
     this.wins[L] = { ...w };
-    this.reserve((w.n / 16) ** 2 * this.overflowPages() + this.bakeBound((w.n / 16) ** 2));
     // the z origin is picked where a level is promoted somewhere new; a window overlapping the last one at this depth
     // keeps it, so demote then promote is bit-identical (NS-11: a long slide keeps it too)
     const lw = this.lastWin[L];
@@ -356,6 +489,7 @@ export class GpuNest {
     this.directory();
     this.mergeFrees();
     this.submit();
+    return true;
   }
   /** drop the level at depth L and every deeper one; their residual pages stay */
   demote(L: number): void {
@@ -369,16 +503,12 @@ export class GpuNest {
   }
   /** move the level at depth L to window w (same size): only the table changes for chunks that stay; the leaving
    *  chunks' pages are let go and the entering chunks derived */
-  slide(L: number, w: Win): void {
+  slide(L: number, w: Win): boolean {
     const o = this.wins[L]!;
     if (w.n !== o.n) throw new Error('slide: a window keeps its size');
     this.checkWin(L, w);
     const nc = { x0: w.gx / 16, y0: w.gy / 16, x1: (w.gx + w.n) / 16, y1: (w.gy + w.n) / 16 };
     const oc = { x0: o.gx / 16, y0: o.gy / 16, x1: (o.gx + o.n) / 16, y1: (o.gy + o.n) / 16 };
-    this.run('release', this.uni(({ a, e }) => ((a[3] = L), e.set([nc.x0, nc.y0, nc.x1, nc.y1]))), TCAP / 64);
-    this.mergeFrees();
-    this.wins[L] = { ...w };
-    this.lastWin[L] = { ...w };
     // entering chunks: the new rect less the old, as up to two rects
     const parts: (typeof nc)[] = [];
     const ix0 = Math.max(nc.x0, oc.x0);
@@ -393,7 +523,11 @@ export class GpuNest {
       if (nc.x1 > ix1) parts.push({ x0: ix1, x1: nc.x1, y0: iy0, y1: iy1 });
     }
     const chunks = parts.reduce((s, p) => s + (p.x1 - p.x0 + 2) * (p.y1 - p.y0 + 2), 0);
-    this.reserve(chunks * this.overflowPages() + this.bakeBound(chunks));
+    if (!this.reserve(chunks * this.overflowPages() + this.bakeBound(chunks))) return false;
+    this.run('release', this.uni(({ a, e }) => ((a[3] = L), e.set([nc.x0, nc.y0, nc.x1, nc.y1]))), TCAP / 64);
+    this.mergeFrees();
+    this.wins[L] = { ...w };
+    this.lastWin[L] = { ...w };
     const slots = parts.map((p, i) => {
       const s = this.cpuSlot(i, p);
       this.runIndirect('derive', this.uni(({ a, r }) => ((a[2] = 0), (a[3] = L), (r[0] = s))), s);
@@ -403,10 +537,11 @@ export class GpuNest {
     this.directory();
     this.mergeFrees();
     this.submit();
+    return true;
   }
   /** an edit: the hit (forced or picked), the regions planned on the GPU, the brush on the hit level, restrict up every
    *  ancestor, residuals and derives down every level */
-  edit(spec: EditSpec): void {
+  edit(spec: EditSpec): boolean {
     const live = this.live;
     // worst case on each level: the chunks round a brush of that level's radius (capped) and the enhance support
     let bound = 0;
@@ -416,7 +551,7 @@ export class GpuNest {
     }
     // (carve and add can add intervals: one more overflow page; whole-column residuals take two records an interval)
     const ball = spec.op === 'carve' || spec.op === 'add';
-    this.reserve(bound * (this.overflowPages() + (ball ? 1 : 0)) + this.bakeBound(bound));
+    if (!this.reserve(bound * (this.overflowPages() + (ball ? 1 : 0)) + this.bakeBound(bound))) return false;
     const opId = { raise: 1, dig: 2, melt: 3, carve: 4, add: 5 }[spec.op];
     const base = ({ a, r, c, d }: { a: Uint32Array; r: Uint32Array; c: Float32Array; d: Float32Array }) => {
       a[2] = opId;
@@ -446,6 +581,7 @@ export class GpuNest {
     this.directory();
     this.mergeFrees();
     this.submit();
+    return true;
   }
 
   /** this frame's camera: the eye moved (limited by the nearest solid) and the per-level view-projections (cam buffer)
@@ -553,7 +689,10 @@ export class GpuNest {
       tmp.destroy();
       return out;
     };
-    return new Snapshot(await read(this.tab), await read(this.ctl), await read(this.pg), await read(this.reg));
+    // the segments end to end: page p at p * PW (segments fill in order, so the ids are contiguous)
+    const pg = new Uint32Array(this.cap * PW);
+    for (let j = 0; j < this.S; j++) if (this.segCap[j]) pg.set(await read(this.segs[j], this.segCap[j] * PW * 4), j * this.segP * PW);
+    return new Snapshot(await read(this.tab), await read(this.ctl), pg, await read(this.reg));
   }
 }
 

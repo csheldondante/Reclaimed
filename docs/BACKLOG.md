@@ -22,8 +22,10 @@ user) · `deferred` (agreed for later).
   restrict). Later: hex storage with area-weighted restrict, or hex-style rendering over square storage.
 - NS-3 (hack) The lab's page table is an open-addressed hash of a build-time capacity; a full table counts a
   refusal shown on the page. Grow it like the pool.
-- NS-4 (limit) Growing the lab's page pool copies the pool buffer once (a reallocation). Segmented pools with no
-  copy, also needed past maxStorageBufferBindingSize.
+- NS-4 `done` (round 4 step 1: the pool is up to 4 segment buffers, each up to the device's largest buffer; only the last
+  one in use grows by a copy; past them the page says so in words and the op is refused whole) (limit) Growing the lab's
+  page pool copies the pool buffer once (a reallocation). Segmented pools with no copy, also needed past
+  maxStorageBufferBindingSize.
 - NS-5 (limit) Restrict needs the k x k children of a parent column to share one interval structure (count and
   materials); a block that disagrees is counted as a mismatch and left alone. Enhance takes the parent column's
   structure for its whole block and interpolates only between neighbours of the same structure. Matching columns of
@@ -45,7 +47,8 @@ user) · `deferred` (agreed for later).
 - NS-12 (perf) Promoting a 256² level is one GPU burst of ~50 ms on the desktop iGPU (a phone will be slower). The
   fade hides it on screen, but the frame that carries it stalls. Spread a promote over frames, chunks nearest the
   focus first (the table already allows a partly filled level).
-- NS-13 (hack) The pool's worst-case reserve is loose (the self-test's pool grew to 4096 pages for ~300 in use; an
+- NS-13 `partly done` (round 4 step 1: grows by need ahead of the ops, never by doubling; one op in flight; NS-45 for the
+  loose worst case) (hack) The pool's worst-case reserve is loose (the self-test's pool grew to 4096 pages for ~300 in use; an
   edit reserves pages for every level's brush box). Tighten it, or let the GPU report pages it could not get and
   re-run the op after growing.
 - NS-14 (limit) Table tombstones are never compacted; after very many slides lookups that miss get longer.
@@ -141,6 +144,19 @@ user) · `deferred` (agreed for later).
   the floor (local/nested/tunnel-inside-out-ppm.png).
 - NS-42 (hack, measurement only) GpuNest.bakeOff and Renderer.noMorphB / diagB are measurement switches (the bench and
   the stills script); not used by the sandbox.
+- NS-45 (limit, round 4 step 1) The pool's reserve is the pages in use plus ONE op's worst case (ops now run one at a
+  time, each awaited), so it no longer runs away (stress at ?maxbuf=128: 850 used of 3200 reserved; was 12,288 for 585)
+  but the worst case itself is loose (~10 pages for every chunk an op may touch, by the global deepest page stack):
+  3-4x what is in use. Exact: a GPU-side reservation (a count pass per kernel, or re-running the idempotent passes after a
+  grow when the GPU reports a refusal).
+- NS-46 (open, round 4 step 1) The watertight checks (scripts/nested-watertight.mjs: the manifold check of every level's
+  drawn mesh and the screen check from 40 poses) fail today: open edges at the half-way walls and cut ceilings of B
+  (17,000 over five eyes), 7,400 hole pixels over 40 poses. They join ?selftest=1 once they pass (footprints, NS-18).
+- NS-47 (hack, test only) The self-test grows the pool at once (syncGrow) and sums the worst cases of the ops it runs
+  back to back (it grew to 16,561 pages for 67 in use). The sandbox grows ahead and refuses an op that does not fit.
+- NS-48 (bug, round 4 step 1) The camera reported the nearest solid 5.5 world units away with the mound's surface ~1.4
+  away (NS-36's overestimate, seen again in pose 13 of the screen check). The near plane no longer depends on it (a
+  tenth of the margin); the eye's collision still does. Not diagnosed.
 
 ## Terrain: rivers first (2026-11-17, `terrain-rivers`; docs/design/TERRAIN_RIVERS.md, DECISIONS 2026-11-17)
 

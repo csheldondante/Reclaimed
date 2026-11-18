@@ -122,10 +122,18 @@ BACKLOG NS-2: hex storage, or hex-style rendering over square storage, later.
   layer form (record 0: the top surface; record i >= 1: the gap below interval i and its thickness). A chunk with an
   all-zero residual has no residual page, so a level with no edits keeps nothing when demoted. Residual pages live
   on the GPU in the same pool (no readback at demotion).
-- **Pool full.** The CPU grows the pool before an operation when its free pages (a tiny counter read back
-  asynchronously, never awaited on the interactive path) plus the operation's worst case would not fit: a bigger
-  buffer, the old one copied in on the GPU, and the bind groups made again. If a kernel still runs out it counts a
-  refusal; the page shows the count as an error. Data is never dropped silently.
+- **Pool full** (round 4). The pool is up to four segment buffers (as many as the device's storage-buffer limit allows:
+  limit − 6), each at most the device's largest buffer; page p lives in segment p / segP (WGSL pgLoad / pgStore switch on
+  it). Segments fill in order; only the last one in use grows, by a copy; a full one never moves. Ops run one at a time
+  (the sandbox starts an op only after the pool's header came back from the last one), so an op's reserve is exact
+  pages in use plus its own worst case. When it does not fit, the op is refused whole (it changed nothing; a held brush
+  retries next frame) and a grow to what is needed is made ahead: the buffers are created in an out-of-memory error
+  scope and applied (copied, rebound, the draw's page list rebuilt) at the next op once the device said yes. After each
+  op the pool also grows ahead when one more op like it would not fit. Past the segments, or when the device refuses
+  memory, the page says so in a sentence and such changes are not made. If a kernel still runs out it counts a refusal
+  shown on the page. Data is never dropped silently. Before round 4: one buffer grown by doubling a summed worst case
+  (12,288 pages reserved for 585 used); on a device whose largest buffer is 256 MB the grow threw inside the frame and
+  the sandbox froze.
 - Departures from PAGES.md (DESIGN.md wins where they differ): no 64² regions or toroidal 1024 window (a level's
   window is its own rectangle of chunks, keyed globally, so a slide needs no ring); pages are handed out on the GPU
   as in the shared pagepool, not by a CPU free list; growing the pool copies the pool buffer once (a reallocation, not
@@ -192,6 +200,19 @@ self-test).
   for the vertical surface (like the baked seam joiners)". "Neither makes sense to do prematurely and both could slot in
   I believe." Nothing here may block either: (a) is the pattern materials of design point 9; (b) a second, sideways
   column grid owning a cliff face, in the spirit of DESIGN.md section 3's many grids.
+
+## Decisions with the owner (2026-11-18, round 4)
+
+- Holes seen on the phone (Pixel 9a): "I also saw holes on the phone so verify water tight. It did carve and add fast
+  so that might have been the issue if it ran out some buffer." Watertightness is checked standing (manifold check of the
+  baked mesh, screen check from many poses, a stress run at a phone-like buffer limit).
+- Brushes: "I might have carve only carve from the surface at touch and then slowly grow in size as you hold it." And:
+  "I would sweep the carve along a trajectory of the original uncarved surface so you carve one layer at a time." During
+  one stroke the ball's centre rides the surface as it was when the stroke began, so a drag removes (or, for Add, lays)
+  one even layer; going over the same spot again in the stroke changes nothing more; a new stroke starts from the new
+  surface.
+- Order: SDF footprints, then streaming. Borders: "I would keep heightfields and borders distinct and use SDF with
+  masks for the latter."
 
 ## Column correspondence (round 2; the Storage section's rules extended)
 
@@ -273,6 +294,10 @@ self-test).
   6-7.5 ms (vsync everywhere); a frame with no change runs no compute for the draw.
 - Round 3 step 3 (2026-11-18): the top surface's enhance is a limited, mean-preserving PPM (provisional; "The column
   maths"). The regular spires on the depth-2 tunnel floor and under a root-scale add are gone.
+- Round 4 step 1 (2026-11-18): the segmented pool that grows by need ahead of the ops ("Storage", Pool full), one op
+  in flight, `?maxbuf=<MB>` to clamp the device's buffers, the device's limits and the pool on the page; the near plane
+  no longer follows the measured nearest solid; the watertight checks (scripts/nested-watertight.mjs; NS-46) and the
+  stress run (scripts/nested-stress.mjs).
 
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 

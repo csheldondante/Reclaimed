@@ -52,8 +52,17 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
     out.push(c);
     log(c);
   };
-  // a small pool on purpose: it must grow under load without loss
-  const g = new GpuNest(device, K, SEED, 16);
+  // a small pool on purpose: it must grow under load without loss (the self-test runs ops back to back, so it grows at
+  // once instead of ahead)
+  const g = new GpuNest(device, K, SEED, 16, { syncGrow: true });
+  // (every op here must run: a refusal is a failure, said in words)
+  for (const op of ['edit', 'promote', 'slide'] as const) {
+    const f = (g[op] as (...a: unknown[]) => boolean).bind(g);
+    (g as unknown as Record<string, unknown>)[op] = (...a: unknown[]) => {
+      if (!f(...a)) throw new Error(`${op} refused: ${g.stats.error || 'the pool could not hold its worst case'} (cap ${g.cap}, used ${g.stats.used})`);
+      return true;
+    };
+  }
   const stripe = { x: F1.gx / K + 4, y: F1.gy / K + 4, count: 40 };
   g.root(ROOT, stripe);
   let s = await g.readAll();
@@ -283,6 +292,21 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
   await device.queue.onSubmittedWorkDone();
   await new Promise((r) => setTimeout(r, 50));
   const st = g.stats;
-  check('the pool grew under load with nothing refused; no mismatches, table never full, every residual exact', st.grows > 0 && s.ctl[1] === 0 && s.ctl[4] === 0 && s.ctl[5] === 0 && s.ctl[6] === 0, `started at 16 pages, grew ${st.grows} times to ${g.cap}; refused ${s.ctl[1]}, mismatches ${s.ctl[4]}, table full ${s.ctl[5]}, inexact residuals ${s.ctl[6]}`);
+  // page segments: a pool cut into 64-page buffers (a phone's largest buffer, much smaller) holds the same columns
+  {
+    const h = new GpuNest(device, K, SEED, 400, { syncGrow: true, segPages: 128 });
+    // (the first 100 page ids skipped, so the level's pages straddle the first segment's end)
+    device.queue.writeBuffer(h.ctl, 0, new Uint32Array([100]));
+    h.root(ROOT, stripe);
+    h.promote(1, F1);
+    let hs = await h.readAll();
+    const a = identical(levelCols(hs, 1, F1), c1);
+    h.demote(1);
+    h.promote(1, F1);
+    hs = await h.readAll();
+    const b = identical(levelCols(hs, 1, F1), c1);
+    check('page segments: a pool of 128-page buffers (pages handed out from id 100, across the end of the first buffer) gives the same level 1 bit for bit (and again after demote, promote)', a.same && b.same && h.stats.segs > 1, `${a.diff} + ${b.diff} columns differ; ${h.stats.segs} segments in use, ${hs.ctl[0]} pages handed out, refused ${hs.ctl[1]}`);
+  }
+  check('the pool grew under load with nothing refused; no mismatches, table never full, every residual exact', st.grows > 0 && s.ctl[1] === 0 && s.ctl[4] === 0 && s.ctl[5] === 0 && s.ctl[6] === 0, `started at 16 pages, grew ${st.grows} times to ${g.cap} (${st.segs} segments of ${st.segPages}; ${st.used} used); refused ${s.ctl[1]}, mismatches ${s.ctl[4]}, table full ${s.ctl[5]}, inexact residuals ${s.ctl[6]}`);
   return out;
 }

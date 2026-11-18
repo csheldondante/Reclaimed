@@ -26422,6 +26422,44 @@ child surface past the cliff's range). Self-test 23/23 (GPU against the oracle).
 root-add-side-ppm.png (a root-scale add seen at levels 1 and 2: a smooth mesa, no spires; no before still was kept, the
 last round described metre-high spires). Draw unchanged (6.7-7.4 ms uncapped in the tunnel views).
 
+## 2026-11-18 — Nested scales lab, round 4 step 1: holes — a segmented pool that grows by need, the near plane, watertight checks
+
+**Why.** The owner saw holes on his Pixel 9a after fast carving and adding and asked for watertightness to be verified.
+
+**What caused holes (three causes, found by reproducing).**
+1. *The pool.* `?maxbuf=<MB>` (new) clamps the device's largest buffer and binding. At 256 MB the old pool's reserve
+   (a doubled, summed worst case: 12,288 pages reserved for 585 used) asked for 294 MB after the first carves, the grow
+   threw inside the frame, and the frame loop stopped: the screen froze on its last frame, which showed the shapes'
+   cracks (local/nested/stress-before-256.png). At 128 MB the lab could not open level 1 at all. So on a device with a
+   smaller largest buffer than the desktop's (2 GB here) rapid edits froze the sandbox.
+2. *The near plane.* It was half the camera's measured nearest solid; the measure can overestimate (5.5 reported, the
+   mound 1.4 away: NS-48, as NS-36), and the near plane then cut the surface in front of the eye away: 61,000 hole
+   pixels in one pose of the new screen check (local/nested/watertight-worst-diag.png before the fix). Now a tenth of the
+   margin the eye keeps (reverse Z, infinite far: still precise). That pose: 0.
+3. *Cracks in draw B* (the half-way walls and cut ceilings round carved and added shapes): slits of sky between a wall
+   and a sheet, a few hundred pixels a view (local/nested/watertight-worst.png). The manifold check finds ~1,000 open
+   edges a level where shapes are. Not fixed here: they are what footprints (step 3) replace (NS-46).
+Also fixed: after a grow the draw's page list was a fresh empty buffer until the next op (an op refused after a grow left
+draw B reading it).
+
+**What.** (a) The pool is up to four segment buffers (the device's storage-buffer limit − 6), each at most the device's
+largest buffer; the WGSL reads and writes pages through pgLoad / pgStore (a switch on the segment). The directory passes
+have their own layout so no layout passes the default 8 storage buffers with two segments. (b) Grows by need, made ahead
+in an out-of-memory error scope and applied at the next op; an op that does not fit is refused whole (it changed nothing;
+a held brush retries); past the device the page says so in a sentence. (c) One op in flight: the sandbox starts an op only
+once the pool's header came back after the last, so the reserve is exact (in use + this op's worst case). (d) The page
+shows pages used of reserved, MB, buffers, the device's largest buffer. (e) Checks: scripts/nested-stress.mjs (300
+frames of alternating carves and adds at the screen's centre at a clamped limit), scripts/nested-watertight.mjs (the
+manifold check: Renderer.capture runs the draw's vertex code in a compute pass and welds the triangles; the screen check:
+40 poses, three samples each from 120 ms (during the fade) to 900 ms, hole pixels whose ray points below the horizon).
+
+**Measured.** Adapter (desktop iGPU): largest buffer and binding 2048 MB, 16 storage buffers a stage. Stress, 300 frames:
+?maxbuf=128: frames flow (102 a second after), 850 pages used of 3,200 reserved (153 MB in 2 segments of 128 MB),
+refused 0; ?maxbuf=256: 827 of 2,624 (126 MB, 1 segment). Before: froze at 256 MB, did not start at 128 MB. Self-test 24/24
+(new: a pool of 128-page segments with ids from 100 gives level 1 bit for bit; the pool check). Unit tests 12/12.
+Watertight (desktop, no clamp): open edges L0 0, L1 ~700-1,000, L2 ~1,700-3,300 per eye; screen 7,438 hole pixels over 40
+poses x 3 samples (was 190,549 with the near plane bug); both still FAIL (NS-46, step 3).
+
 
 
 

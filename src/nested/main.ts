@@ -9,13 +9,27 @@ function fatal(msg: string): void {
   document.body.appendChild(d);
 }
 
-async function boot(): Promise<GPUDevice> {
+/** ?maxbuf=<MB>: clamp the device's largest buffer and storage binding to a phone-like size (desktop reproduction) */
+async function boot(q: URLSearchParams): Promise<GPUDevice> {
   if (!navigator.gpu) throw new Error('This page needs WebGPU, and this browser does not have it.\nOn a phone, open it over https in Chrome.');
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
   if (!adapter) throw new Error('WebGPU is here but no graphics adapter was offered.');
+  const clamp = q.has('maxbuf') ? Number(q.get('maxbuf')) * 2 ** 20 : Infinity;
   const device = await adapter.requestDevice({
-    requiredLimits: { maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize, maxBufferSize: adapter.limits.maxBufferSize },
+    requiredLimits: {
+      maxStorageBufferBindingSize: Math.min(clamp, adapter.limits.maxStorageBufferBindingSize),
+      maxBufferSize: Math.min(clamp, adapter.limits.maxBufferSize),
+      maxStorageBuffersPerShaderStage: adapter.limits.maxStorageBuffersPerShaderStage,
+    },
   });
+  const mb = (v: number) => `${Math.round(v / 2 ** 20)} MB`;
+  (window as unknown as { __limits: unknown }).__limits = {
+    adapterBinding: mb(adapter.limits.maxStorageBufferBindingSize),
+    adapterBuffer: mb(adapter.limits.maxBufferSize),
+    binding: mb(device.limits.maxStorageBufferBindingSize),
+    buffer: mb(device.limits.maxBufferSize),
+    storagePerStage: adapter.limits.maxStorageBuffersPerShaderStage,
+  };
   device.addEventListener('uncapturederror', (e) => fatal(`GPU error: ${(e as GPUUncapturedErrorEvent).error.message}`));
   device.lost.then((i) => fatal(`The GPU device was lost: ${i.message}`));
   return device;
@@ -23,7 +37,7 @@ async function boot(): Promise<GPUDevice> {
 
 async function main(): Promise<void> {
   const q = new URLSearchParams(location.search);
-  const device = await boot();
+  const device = await boot(q);
   if (q.get('selftest') === '1') {
     const log = document.getElementById('log')!;
     log.style.display = 'block';
