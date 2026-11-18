@@ -19,7 +19,8 @@ await run({ name: 'stills', kind: 'behaviour', size: '960x640', dpr: 1, echo: fa
   page.on('console', (m) => {
     if (m.type() === 'error' || m.type() === 'warning') console.log(`[page ${m.type()}] ${m.text()}`);
   });
-  await page.goto(`https://localhost:${port}/nested.html?k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140`, { waitUntil: 'load' });
+  const cut = R.opt('cut', '');
+  await page.goto(`https://localhost:${port}/nested.html?k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140${cut ? `&cut=${cut}` : ''}`, { waitUntil: 'load' });
   const t0 = Date.now();
   await page.waitForFunction(() => window.nested && nested.app.frames.length > 60, { timeout: 120000, polling: 100 });
   console.log(`frames flowing after ${Date.now() - t0} ms`);
@@ -34,12 +35,14 @@ await run({ name: 'stills', kind: 'behaviour', size: '960x640', dpr: 1, echo: fa
     const snap = await a.nest.readAll();
     const zo = snap.zOrigin(1);
     const w1 = a.nest.wins[1];
-    const ed = (op, x, y, z, r) => a.nest.edit({ op, radius: r, amount: 0, at: { level: 1, x: x * 8 - w1.gx, y: y * 8 - w1.gy, z: (z - zo) * 8 } });
-    ed('add', h[0], h[1], h[2] + 1.2, 2.2);
-    for (let t = -3.2; t <= 3.2; t += 0.3) ed('carve', h[0] - t, h[1], h[2] + 1.3, 0.75);
-    for (let z = 0.2; z <= 2.6; z += 0.2) ed('add', h[0], h[1] + 5, h[2] + z, 0.3);
-    ed('add', h[0], h[1] + 5, h[2] + 3.4, 1.0);
-    await W(500);
+    // (one op in flight: an edit refused while the last one runs is sent again, as the watertight script does)
+    const ed = async (op, x, y, z, r) => {
+      while (!a.nest.edit({ op, radius: r, amount: 0, at: { level: 1, x: x * 8 - w1.gx, y: y * 8 - w1.gy, z: (z - zo) * 8 } })) await W(50);
+    };
+    await ed('add', h[0], h[1], h[2] + 1.2, 2.2);
+    for (let t = -3.2; t <= 3.2; t += 0.3) await ed('carve', h[0] - t, h[1], h[2] + 1.3, 0.75);
+    for (let z = 0.2; z <= 2.6; z += 0.2) await ed('add', h[0], h[1] + 5, h[2] + z, 0.3);
+    await ed('add', h[0], h[1] + 5, h[2] + 3.4, 1.0);    await W(500);
     return { h, w1, zo, stats: nested.state().stats };
   });
   console.log('scene', JSON.stringify(scene));

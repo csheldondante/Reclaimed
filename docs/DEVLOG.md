@@ -26539,3 +26539,24 @@ stalk L1 396; mid-air blob L0 13, L1 327. L0 0 in four eyes. What remains: (1) r
 neighbouring columns differ in count (a tunnel cutting an add's overhang edge, ring edges, NS-53, NS-55); (2) a row of
 top-sheet edges at an L2 window edge (~110-140, NS-56); (3) a fixed spot at the mid-air blob's ring edge at L1 (~50-90 top
 sheet edges, NS-57). The checks are not yet in ?selftest=1 (NS-46 open). Self-test 26/26, unit tests 14/14.
+
+## 2026-11-18 — Nested scales lab, round 4 step 3, F6: stills, timings, stress (F5 not built)
+
+**Stills** (scripts/nested-stills.mjs, the round's cameras; its edits now wait for the one op in flight, as the
+watertight script's do; `--cut old` for the old cut on the same columns): local/nested/*-fp-new.png against *-fp-old.png.
+Inside the tunnel at depth 2 the new cut draws a round bore (jagged teeth on its rim, a dark slab at the left); the old
+cut on the same columns is a curtain of vertical walls. The rim crossing at depth 3: a smooth round tube; at the far end
+a jagged lip ring and a hairline seam where it meets the coarser level (NS-21, F5 not built). Outside: the added ball
+with the tunnel through it; under the tunnel's mouth a ceiling face hangs from the ball to the ground (a "curtain":
+neighbouring columns split different intervals but have the same count, so slabs match by index but mean different
+layers: NS-53, NS-62); the old cut shows sky through holes there.
+
+**Timings** (960 x 640, desktop): uncapped draw in the tunnel view 28.9 ms (sheets only 4.1; round 3: 6-7.5 ms for the
+blob views), frame GPU 19.1 ms; rim crossing 23.2 ms (sheets 3.6). A carve at level 1 in the tunnel scene 124-138 ms with
+the bakes, 96-135 ms without (round 3: 7-12 ms without at depth 2; not re-measured on the old code in this run): a large
+regression in the edit passes to profile first (NS-61; suspects: restrict's footprint means probe the hash table a child
+and an interval, the brush's air-run walk per column). **Stress** at ?maxbuf=128: 832 pages used of 2,112 reserved (2 of
+4 buffers, 134 MB), 0 refusals, frames flowing. Pages are 65 KB (+33 %). **K = 4 (NS-37)** in the tunnel scene: no
+ring-only column (ghosts, nothing present) passes 4 intervals (ring-only columns: L0 21, L1 407, L2 3,030), so the ghost
+ring would add no stacked pages there; but 52 L1 columns hold 13 intervals (the stalk's repeated adds still pile up,
+NS-63).

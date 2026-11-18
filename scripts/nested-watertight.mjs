@@ -67,6 +67,38 @@ await run({ name: 'nested-watertight', kind: 'behaviour', size: '960x640', dpr: 
     }
   }
   R.check('manifold: no open interior edge on any level', openAll === 0, `${openAll} open edges in total`);
+  if (R.opt('kcount', '0') === '1') {
+    // (NS-37: the page shape 32 x 32 x K = 4) per live level: columns past 4 intervals, and those that are ring-only
+    // (every extra footprint a ghost: nothing a brush made present)
+    const kc = await page.evaluate(async () => {
+      const a = nested.app;
+      const s = await a.nest.readAll();
+      const out = [];
+      for (let L = 0; L < a.nest.live; L++) {
+        const w = a.nest.wins[L];
+        let over = 0;
+        let ringOver = 0;
+        let ghosts = 0;
+        const hist = {};
+        for (let y = 0; y < w.n; y++)
+          for (let x = 0; x < w.n; x++) {
+            const c = s.column(L, w.gx + x, w.gy + y);
+            const n = c.mat.length;
+            hist[n] = (hist[n] ?? 0) + 1;
+            const ghost = c.mat.some((_m, i) => i > 0 && (c.eS[i] <= 0 || c.eG[i] <= 0));
+            const made = c.mat.some((_m, i) => i > 0 && ((c.eS[i] > 0 && c.eS[i] < 1024) || (c.eG[i] > 0 && c.eG[i] < 1024)));
+            if (ghost && !made) ghosts++;
+            if (n > 4) {
+              over++;
+              if (ghost && !made) ringOver++;
+            }
+          }
+        out.push(`L${L}: ${w.n * w.n} columns, counts ${JSON.stringify(hist)}; past 4: ${over} (ring-only ${ringOver}); ring-only columns ${ghosts}`);
+      }
+      return out;
+    });
+    for (const l of kc) console.log(`kcount ${l}`);
+  }
   const at = R.opt('probeAt', '');
   if (at) {
     // (diagnostics) the columns round a level's local point: L,x,y

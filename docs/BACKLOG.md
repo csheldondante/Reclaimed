@@ -194,6 +194,14 @@ user) · `deferred` (agreed for later).
   compute-baked vertex buffer per changed chunk.
 - NS-59 (look, F4) The mound and tunnel still show the stripes along the stroke (alternating floor and ceiling faces
   seen from above in the diagnostic colours) and the ragged walls of NS-44, as before footprints.
+- NS-61 (perf, serious, F1-F4) A carve at level 1 in the tunnel scene takes 96-135 ms of GPU work without the bakes
+  (round 3: 7-12 ms). Profile first (toggle the passes); suspects: eRestrict probes the hash table a child and an
+  interval (inline it into restrict's same-structure loop), the brush's air-run walk per column (ivlAt per slab).
+- NS-62 (look, F4) Curtains: where neighbouring columns of one count split different intervals (a tunnel leaving an
+  added ball into open air), the slab draw joins different layers by index: a ceiling face hangs from the ball to the
+  ground under the tunnel's mouth (local/nested/tunnel-outside-fp-diag.png). Same root as NS-53.
+- NS-63 (limit, F3-F4) Repeated adds can still pile up intervals (52 L1 columns of the stalk with 13 intervals); the
+  reuse rule misses there. Not diagnosed.
 - NS-60 (process) One DEVLOG entry (F1-F3) was appended with a quoted shell heredoc, against the round's rule (Edit /
   Write only); the text was checked intact.
 
