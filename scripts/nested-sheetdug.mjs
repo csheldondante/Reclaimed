@@ -19,7 +19,7 @@ await run({ name: 'nested-sheetdug', kind: 'behaviour', size: '960x640', dpr: 1,
     const a = await pitAndCave(nested, { taps: 4, log: () => {} });
     await nested.smooth(true);
     await new Promise((r) => setTimeout(r, 1500));
-    const b = await pitAndCave(nested, { taps: 4, diag: true, log: (s) => console.log(`[pit] ${s}`) });
+    const b = await pitAndCave(nested, { taps: 4, diag: true, rebake: true, log: (s) => console.log(`[pit] ${s}`) });
     return { boxes: [a.total, a.poses], sheets: [b.total, b.poses, b.coverage] };
   });
   console.log(JSON.stringify(res));

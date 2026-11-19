@@ -968,6 +968,47 @@ the solid below the next air gap down." "Why make those [skirts, outer ring] if 
   their draw entry points) is no longer called but not yet deleted (delete once the gate passes). Where to pick up:
   re-run the full gate; NS-127 with per-pose diagnosis; NS-129.
 
+**As built (round 17; kept current while building).**
+- *The bake region rule (one rule, one function: GpuNest.bakeChanged; both draws).* An op says which COLUMNS of a level
+  M changed (their records, or whether they are drawn). A bake of level L's chunk reads: L's columns within two of it
+  (lines, their owners, normals over the quads round a line); on a rim line of L (its child's footprint boundary) the
+  child's columns round the child's line; on a window-edge line of L (L > 0) the parent's columns outside the window (and
+  for boxes the parent's depths there). Nothing else (no bake reads another bake's output). So for changed columns B of
+  level M:
+  1. M's chunks over B grown by two columns;
+  2. M's live child: its chunks over B grown by two, times k, grown by two, that hold a rim line (chunkRim);
+  3. M's parent: its chunks over B grown by two, divided by k rounded out, grown by two, that hold a rim line.
+  Which columns each op changes: an edit, per level m, its edit box, its derive box and the restrict into it from m + 1
+  (the plan's slots m*4+3, m*4+2, (m+1)*4); a slide, the entering chunks, the window's edge ring (its edge lines now face
+  another outside) and the parent's columns round the old and the new footprint (drawn or not); a promote, the child's
+  whole window and the parent's columns round the footprint; a demote, the parent's columns round the footprint; root,
+  everything; setSmooth and the test's rebakeAll bake every live window whole (the partner sets lie inside). Shrink moves
+  pages only (no column changes); resClear changes residuals, which reach live columns only through the derive boxes.
+  Hash: in an edit, part 1 skips a chunk whose own columns hash the same (the sheet pass; the hash holds only own
+  columns, and a change of the other level's reaches the chunk through 2 or 3, which are forced); window ops force
+  every chunk (they change what the hash does not hold: rims, owners outside, z origins). Round 16 instead carried chunk
+  rects grown by a whole chunk (x k: four child chunks each way), for the sheet draw only, without the restrict box, and
+  let every rim chunk bake whatever the hash said; the slide's special child-ring re-bake is gone (part 2 covers it).
+  Partner bakes go in one submit band (rim chunks only: at most a window's ring).
+- *A child never sits outside its parent (NS-128).* The app runs one level op a frame, so a slide of L that left L + 1
+  outside it (a teleport: the selftest's setView to a shaft) left the child orphaned for a frame or more: its window-edge
+  lines saw no parent columns (its whole edge open: the 1,024 open edges of NS-128) and its zippers kept the parent's old
+  surfaces (64 chunks the forced bake changed). A slide now demotes a child its new window would not hold (checkWin's
+  margin), in the same op, before the slide; the parent draws there until the app promotes again.
+- *NS-127, the dug world's hole pixels, diagnosed (suite.ts pitAndCave `rebake`: the levels held still, the holes counted
+  after 3 frames with nothing baked, then after a forced bake of every window, and the chunks whose drawn triangles that
+  bake changed).* Full selftest run 1 with the rule: 168 hole pixels over 162 poses (round 16: 192,048), all at the
+  1-frame check of one pose (the shaft across the rim, 84 then 0). sheetdug runs: (a) GEOMETRY, the counter-example: the
+  eye at world (52.8, 120.5, -20) at the bottom of the 2.2-radius shaft (root columns 50..55, top about 11, floor -25.6),
+  in the frames before the finer levels arrive, so level 0 alone draws there: the shaft is 4-5 root columns wide and 36
+  deep; every corner line on its edge has the top and the floor joined by the exposed wall in one cluster, placed at
+  their mean (about -7), so the sheet is a funnel whose rim is 13 above the eye and the eye, in air by the data, is under
+  the sheet: 82,668 hole pixels at 1 frame, the same after 3 still frames and after a forced bake of every window (0
+  chunks changed). This is the accepted collapse (a narrow deep feature at a coarse level pinches), shown only until the
+  level that resolves the shaft is promoted (0 at the settled check). Not changed, no skirt. (b) The orphaned child above.
+  (c) one 1-frame case in two runs before the levels were held still in the diagnosis (403,094 / 409,920 pixels, L2 at
+  the eye, gone after the forced bake but with level ops between: undecided; not seen again in the held-still runs).
+
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

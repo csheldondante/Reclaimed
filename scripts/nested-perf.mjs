@@ -104,20 +104,32 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
       const s = await a.nest.readAll();
       const zo = s.zOrigin(1);
       const w1 = a.nest.wins[1];
-      const out = { box: [], smooth: [], 'smooth, no cache pass': [], 'smooth, no exception bake': [] };
+      // (round 17, NS-129: the split) the sheet pass left out, the partner bakes left out, round 16's one-row bands; per
+      // mode the submits and dispatches of a carve (both runs of benchEdit) and the sheet-pass chunks seen / baked
+      const out = { box: [], smooth: [], 'smooth, no sheet pass': [], 'smooth, no partners': [], 'smooth, one row a band': [] };
       const modes = Object.keys(out);
-      for (let i = 0; i < 32; i++) {
-        const mode = modes[i % 4];
+      const cnt = {};
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      for (let i = 0; i < 40; i++) {
+        const mode = modes[i % modes.length];
         await nested.smooth(mode !== 'box');
         a.nest.skip.clear();
-        if (mode.includes('no cache')) a.nest.skip.add('cache');
-        if (mode.includes('no exception')) a.nest.skip.add('ex');
+        if (mode.includes('no sheet')) a.nest.skip.add('cache');
+        if (mode.includes('no partners')) a.nest.skip.add('partner');
+        if (mode.includes('one row')) a.nest.skip.add('bands');
         const at = { level: 1, x: (h[0] - 1 + (i % 12) * 0.3) * 8 - w1.gx, y: (h[1] + 1.5 + Math.floor(i / 12) * 0.4) * 8 - w1.gy, z: (h[2] + 0.8 - zo) * 8 };
         const g0 = a.nest.stats.grows;
+        await wait(100);
+        const c0 = { ...a.nest.counts, seen: a.nest.stats.sheetSeen ?? 0, baked: a.nest.stats.sheetBaked ?? 0 };
         const r = await nested.benchEdit({ op: 'carve', radius: 0.5, amount: 0, at });
+        await wait(100);
         a.nest.skip.clear();
-        if (a.nest.stats.grows === g0) out[mode].push(r);
+        if (a.nest.stats.grows === g0) {
+          out[mode].push(r);
+          (cnt[mode] ??= []).push(`${a.nest.counts.submits - c0.submits}s/${a.nest.counts.dispatches - c0.dispatches}d/${(a.nest.stats.sheetSeen ?? 0) - c0.seen}c/${(a.nest.stats.sheetBaked ?? 0) - c0.baked}b`);
+        }
       }
+      out.cnt = cnt;
       // (the switch itself: a whole-window rebake of every live level, pipelines made)
       await nested.smooth(false);
       const t0 = performance.now();
@@ -127,8 +139,8 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
       return out;
     }, h);
     const mn = (v) => Math.min(...v);
-    for (const k of ['box', 'smooth', 'smooth, no cache pass', 'smooth, no exception bake'])
-      if (c[k].length) console.log(`carve at level 1, ${k}: with bakes ${c[k].map((r) => r.withBake.toFixed(1)).join(' ')} (median ${med(c[k].map((r) => r.withBake)).toFixed(1)}, min ${mn(c[k].map((r) => r.withBake)).toFixed(1)}); without ${c[k].map((r) => r.without.toFixed(1)).join(' ')}; bakes' share median ${med(c[k].map((r) => r.withBake - r.without)).toFixed(1)} ms`);
+    for (const k of ['box', 'smooth', 'smooth, no sheet pass', 'smooth, no partners', 'smooth, one row a band'])
+      if (c[k].length) console.log(`carve at level 1, ${k}: with bakes ${c[k].map((r) => r.withBake.toFixed(1)).join(' ')} (median ${med(c[k].map((r) => r.withBake)).toFixed(1)}, min ${mn(c[k].map((r) => r.withBake)).toFixed(1)}); without ${c[k].map((r) => r.without.toFixed(1)).join(' ')}; bakes' share median ${med(c[k].map((r) => r.withBake - r.without)).toFixed(1)} ms; submits/dispatches/sheet chunks seen/baked ${(c.cnt[k] ?? []).join(' ')}`);
     console.log(`switching the smooth draw on (pipelines made): ${c.switchOn.toFixed(0)} ms`);
     return;
   }

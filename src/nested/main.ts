@@ -81,7 +81,8 @@ async function main(): Promise<void> {
         say(s);
       }
       if (q.get('pit') !== '0') {
-        const pit = await pitAndCave(api, { taps: 4, log: (s) => console.log(`[suite] smooth ${s}`) });
+        // (round 17, NS-127) with the discriminator: a pose with holes is checked again after every window is baked again
+        const pit = await pitAndCave(api, { taps: 4, rebake: true, log: (s) => console.log(`[suite] smooth ${s}`) });
         for (const c of [
           { name: 'smooth: screen: no hole pixels in the pit, cave and shaft poses, also after a cruise, a demote and the pool\'s shrinks', pass: pit.total === 0, detail: `${pit.total} hole pixels over ${pit.poses} poses` },
           { name: 'smooth: coverage after the pit, cave, shafts, a cruise, a demote and shrinks', pass: pit.coverage === 0, detail: `${pit.coverage} faults` },

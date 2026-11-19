@@ -27325,3 +27325,31 @@ per-line walks (two bound walks and one cluster walk a line, 361 lines a chunk);
 the finest level (the camera was lifted out of solid 5-10 times: the default-brush tunnel is 3 m wide and the poses
 sat inside it), so cliff / bowl / lip / tunnel stills mostly show plain ground; the level-edge pose shows the big
 tunnel's mouth instead.
+
+## 2026-11-19 — Nested scales lab, round 17 step 1: one bake region rule for every op; a slide never orphans a child; NS-127 / NS-128 diagnosed
+
+**Why.** Round 16 left the dug world failing: 10 open edges after the stroke across the rim (an edit missed the other
+level's chunks), 192,048 hole pixels in the pit poses (NS-127, cause unknown) and a transient whole open window edge
+(NS-128). The level edges make a bake read two levels' columns, and each op had its own idea of what to bake.
+
+**Built** (NESTED_SCALES.md "As built (round 17)"). GpuNest.bakeChanged: the one rule, used by edit, slide, promote,
+demote and root, both draws: an op names the columns of level M that changed; M's chunks over them grown by two, the
+child's rim chunks over them (x k, grown by two) and the parent's rim chunks over them (/ k, grown by two). dilate maps
+the changed column boxes (not chunk rects grown by a chunk); the sheet pass's mode 2 bakes rim chunks only, forced; an
+edit's own chunks skip on their hash (no more "rim chunks always bake"); window ops force. The edit now also passes its
+restrict box to the partners, and the box draw's rim bake gets the same partner bakes (NS-119). The slide's special
+child-ring re-bake (round 16) is gone. A slide that would leave its child outside it demotes the child in the same op
+(NS-128's cause, below). Test only: GpuNest.rebakeAll, api.rebakeAll / chunkTris, pitAndCave `rebake` (held still: holes
+after 3 frames with nothing baked, after a forced bake of every window, and the chunks that bake changed), the union
+closure re-checked after a forced bake.
+
+**Measured.** Full `?selftest=1`: run 1 44 of 45, run 2 44 of 45. The stroke across the rim: 0 open edges (round 16: 10).
+Union closure 0 at every check of the watertight suite in the dug world; NS-128 not seen. The one failure, both runs: the
+pit poses' screen check, 168 / 128,032 hole pixels (round 16: 192,048), all at the 1-frame check after the teleport to the
+shaft across the rim. Diagnosis (sheetdug runs): the forced bake changes 0 chunks there; the holes are either gone after
+3 still frames with nothing baked (the camera lifting the eye: a draw-side transient) or stay through the forced bake:
+the counter-example, level 0 alone drawing round an eye at the bottom of a 4-5 root column wide, 36 deep shaft, whose
+edge lines put the top and the floor in one cluster at their mean (about -7, 13 above the eye): the eye is under the
+sheet until the finer level is promoted. The accepted collapse; no skirt. One sheetdug run before the diagnosis held the
+levels still showed the orphaned child: L1 slid away from L2 (one level op a frame), L2's zippers stale (64 chunks the
+forced bake changed) and its edge without parent columns, which is NS-128's whole open edge.

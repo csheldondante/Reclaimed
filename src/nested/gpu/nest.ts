@@ -74,6 +74,9 @@ export interface Win {
 }
 export type Op = 'raise' | 'dig' | 'melt' | 'carve' | 'add';
 export interface PoolStats {
+  /** (round 17, measurement) sheet-pass chunks that reached the hash, and those baked (running counts, ctl 12 / 13) */
+  sheetSeen?: number;
+  sheetBaked?: number;
   cap: number;
   used: number;
   free: number;
@@ -409,7 +412,7 @@ export class GpuNest {
         tmp.destroy();
         // (the bump end passes the cap only by refused allocations; ctl's cap may be an older, smaller one)
         const end = Math.min(h[0], this.cap);
-        Object.assign(this.stats, { used: end - h[2], free: this.cap - end + h[2], refused: h[1], mismatch: h[4], tableFull: h[5], maxCz: h[7], maxCzTmp: h[8], maxCzFace: h[9] });
+        Object.assign(this.stats, { used: end - h[2], free: this.cap - end + h[2], refused: h[1], mismatch: h[4], tableFull: h[5], maxCz: h[7], maxCzTmp: h[8], maxCzFace: h[9], sheetSeen: h[12], sheetBaked: h[13] });
         this.pendingBound = Math.max(0, this.pendingBound - bound);
         this.reading = false;
         this.settled = this.pendingBound === 0;
@@ -604,12 +607,34 @@ export class GpuNest {
   }
 
   // ---- the baked draw ---------------------------------------------------------------------------------------------------
-  /** bake level L's faces over region slots, their chunks grown by one (a column's walls depend on its neighbours) */
-  private bake(L: number, slots: number[], grow = true, rows?: number[], partner = 0): void {
+  /** (round 17) THE bake region rule, the one function every op's bakes go through (NESTED_SCALES.md "As built (round
+   *  17)"). `slots` hold the columns that changed on level M (their data or whether they are drawn). The bakes: (1) level
+   *  M's chunks over those columns grown by two; (2) M's live child: its chunks over them in its units, grown by two, that
+   *  touch a rim line (its window-edge lines see M's columns outside it); (3) M's parent: its chunks over them in its
+   *  units, grown by two, that touch a rim line (its rim lines are the child's lines). `how`: 'edit' bakes a chunk of (1)
+   *  only when its own columns' hash changed (any change of the other level's columns reaches it through (2) or (3)),
+   *  'window' always (a window op changes what the hash does not hold: rims, owners outside, z origins). Box draw and
+   *  sheet draw alike. */
+  private bakeChanged(M: number, slots: number[], how: 'edit' | 'window', grow = true, rows?: number[], rowsPer?: number): void {
+    this.bake(M, slots, grow, rows, 0, how === 'window', rowsPer);
+    // (measurement only: skip 'partner' leaves parts 2 and 3 out, the result then wrong)
+    if (this.skip.has('partner')) return;
+    if (M + 1 < this.live) this.bake(M + 1, slots, true, undefined, 1);
+    if (M > 0) this.bake(M - 1, slots, true, undefined, 2);
+  }
+  /** bake level L's faces over region slots, their chunks grown by one (a column's walls depend on its neighbours).
+   *  partner (round 16/17): the slots are another level's (1: the parent's, 2: the child's), carried into L's chunks by
+   *  dilate and baked on rim chunks only. force: no hash skip (window ops). Callers go through bakeChanged. */
+  private bake(L: number, slots: number[], grow = true, rows?: number[], partner = 0, force = false, rowsPer?: number): void {
     if (this.bakeOff || (this.bakeSkip >> L) & 1) return;
+    // (round 17) the sheet pass's mode: 0 hash skip, 1 forced, 2 rim chunks only, forced
+    const mode = partner ? 2 : force ? 1 : 0;
     // (round 12) two pipelines over the same slot: chunks that touch no rim line, and those that do (each skips the other's)
-    const both = (s: number, nrows: number) => {
+    const both = (s: number, nrows0: number) => {
       this.bakeLog.push({ L, slot: s });
+      // (round 17) `per` region rows a band: nrows bands
+      const per = Math.max(1, Math.min(nrows0, rowsPer ?? 1));
+      const nrows = Math.ceil(nrows0 / per);
       if (this.smooth) {
         // (round 14, NS-107) the cache pass over the same chunks first (the vertex cache and the template mask), then
         // the exceptions placed by the same cluster function; the next dispatch sees the cache (WebGPU: a usage scope
@@ -620,7 +645,7 @@ export class GpuNest {
         // no frame draws between the rows (the draw is submitted after the op). nrows: the slot's rows when the CPU
         // knows them, else the level's window rows (a GPU region lies inside it).
         for (let b = 0; b < nrows; b++) {
-          const off = this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = s), (e[2] = nrows > 1 ? b + 1 : 0), (e[3] = this.rimOff)));
+          const off = this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = s), (e[0] = mode), (e[1] = per), (e[2] = nrows > 1 ? b + 1 : 0), (e[3] = this.rimOff)));
           // (round 16: the sheet pass alone, the owner's sheets; measurement only: skip 'cache', the result then wrong)
           if (!this.skip.has('cache')) this.runIndirect('sheetBake', off, s);
           if (nrows > 1) this.submit(false);
@@ -629,7 +654,8 @@ export class GpuNest {
       }
       const off = this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = s), (e[3] = this.rimOff)));
       if (!this.splitBake) return this.runIndirect('faceBakeOne', off, s);
-      this.runIndirect('faceBake', off, s);
+      // (round 17) a partner bake: the rim chunks only (the box bake has no hash: every chunk of the region bakes)
+      if (!partner) this.runIndirect('faceBake', off, s);
       this.runIndirect('faceBakeRim', off, s);
     };
     const winRows = this.wins[L] ? this.wins[L]!.n / 16 : 1;
@@ -645,16 +671,22 @@ export class GpuNest {
       const g = slots.slice(i, i + 3);
       while (g.length < 3) g.push(255);
       this.run('dilate', this.uni(({ a, e }) => ((a[3] = L), e.set([g[0] | (g[1] << 8) | (g[2] << 16), t, partner, 0]))), 1);
-      both(t, winRows);
+      // (round 17) a partner bake in one band: it bakes rim chunks only, at most the level's ring
+      both(t, partner ? 1 : winRows);
     }
   }
   /** bake level L's faces over chunk rects given by the CPU (a window's edge ring, a child's footprint grown by a
    *  column: exactly the columns whose neighbours changed between drawn and air), clipped to the window; CPU slots from
-   *  `first` (8 a submit; each is written before the submit, so one submit cannot reuse one) */
-  private bakeRects(L: number, rects: { x0: number; y0: number; x1: number; y1: number }[], first: number): void {
+   *  `first` (8 a submit; each is written before the submit, so one submit cannot reuse one). `partners` (round 17):
+   *  through the region rule (bakeChanged, 'window'): the rects are columns that changed on L; false: L's own bake only
+   *  (setSmooth, whose every level's whole window is baked anyway) */
+  private bakeRects(L: number, rects: { x0: number; y0: number; x1: number; y1: number }[], first: number, partners = true): void {
     if (first + rects.length > 8) throw new Error('nest: more than 8 CPU slots in one submit');
     const cl = rects.map((r) => this.clipChunks(L, r));
-    this.bake(L, cl.map((r, i) => this.cpuSlot(first + i, r)), false, cl.map((r) => r.y1 - r.y0));
+    const slots = cl.map((r, i) => this.cpuSlot(first + i, r));
+    const rows = cl.map((r) => r.y1 - r.y0);
+    if (partners) this.bakeChanged(L, slots, 'window', false, rows);
+    else this.bake(L, slots, false, rows, 0, true);
   }
   /** a chunk rect clipped to level L's window (empty when outside) */
   private clipChunks(L: number, r: { x0: number; y0: number; x1: number; y1: number }): { x0: number; y0: number; x1: number; y1: number } {
@@ -732,6 +764,25 @@ export class GpuNest {
       this.lastDone = now;
     });
   }
+  /** (test only, round 17: the NS-127 / NS-128 discriminator) every live window baked again, forced, a chunk row a
+   *  submit: a fault this removes was a missed bake region, one it leaves is the geometry */
+  rebakeAll(): boolean {
+    let chunks = 0;
+    for (let m = 0; m < this.live; m++) chunks += (this.wins[m]!.n / 16) ** 2;
+    if (!this.reserve(this.bakeBound(chunks))) return false;
+    for (let m = 0; m < this.live; m++) {
+      const w = this.wins[m]!;
+      for (let y = w.gy / 16; y < (w.gy + w.n) / 16; y++) {
+        this.bakeRects(m, [{ x0: w.gx / 16, y0: y, x1: (w.gx + w.n) / 16, y1: y + 1 }], 0, false);
+        this.mergeFrees();
+        this.submit(false);
+      }
+    }
+    this.directory();
+    this.mergeFrees();
+    this.submit();
+    return true;
+  }
   setSmooth(on: boolean): boolean {
     if (on === this.smooth) return true;
     const live = this.live;
@@ -753,14 +804,15 @@ export class GpuNest {
         // (measurement only: chunkTimes, a chunk a submit, each timed)
         if (this.chunkTimes) {
           for (let x = w.gx / 16; x < (w.gx + w.n) / 16; x++) {
-            this.bakeRects(m, [{ x0: x, y0: y, x1: x + 1, y1: y + 1 }], 0);
+            this.bakeRects(m, [{ x0: x, y0: y, x1: x + 1, y1: y + 1 }], 0, false);
             this.mergeFrees();
             this.submit(false);
             this.timeRow(m, y, x);
           }
           continue;
         }
-        this.bakeRects(m, [{ x0: w.gx / 16, y0: y, x1: (w.gx + w.n) / 16, y1: y + 1 }], 0);
+        // (every live level's whole window: the region rule's partner bakes are inside it)
+        this.bakeRects(m, [{ x0: w.gx / 16, y0: y, x1: (w.gx + w.n) / 16, y1: y + 1 }], 0, false);
         this.mergeFrees();
         this.submit(false);
         this.timeRow(m, y);
@@ -792,7 +844,7 @@ export class GpuNest {
       this.submit(false);
       this.trace(this, 'root: pack');
     }
-    this.bake(0, [s]);
+    this.bakeChanged(0, [s], 'window');
     this.directory();
     this.mergeFrees();
     this.submit();
@@ -830,7 +882,8 @@ export class GpuNest {
         this.mergeFrees();
         this.submit(false);
       }
-    } else this.bake(L, [s]);
+    } else this.bakeChanged(L, [s], 'window');
+    // (the parent's columns over the footprint stop being drawn: a change of L - 1, through the same rule)
     this.bakeRects(L - 1, [fc], 1);
     this.directory();
     this.mergeFrees();
@@ -885,6 +938,18 @@ export class GpuNest {
     const footN = fp && fn ? GpuNest.area(this.clipChunks(L - 1, fp)) + GpuNest.area(this.clipChunks(L - 1, fn)) : 0;
     // (the entering chunks' column pages and TMP twins, their faces, the edge ring's and the parent's round the footprint)
     if (!this.reserve(chunks * (this.overflowPages() + this.tmpPages()) + this.bakeBound(chunks + ringN + footN))) return false;
+    // (round 17, NS-128) a child the new window would not hold (inside it with the margin, checkWin) is demoted in the
+    // same op, before the slide: else for a frame or more (the app runs one level op a frame) the child sits outside
+    // its parent, its window-edge lines see no parent columns and its whole edge is open (the selftest's 1,024 open
+    // edges), and its zippers keep the parent's old surfaces (the forced-bake diff of NS-127). The parent draws there
+    // until the child is promoted again (the app's next frames).
+    const kid = this.wins[L + 1];
+    if (kid) {
+      this.wins[L] = { ...w };
+      const ok = this.fits(L + 1, kid);
+      this.wins[L] = o;
+      if (!ok) this.demote(L + 1);
+    }
     this.run('release', this.uni(({ a, e }) => ((a[3] = L), e.set([nc.x0, nc.y0, nc.x1, nc.y1]))), TCAP / 64);
     this.mergeFrees();
     this.wins[L] = { ...w };
@@ -895,7 +960,7 @@ export class GpuNest {
       this.pack(L, s);
       return s;
     });
-    this.bake(L, slots);
+    this.bakeChanged(L, slots, 'window');
     // (the CPU slots are taken by the entering parts: the edge ring and the parent's footprint in a second submit; the
     // pool's header is read after the second one only, so the read that settles this op sees all of it, round 9)
     this.directory();
@@ -903,14 +968,8 @@ export class GpuNest {
     this.submit(false);
     this.bakeRects(L, this.ring(w), 0);
     if (fp && fn) this.bakeRects(L - 1, [fp, fn], 4);
-    // (round 16, the sheet draw) a child's window-edge lines see this level's columns outside it (the entering chunks
-    // were just derived): the child's edge ring baked again, else its zippers keep the parent's old surfaces (12 open
-    // edges after the selftest's cruise). BACKLOG NS-126: edits have the same dependency.
-    const kid = this.wins[L + 1];
-    if (this.smooth && kid && L + 1 < this.live) {
-      this.submit(false);
-      this.bakeRects(L + 1, this.ring(kid), 0);
-    }
+    // (round 16 re-baked the child's whole edge ring here, sheet draw only; round 17: the region rule's partner bakes
+    // above carry the entering chunks' change into the child's rim chunks, for both draws)
     this.directory();
     this.mergeFrees();
     this.submit();
@@ -925,9 +984,11 @@ export class GpuNest {
     // (clipped to the level's window)
     let bound = 0;
     let most = 0;
+    const per: number[] = [];
     for (let m = 0; m < live; m++) {
       const r = Math.min(MAX_BRUSH, spec.radius * this.k ** m);
       const c = Math.min(Math.ceil((2 * r + 4 * this.k + 4) / 16 + 2) ** 2, (this.wins[m]!.n / 16) ** 2);
+      per.push(c);
       bound += c;
       most = Math.max(most, c);
     }
@@ -981,15 +1042,17 @@ export class GpuNest {
     }
     // the baked draw where live columns changed: the edit on m, its derive, and the restrict into it from m + 1
     // (parents first: a child's items read its parent's table for the rim morph)
-    for (let m = 0; m < live; m++) this.bake(m, [m * 4 + 3, m * 4 + 2, ...(m + 1 < live ? [(m + 1) * 4] : [])]);
-    // (round 16, NS-126) the sheet draw's level edges read both levels' columns: each level also baked where its parent
-    // changed (its window-edge lines see the parent's columns outside it) and where its child changed (its rim lines are
-    // the child's lines); chunks whose inputs did not change skip by their hash, rim chunks bake
-    if (this.smooth)
-      for (let m = 0; m < live; m++) {
-        if (m > 0) this.bake(m, [(m - 1) * 4 + 3, (m - 1) * 4 + 2], true, undefined, 1);
-        if (m + 1 < live) this.bake(m, [(m + 1) * 4 + 3, (m + 1) * 4 + 2], true, undefined, 2);
-      }
+    // (round 17, the region rule: GpuNest.bakeChanged) the columns of m that changed: the edit on m, its derive, and the
+    // restrict into it from m + 1; m's own chunks over them, and its child's and parent's rim chunks over them (round 16
+    // did the partners for the sheet draw only, from chunk rects; NS-126, NS-119)
+    // (round 17, NS-129) the submit bound: a submit bakes at most a window row's chunks. An edit's region on a level is
+    // about sqrt(per[m]) chunks wide (the bound above), so a band takes as many region rows as fit in a window row (round
+    // 15 banded every bake one row a submit: 16 submits a region whatever its size). The bands still cover every row of
+    // the window (correctness never rests on the bound; only the time a submit takes does). Measurement: skip 'bands'.
+    for (let m = 0; m < live; m++) {
+      const rowsPer = this.skip.has('bands') ? 1 : Math.max(1, Math.floor(this.wins[m]!.n / 16 / Math.ceil(Math.sqrt(per[m]))));
+      this.bakeChanged(m, [m * 4 + 3, m * 4 + 2, ...(m + 1 < live ? [(m + 1) * 4] : [])], 'edit', true, undefined, rowsPer);
+    }
     this.directory();
     this.mergeFrees();
     this.submit();

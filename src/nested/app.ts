@@ -53,7 +53,7 @@ export class App {
   /** scripted edits (window.nested.sculpt) */
   private queue: { op: Op; nx: number; ny: number; px?: number }[] = [];
   /** per level, when its last promote or slide was submitted, and that op's CPU time (encode + submit) */
-  readonly opLog: { what: string; depth: number; at: number; ms: number }[] = [];
+  readonly opLog: { what: string; depth: number; at: number; ms: number; win?: { gx: number; gy: number; n: number } | null }[] = [];
   hook: ((dt: number) => void) | null = null;
   /** after the frame's draw was submitted (the measurements) */
   post: (() => void) | null = null;
@@ -469,7 +469,8 @@ export class App {
   private timed(what: string, depth: number, fn: () => boolean | void): boolean {
     const t = performance.now();
     const ok = fn() !== false;
-    if (ok) this.opLog.push({ what, depth, at: t, ms: performance.now() - t });
+    // (round 17, diagnostics) the op's level's window after it
+    if (ok) this.opLog.push({ what, depth, at: t, ms: performance.now() - t, win: depth >= 0 ? this.nest.wins[depth] ?? null : null });
     else this.refusedAt.push(t);
     if (this.refusedAt.length > 400) this.refusedAt.shift();
     if (this.opLog.length > 400) this.opLog.shift();
@@ -758,7 +759,15 @@ export class App {
             // the rim-line check has nothing to count (lines 1, junctions 0 for each parent)
             const wins = this.nest.wins.slice(0, this.nest.live) as { gx: number; gy: number; n: number }[];
             const u = unionClosure(caps, wins, this.k);
-            if (u.open) console.log(`[sheets] union closure: ${u.open} open edges (root edge ${u.openRoot}), live ${this.nest.live}, wins ${JSON.stringify(wins)}, caps ${caps.map((c) => c.depth).join(',')}: ${u.where.join('; ')}`);
+            if (u.open) console.log(`[sheets] union closure: ${u.open} open edges (root edge ${u.openRoot}), live ${this.nest.live}, wins ${JSON.stringify(wins)}, caps ${caps.map((c) => c.depth).join(',')}: ${u.where.join('; ')}; last ops ${this.opLog.slice(-6).map((o) => `${o.what} L${o.depth}`).join(', ')}`);
+            // (round 17, NS-128: the discriminator, test only) every window baked again and the closure checked again:
+            // what this removes was a missed bake region (logged, not counted: the check reports the mesh as drawn)
+            if (u.open && this.nest.smooth) {
+              while (!this.nest.rebakeAll()) await new Promise((r) => setTimeout(r, 30));
+              await this.device.queue.onSubmittedWorkDone();
+              const u2 = unionClosure(await this.render.capture(this.drawList()), wins, this.k);
+              console.log(`[sheets] after a forced bake of every window: ${u2.open} open edges${u2.open ? `: ${u2.where.join('; ')}` : ' (a missed bake region)'}`);
+            }
             return caps.map((c, i) => {
               const m = manifold(c);
               const open = i === 0 ? u.open + u.degenerate : 0;
@@ -787,6 +796,41 @@ export class App {
             });
           }
           return c;
+        } finally {
+          this.frozen = was;
+        }
+      },
+      /** (test only, round 17) every live window baked again (GpuNest.rebakeAll), the levels held still meanwhile */
+      rebakeAll: async () => {
+        const was = this.frozen;
+        this.frozen = true;
+        try {
+          while (!this.nest.rebakeAll()) await new Promise((r) => setTimeout(r, 30));
+          await this.device.queue.onSubmittedWorkDone();
+        } finally {
+          this.frozen = was;
+        }
+      },
+      /** (test only, round 17) drawn triangles per level and chunk (global chunk x, y; a triangle by its centroid) */
+      chunkTris: async () => {
+        const was = this.frozen;
+        this.frozen = true;
+        try {
+          const caps = await this.render.capture(this.drawList());
+          const out: Record<string, number> = {};
+          for (const c of caps) {
+            const w = this.nest.wins[c.depth];
+            if (!w) continue;
+            const t = c.tris;
+            for (let i = 0; i + 11 < t.length; i += 12) {
+              if (t[i + 3] === 0 || t[i + 7] === 0 || t[i + 11] === 0) continue;
+              const x = Math.floor((w.gx + (t[i] + t[i + 4] + t[i + 8]) / 3) / 16);
+              const y = Math.floor((w.gy + (t[i + 1] + t[i + 5] + t[i + 9]) / 3) / 16);
+              const key = `L${c.depth} ${x},${y}`;
+              out[key] = (out[key] ?? 0) + 1;
+            }
+          }
+          return out;
         } finally {
           this.frozen = was;
         }

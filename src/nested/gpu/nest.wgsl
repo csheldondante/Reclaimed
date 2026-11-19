@@ -3648,7 +3648,13 @@ fn sheetBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
   let cx = o.x + i32(wid.x);
   let cy = o.y + i32(wid.y);
   if (!inWin(L, cx * 16, cy * 16)) { return; }
-  if (u.e.z != 0 && i32(wid.y) != u.e.z - 1) { return; }
+  // (round 17) a band is u.e.y region rows (0: one)
+  if (u.e.z != 0 && i32(wid.y) / max(u.e.y, 1) != u.e.z - 1) { return; }
+  // (round 17, the region rule) mode u.e.x: 0 an edit's own region (skip when the chunk's own columns hash the same: a
+  // change of the other level's columns comes as a mode 2 bake), 1 forced (window ops), 2 another level's change: the
+  // chunks with a rim line only, forced
+  let mode = u.e.x;
+  if (mode == 2 && !chunkRim(L, cx, cy)) { return; }
   if (li == 0u) {
     // (page 0 made if missing; the spill and sheet pages are sized below, after the skip)
     if (pageOf(CACHE_ID + L, cx, cy, 0u) >= NOT_LOADED) { ensurePages(CACHE_ID + L, cx, cy, 1u, u.d.x); }
@@ -3685,11 +3691,16 @@ fn sheetBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
   let hA = wgScan(li, ha).y | 1u;
   let hB = wgScan(li, hb).y;
   if (li == 0u) {
-    let same = !chunkRim(L, cx, cy) && pgLoad(base) == hA && pgLoad(base + 1u) == hB;
+    let same = mode == 0 && pgLoad(base) == hA && pgLoad(base + 1u) == hB;
     pgStore(base, hA);
     pgStore(base + 1u, hB);
     pgStore(base + 2u, select(0u, 1u, same));
     wflag = select(0u, 1u, same);
+  }
+  // (round 17, measurement: ctl 12 the chunks that reached the hash, 13 those baked; storage atomics, one a workgroup)
+  if (li == 0u) {
+    atomicAdd(&ctl[12], 1u);
+    if (wflag == 0u) { atomicAdd(&ctl[13], 1u); }
   }
   if (workgroupUniformLoad(&wflag) == 1u) { return; }
   // sizes: the cluster table (each line's place bounded by its owners' records: a scan), the sheets (the deepest column's
@@ -4027,6 +4038,10 @@ fn dilate() {
   // (round 16, NS-126: the sheet draw's level edges) u.e.z 1: the source slots are level L - 1's (a parent change seen by
   // the child's window-edge lines), 2: level L + 1's (a child change seen by the parent's rim lines): their union is
   // taken in the source level's chunks, grown by one, then carried into level L's chunks and clipped to its window
+  // (round 17: the region rule of NESTED_SCALES.md "As built (round 17)", GpuNest.bakeChanged) the source's changed
+  // COLUMNS (each slot's box within its chunks), grown by two, carried into level L's columns (x k, or / k rounded
+  // out), grown by two there, in chunks; the sheet pass then bakes only the rim chunks of it (mode 2). Round 16 carried
+  // the slots' chunk rects grown by a chunk (x k: four child chunks each way) and leaned on rim chunks always baking.
   if (u.e.z != 0) {
     let SL = select(L + 1u, L - 1u, u.e.z == 1);
     let ws = u.lv[SL];
@@ -4039,12 +4054,17 @@ fn dilate() {
       let nx = i32(args[s * 4u]);
       let ny = i32(args[s * 4u + 1u]);
       if (nx <= 0 || ny <= 0 || ws.z == 0 || wt.z == 0) { continue; }
-      let ox = slotW(s, 4u);
-      let oy = slotW(s, 5u);
-      a = vec4<i32>(min(a.x, ox - 1), min(a.y, oy - 1), max(a.z, ox + nx + 1), max(a.w, oy + ny + 1));
+      let ox = slotW(s, 4u) * 16;
+      let oy = slotW(s, 5u) * 16;
+      let bx = vec4<i32>(max(slotW(s, 0u), ox), max(slotW(s, 1u), oy), min(slotW(s, 2u), ox + nx * 16), min(slotW(s, 3u), oy + ny * 16));
+      if (bx.z <= bx.x || bx.w <= bx.y) { continue; }
+      a = vec4<i32>(min(a.x, bx.x), min(a.y, bx.y), max(a.z, bx.z), max(a.w, bx.w));
     }
-    var b = a;
-    if (u.e.z == 1) { b = vec4<i32>(a.x * k, a.y * k, a.z * k, a.w * k); } else { b = vec4<i32>(fdiv(a.x, k), fdiv(a.y, k), fdiv(a.z + k - 1, k), fdiv(a.w + k - 1, k)); }
+    a += vec4<i32>(-2, -2, 2, 2);
+    var c = a;
+    if (u.e.z == 1) { c = a * k; } else { c = vec4<i32>(fdiv(a.x, k), fdiv(a.y, k), fdiv(a.z + k - 1, k), fdiv(a.w + k - 1, k)); }
+    c += vec4<i32>(-2, -2, 2, 2);
+    var b = vec4<i32>(fdiv(c.x, 16), fdiv(c.y, 16), fdiv(c.z + 15, 16), fdiv(c.w + 15, 16));
     b = vec4<i32>(max(b.x, wt.x / 16), max(b.y, wt.y / 16), min(b.z, (wt.x + wt.z) / 16), min(b.w, (wt.y + wt.z) / 16));
     if (a.z <= a.x || b.z <= b.x || b.w <= b.y) {
       setSlot(t, vec4<i32>(0), 0, 0, 0, 0);

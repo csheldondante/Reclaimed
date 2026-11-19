@@ -109,7 +109,7 @@ type View = { yaw: number; pitch: number; eye: [number, number, number] };
  *  size (frac of the nearest distance), followed down along the aim; at each depth the view down, level all round and
  *  back up and out; then a cave carved sideways from the pit's floor and the view back out of its mouth; then the same
  *  poses again after a cruise away and back, and after a zoom out (demotes) and back. Hole pixels below the horizon. */
-export async function pitAndCave(api: Api, opt: { frac?: number; taps?: number; d0?: number; tx?: number; ty?: number; images?: boolean; log?: (s: string) => void; shaftsOnly?: boolean; diag?: boolean; after?: boolean } = {}): Promise<{ total: number; lines: string[]; poses: number; worstViews: { name: string; n: number; view: View; img?: unknown }[]; coverage: number }> {
+export async function pitAndCave(api: Api, opt: { frac?: number; taps?: number; d0?: number; tx?: number; ty?: number; images?: boolean; log?: (s: string) => void; shaftsOnly?: boolean; diag?: boolean; rebake?: boolean; after?: boolean } = {}): Promise<{ total: number; lines: string[]; poses: number; worstViews: { name: string; n: number; view: View; img?: unknown }[]; coverage: number }> {
   const a = api.app as unknown as Api['app'] & { brushFrac: number; queue: unknown[]; opLog: { what: string }[]; nest: { live: number; stats: Record<string, number> } };
   const lines: string[] = [];
   const say = (s: string) => {
@@ -141,6 +141,32 @@ export async function pitAndCave(api: Api, opt: { frac?: number; taps?: number; 
       if (opt.diag && h.n > 0 && h.n < 50) {
         const dg = await (api as unknown as { holeDiag(x: number, y: number, w: number, h: number): Promise<string[]> }).holeDiag(h.at[0][0], h.at[0][1], h.w, h.h);
         say(`${name}: diag at ${JSON.stringify(h.at[0])} eye ${JSON.stringify(api.eye())}\n  ${dg.join('\n  ')}`);
+      }
+      // (round 17, NS-127: the discriminator, test only) at the settled check of a pose with holes: the eye on each level
+      // (in its window? inside a solid record?), then every window baked again and the holes counted again: holes that go
+      // were a missed bake region, holes that stay are the geometry (the eye where the sheets say solid, or a gap)
+      if (opt.rebake && h.n > 0) {
+        const x = api as unknown as { probeCam(): Promise<unknown>; rebakeAll(): Promise<void>; holeDiag(x: number, y: number, w: number, h: number): Promise<string[]>; chunkTris(): Promise<Record<string, number>> };
+        // (the levels held still for the whole diagnosis: no op may run between the counts)
+        const app = api.app as unknown as { frozen: boolean };
+        const fz = app.frozen;
+        app.frozen = true;
+        const winsAt = JSON.stringify((api.state() as unknown as { wins: unknown }).wins);
+        const opsAt = (a.opLog as { what: string; depth?: number; win?: { gx: number; gy: number } | null }[]).slice(-8).map((o) => `${o.what} L${o.depth}${o.win ? ` (${o.win.gx},${o.win.gy})` : ''}`).join(', ');
+        const pc = await x.probeCam();
+        const dg = await x.holeDiag(h.at[0][0], h.at[0][1], h.w, h.h);
+        const t0 = await x.chunkTris();
+        // first 3 frames with nothing baked (a draw-side transient goes here), then the forced bake
+        await frames(api, 3);
+        const hStill = await groundHoles(api, view.pitch, ground?.(view.yaw));
+        await x.rebakeAll();
+        await frames(api, 3);
+        const h2 = await groundHoles(api, view.pitch, ground?.(view.yaw));
+        // the chunks the forced bake changed (drawn triangles before -> after): the missed region
+        const t1 = await x.chunkTris();
+        app.frozen = fz;
+        const diff = [...new Set([...Object.keys(t0), ...Object.keys(t1)])].filter((key) => (t0[key] ?? 0) !== (t1[key] ?? 0));
+        say(`${name} (${n} frames): ${h.n} hole pixels; held still 3 frames, nothing baked: ${hStill.n}${hStill.n ? '' : ' (gone: a draw-side transient, not a bake)'}; after a forced bake of every window: ${h2.n}${h2.n ? ' (stays: geometry)' : hStill.n ? ' (gone: a missed bake region)' : ''}; wins ${winsAt}; ops before ${opsAt}; chunks the forced bake changed (${diff.length}): ${diff.slice(0, 40).map((key) => `${key} ${t0[key] ?? 0}->${t1[key] ?? 0}`).join('; ')}; eye per level ${JSON.stringify(pc)}; first hole ${JSON.stringify(h.at.slice(0, 3))} of ${h.w}x${h.h}; triangles round it:\n  ${dg.slice(0, 12).join('\n  ')}`);
       }
     }
     poses++;

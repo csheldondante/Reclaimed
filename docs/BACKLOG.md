@@ -422,7 +422,9 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   (hillside 9.1 vs 3.7 ms, tunnel 18 vs 7 ms) for 5x fewer visible triangles. Next: the design's fallback, walls as a
   per-chunk list of edges whose wall bit is set and whose tops differ (one word an edge, written by the classify step),
   drawn as a second instanced draw of 6 triangles an edge; caps a 2-triangle template.
-- NS-119 (bug, round 15, found, NOT fixed; boxes AND smooth, older than round 14) In the dug world (the pit suite's
+- NS-119 (DONE round 17 step 1: the region rule's partner bakes, both draws; `nested-dug.mjs --modes 0 --box 1 --screen 0`:
+  0 rim faults over 4,864 rim lines at every check of the suite in the dug world, round 16 386 over 5,376)
+  (bug, round 15, found, NOT fixed; boxes AND smooth, older than round 14) In the dug world (the pit suite's
   shafts, one of them across level 1's west rim, then the watertight suite's scene and strokes), the rim-line check
   finds T-junctions on a few rim lines: "L0 edge 208..416.07 at line 480,952 holds L1's vertex 384 / 415.23 / 416.06"
   (child units; 384 is a child bottom, the others child tops) and "L0 edge 278.89..279.83 at line 328,976 holds L1's
@@ -460,7 +462,9 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   edge chunk's zipper sheets follow the parent column outside, which could in theory hold more surfaces than any child
   column of that chunk. Not seen. A per-level overflow would leave sheets undrawn: make the directory one shared list
   (entries carry their level) or count the parent's pages too.
-- NS-126 (hack, round 16) The sheet draw's level edges depend on both levels' columns: a child's window-edge lines read
+- NS-126 (DONE round 17 step 1: GpuNest.bakeChanged, one rule for every op, NESTED_SCALES.md "As built (round 17)";
+  the stroke across the rim 0 open edges in two full selftests)
+  (hack, round 16) The sheet draw's level edges depend on both levels' columns: a child's window-edge lines read
   the parent's columns outside the window, a parent's rim lines the child's. Slides now re-bake the child's edge ring
   (sheet draw only); an edit that changes a parent column next to the child's window but outside it does not re-bake
   the child's edge chunks (the regions are planned per level on the GPU). Fix at the root: the plan grows each level's
@@ -471,7 +475,16 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   walk (sBound runs twice a line plus sWalk; the bound could come from the walk's own count), the normals' merge walk.
   Then the r16 stills: fix the poses (scripts/nested-r16-stills.mjs puts the camera inside the 3 m tunnel; aim at the
   features at the level they were carved), make the phone set, and restore the Smooth toggle only after the full gate.
-- NS-127 (bug, round 16, found, NOT fixed; sheet draw only) In the dug world (the box pit section first, then the sheet
+- NS-127 (round 17 step 1: DIAGNOSED, the check still fails; see NESTED_SCALES.md "As built (round 17)") 168 / 128,032
+  hole pixels in two full selftests (round 16: 192,048), all at the 1-frame check after the teleport into the shaft
+  across the rim; no missed bake left there (a forced bake changes 0 chunks). Two causes: the camera lifting the eye over
+  a few frames (gone after 3 still frames, nothing baked), and GEOMETRY: level 0 alone round an eye at the bottom of a
+  4-5 root column wide, 36 deep shaft, whose edge lines hold top and floor in one cluster at their mean (about 13 above
+  the eye): the eye is under the sheet until the finer level is promoted. The accepted collapse; no skirt. To decide with
+  the owner: the check's 1-frame sample after a teleport into a narrow shaft (a test change) or the promote timing.
+  Also seen once before the diagnosis held the levels still: 403,094 pixels with L2 at the eye, gone after a forced bake
+  but with level ops in between: undecided, not seen in four later runs.
+  (bug, round 16, found, NOT fixed; sheet draw only) In the dug world (the box pit section first, then the sheet
   draw switched on and the pit, cave and shaft poses again: scripts/nested-sheetdug.mjs) the pit poses see hole pixels
   below the horizon: 192,048 over 162 poses in the full selftest, 471 in a sheetdug run (boxes in the same world 0; the
   same poses on a fresh sandbox 0). Closure and coverage are 0 at every check of that sequence, so it is not an open
@@ -479,10 +492,19 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   the data, the sheet closes over it: no skirt, nothing under the ground is drawn), or a transient between an op's bake
   and the check. Next: log the per-pose counts with the eye and the levels' surface under it (pitAndCave diag) and say
   which. The skirt is not restored.
-- NS-128 (bug, round 16, sheet draw) The union closure at "the map, 3 frames after the move" (the watertight suite)
+- NS-128 (DONE round 17 step 1, not seen in two full runs: a slide that would leave its child outside it demotes the
+  child in the same op; the cause was the orphaned child, one level op a frame)
+  (bug, round 16, sheet draw) The union closure at "the map, 3 frames after the move" (the watertight suite)
   twice found the deepest level's whole window edge open at one deep surface (1,024 edges, L3 line x = 29760, heights
   near -126 child units), 0 once settled. A transient between ops (likely a promote or slide whose partner bake comes
   in a later op); not found.
+- NS-130 (limit, round 17) The region rule's partner bakes go in one submit band (rim chunks only, at most a window's
+  ring); an edit's own bake bands take as many region rows as fit in a window row, from the CPU's brush bound (the
+  bands still cover every window row: the bound decides only how long a submit runs, never what is baked).
+- NS-131 (limit, round 17) A slide's leaving chunks are not passed to the region rule (a child is always inside its
+  parent with the margin, so nothing of it is near them); the rule's text counts them as changed columns.
+- NS-132 (hack, measurement only, round 17) ctl words 12 / 13 count the sheet pass's chunks seen and baked (one storage
+  atomic a workgroup); GpuNest.skip 'partner' / 'bands' for the carve split.
 - NS-124 (limit, round 16) The sheet form treats a column as continuing downward as its first record, so a column whose
   first record is air is a bottomless hole: its first (downward) surface is a ceiling whose edges stay open where it
   meets neighbours (open by design: nothing under the ground is drawn). Only the random unit scenes have such columns;
