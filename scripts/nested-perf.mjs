@@ -106,7 +106,8 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
       const w1 = a.nest.wins[1];
       // (round 17, NS-129: the split) the sheet pass left out, the partner bakes left out, round 16's one-row bands; per
       // mode the submits and dispatches of a carve (both runs of benchEdit) and the sheet-pass chunks seen / baked
-      const out = { box: [], smooth: [], 'smooth, no sheet pass': [], 'smooth, no partners': [], 'smooth, one row a band': [] };
+      // (round 18: the carve's breakdown, each part left out in turn: ball, restrict, derive, the sheet pass)
+      const out = { box: [], smooth: [], 'smooth, no sheet pass': [], 'smooth, no partners': [], 'smooth, one row a band': [], 'smooth, no ball': [], 'smooth, no restrict': [], 'smooth, no derive': [] };
       const modes = Object.keys(out);
       const cnt = {};
       const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -122,6 +123,7 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
         if (mode.includes('no sheet')) a.nest.skip.add('sheet');
         if (mode.includes('no partners')) a.nest.skip.add('partner');
         if (mode.includes('one row')) a.nest.skip.add('bands');
+        for (const p of ['ball', 'restrict', 'derive']) if (mode.includes(`no ${p}`)) a.nest.skip.add(p);
         const at = { level: 1, x: (h[0] - 1 + (i % 12) * 0.3) * 8 - w1.gx, y: (h[1] + 1.5 + Math.floor(i / 12) * 0.4) * 8 - w1.gy, z: (h[2] + 0.8 - zo) * 8 };
         const g0 = a.nest.stats.grows;
         await wait(100);
@@ -144,7 +146,7 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
       return out;
     }, h);
     const mn = (v) => Math.min(...v);
-    for (const k of ['box', 'smooth', 'smooth, no sheet pass', 'smooth, no partners', 'smooth, one row a band'])
+    for (const k of Object.keys(c).filter((x) => Array.isArray(c[x])))
       if (c[k].length) console.log(`carve at level 1, ${k}: with bakes ${c[k].map((r) => r.withBake.toFixed(1)).join(' ')} (median ${med(c[k].map((r) => r.withBake)).toFixed(1)}, min ${mn(c[k].map((r) => r.withBake)).toFixed(1)}); without ${c[k].map((r) => r.without.toFixed(1)).join(' ')}; bakes' share median ${med(c[k].map((r) => r.withBake - r.without)).toFixed(1)} ms; submits/dispatches/sheet chunks seen/baked ${(c.cnt[k] ?? []).join(' ')}`);
     console.log(`switching the smooth draw on (pipelines made): ${c.switchOn.toFixed(0)} ms`);
     return;

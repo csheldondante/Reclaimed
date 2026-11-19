@@ -152,7 +152,12 @@ fn packCol(T: u32, L: u32, X: i32, Y: i32, write: bool) -> u32 {
     var m = 0u;
     var air = false;
     if (i < n) {
-      let iv = ivlAt(T, X, Y, i);
+      // (round 18) the one place a pass's result becomes stored records: every bound snapped to the level's 1/8 grid
+      // (terrain, brushes, enhance, restrict, melt all write through here); an interval snapped to zero thickness is
+      // dropped like any empty one
+      var iv = ivlAt(T, X, Y, i);
+      iv.z1 = snapZ(iv.z1);
+      if (i > 0u) { iv.z0 = snapZ(iv.z0); }
       if (i > 0u && !(iv.z1 > iv.z0)) { continue; }
       if (have && i > 0u && iv.z0 > pTop) {
         // the air below this interval: the pending record is flushed, the air record follows it
@@ -844,9 +849,11 @@ fn rootGen(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) 
   setCount(T, X, Y, n, need);
   if (stripe) {
     // (alternating sand and clay: no two neighbours of one material, so no records merge)
+    // (round 18: layers one grid step thick, 1/8, from a snapped base: a 0.1 layer is under a step and snaps away)
+    let b = snapZ(s) - 5.0;
     for (var i = 0u; i < n; i++) {
-      let lo = s - 4.0 + f32(i) * 0.1;
-      setIvl(T, X, Y, i, select(lo, OPEN_BOTTOM, i == 0u), s - 4.0 + f32(i + 1u) * 0.1, select(MAT_SAND, MAT_CLAY, (i & 1u) == 1u));
+      let lo = b + f32(i) * 0.125;
+      setIvl(T, X, Y, i, select(lo, OPEN_BOTTOM, i == 0u), b + f32(i + 1u) * 0.125, select(MAT_SAND, MAT_CLAY, (i & 1u) == 1u));
     }
   } else {
     setIvl(T, X, Y, 0u, OPEN_BOTTOM, s - soil, MAT_STONE);
@@ -1047,13 +1054,19 @@ fn plan() {
   reg[8] = d;
   if (d < 0) { return; }
   let sc = pow(f32(k), f32(d));
-  let r = min(u.c.z * sc, MAX_R);
+  // (round 18, the owner: "brushes should snap to grid too") the centre on the edited level's column corners, the
+  // radius a whole number of its columns (at least one), the centre height on its 1/8 grid; round half up everywhere
+  // (oracle.ts snapBrush)
+  hx = floor(hx + 0.5);
+  hy = floor(hy + 0.5);
+  let r = max(1.0, floor(min(u.c.z * sc, MAX_R) + 0.5));
   reg[9] = bitcast<i32>(hx);
   reg[10] = bitcast<i32>(hy);
   reg[11] = bitcast<i32>(r);
   reg[12] = bitcast<i32>(u.c.w * sc);
   // the ball's centre height (carve, add): the pick's, or the forced hit's (u.d.y)
   if ((u.r.z & 1u) != 0u) { reg[13] = bitcast<i32>(u.d.y); }
+  reg[13] = bitcast<i32>(snapZ(bitcast<f32>(reg[13])));
   let w = u.lv[d];
   let cxg = f32(w.x) + hx;
   let cyg = f32(w.y) + hy;
@@ -1205,11 +1218,16 @@ fn ballSpan(X: i32, Y: i32, L: u32) -> vec3<f32> {
   var hi = -1e30;
   for (var i = 0u; i <= steps; i++) {
     let c = mix(c0, c1, select(1.0, f32(i) / f32(steps), steps > 0u));
-    let dd = length(q - c.xy);
-    if (dd >= r) { continue; }
-    let h = sqrt(r * r - dd * dd);
-    lo = min(lo, c.z - h);
-    hi = max(hi, c.z + h);
+    // (round 18) the half span from the column's offset alone, snapped (oracle.ts ballHalf): with the centre on a
+    // column corner, a whole radius and the centre height on the grid, a single ball's span ends lie on the grid and
+    // depend only on the offset (symmetric). A stroke's in-between centres are snapped the same way.
+    let o = q - vec2<f32>(floor(c.x + 0.5), floor(c.y + 0.5));
+    let d2 = dot(o, o);
+    if (d2 >= r * r) { continue; }
+    let h = snapZ(sqrt(r * r - d2));
+    let cz = snapZ(c.z);
+    lo = min(lo, cz - h);
+    hi = max(hi, cz + h);
   }
   if (hi < lo) { return vec3<f32>(0.0, 0.0, -1.0); }
   return vec3<f32>(lo, hi, 1.0);
@@ -2728,6 +2746,21 @@ fn sJoined() -> bool {
   return false;
 }
 fn sFix(z: f32) -> i32 { return i32(floor(z * SFIX)); }
+/** (round 18) a snapped height in 1/8 units: exact (every stored bound is on the 1/8 grid; a parent's through toKid
+ *  is on the child's for k = 2, 4, 8, 16) */
+fn sEighth(z: f32) -> i32 { return i32(floor(z * SNAP)); }
+/** integer floor division (WGSL's / truncates toward zero) */
+fn idivF(a: i32, b: i32) -> i32 {
+  let q = a / b;
+  return select(q, q - 1, (a % b) != 0 && ((a < 0) != (b < 0)));
+}
+/** (round 18) a cluster's height: the mean of its heights in 1/8 units, exact integer arithmetic, floored to 1/256
+ *  (boxmesh.ts fixMean): q = floor(s / n), then the remainder's 32nds; no overflow beyond s itself */
+fn sMean(s: i32, n: i32) -> f32 {
+  let q = idivF(s, n);
+  let rem = s - q * n;
+  return f32(q * 32 + (rem * 32) / n) / 256.0;
+}
 /** cluster i of the chunk's table: its first word */
 fn scl(i: u32) -> u32 {
   if (i < SCL0) { return sCp * PW + SCL + i * 4u; }
@@ -2757,20 +2790,20 @@ fn sWalk(L: u32, CX: i32, CY: i32, first: u32) -> u32 {
     var join = false;
     if (n > 0u && nx < NO_DEPTH) { join = sJoined(); }
     if (join) {
-      sum += sFix(nx);
+      sum += sEighth(nx);
       n++;
     } else {
       if (n > 0u) {
         let o = scl(first + cnt);
         pgStore(o, bitcast<u32>(a));
         pgStore(o + 1u, bitcast<u32>(b));
-        pgStore(o + 2u, bitcast<u32>(f32(sum) / f32(n * 256u)));
+        pgStore(o + 2u, bitcast<u32>(sMean(sum, i32(n))));
         pgStore(o + 3u, 0u);
         cnt++;
       }
       if (nx >= NO_DEPTH) { break; }
       a = nx;
-      sum = sFix(nx);
+      sum = sEighth(nx);
       n = 1u;
     }
     b = nx;
@@ -3029,7 +3062,8 @@ fn sheetBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
           sum += zp * k + (zq - zp) * i;
           m++;
         }
-        if (m > 0u) { pgStore(cb + 2u, bitcast<u32>(f32(sum) / f32(m * u32(k) * 256u))); }
+        // (round 18: integer floor division, boxmesh.ts the same; the clusters' heights are multiples of 1/256)
+        if (m > 0u) { pgStore(cb + 2u, bitcast<u32>(f32(idivF(sum, i32(m) * k)) / 256.0)); }
       }
     }
   }

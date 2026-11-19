@@ -292,7 +292,17 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   pinhole at a seam or the pit check's ground guess (NS-84). Not investigated; the other two runs 0.
   Round 11: not reproduced on its own; taken as NS-97's family (a single stable pixel at a pose with three levels) and
   covered by the same fix; the narrow check (scripts/nested-shaft.mjs) runs the pit poses too.
-- NS-92 (limit, round 10) Thin contacts part at finer levels. A carve can leave a skin whose only hold on its neighbours
+- NS-139 (test, round 18) The selftest's stroke check fails after the snap: drag A depth 2.88..3.75 for r 3 (one sample
+  0.15 over the 20 % band), drag B 2.75..3.38 inside it. Only this check fails (44 of 45 smooth on, 35 of 36 off). Likely
+  the centre's xy snapping to a corner while its height stays the pick's hit at the pointer (a hit on a box wall can sit
+  below the snapped column's top). Not loosened: decide whether the stroke's centre height should be read at the snapped
+  centre, or the check's band widened by a step.
+- NS-140 (look, round 18) With heights snapped, a level-1 bowl seen from level 2 shows its wall as stairs of whole
+  level-2 units (local/nested/r18-bowl-rim.png): each level-1 bound sits on a level-2 integer, and the enhanced wall
+  keeps the steps. The owner's grid, as asked; judge it in the page.
+- NS-92 (round 18: in carve scene (i), level 1 open, the pieces held by a hair went 64 -> 0 and the floating ones 194 ->
+  68 with the snap; root floating 2 -> 4)
+  (limit, round 10) Thin contacts part at finer levels. A carve can leave a skin whose only hold on its neighbours
   is a z-overlap thinner than the enhance's seeded detail moves a bound (DETAIL_AMP x (2 + 4) child units = 0.06 parent
   units each side); its children can then float as a whole block (scenario i: a 0.03-thick soil skin, 64 child records).
   The carve self-test reports these apart ("held by a hair") and does not judge them. Routes: no detail on a bound whose
@@ -512,7 +522,11 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
 - NS-134 (test, round 17) The stills' level-edge pose still misses the edge (r17-level-edge-grazing*: the eye 1-4 m
   from a slope that fills the frame); place it from the child's window edge and the ground on both sides, aim along it.
   The lip pose shows the added balls as a floating slab beside the raised block, not a lip on it.
-- NS-136 (perf, round 18; the owner's "sheets never load" on the phone) The sheet pass's pipeline (sheetBake) takes
+- NS-136 (round 18 C, NOT STARTED: handed to the next builder; target sheet pass + draw pipelines under 3 s in desktop
+  Chrome from a cold page, box boot no slower; find the cause first: data-dependent loops unrolled by FXC, function-scope
+  arrays (sheetBake's walk keeps var<private> arrays of 8), the inlined walk reaching every helper; whether the draw
+  pipeline's 22-25 s is queued behind the compute compile (alone it is 0.25 s); whether Chrome can cache them)
+  (perf, round 18; the owner's "sheets never load" on the phone) The sheet pass's pipeline (sheetBake) takes
   27-30 s to create at boot in desktop Chrome (D3D11), every page load (not cached across loads, unlike the box
   pipelines); 5.7 s when made alone on an idle page; 2.3 s on Dawn D3D12 in Node. The sheet draw's pipeline alone
   0.25 s. A phone is likely slower still. Now asynchronous with the boxes drawn and the wait shown on the page; the fix

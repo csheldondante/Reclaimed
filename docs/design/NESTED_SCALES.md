@@ -1063,6 +1063,27 @@ the solid below the next air gap down." "Why make those [skirts, outer ring] if 
   failure: with only a coarse level open, a narrow deep shaft is pinched shut by the owner's accepted collapse rule, and
   a teleported eye sits under that sheet until the finer level opens. If the owner wants the 1-frame view hole-free,
   the answer is in the promote timing, not in the sheets.
+- *Snap to the grid (the owner: "Just snap them to the grid ... .25 or .125 for height maybe but brushes should snap to
+  grid too").* Rounding everywhere: round half up, floor(x * 8 + 0.5) / 8 (store.wgsl / oracle.ts snapZ).
+  - *Heights.* Every stored bound at every level is a multiple of 1/8 of that level's column unit; with k = 8 one parent
+    step is one whole child unit. One place does it: pack (nest.wgsl packCol; oracle.ts toPart), the store's only entry
+    for every writer (terrain, raise, dig, melt, carve, add, enhance with its residual, restrict, whole-column residuals).
+    resClear writes no bounds (it decides with the same snapped ball). A record that snaps to zero thickness is dropped
+    like any empty one.
+  - *Brushes.* The centre snaps to the edited level's column CORNERS (so column centres sit at half offsets and a ball is
+    symmetric about its centre), the radius to a whole number of that level's columns (at least 1), the centre height to
+    1/8 (nest.wgsl plan; oracle.ts snapBrush). A carve or add on a column is the span cz -/+ h with h =
+    snapZ(sqrt(r^2 - dx^2 - dy^2)) from the column's offset alone (ballHalf); no other sphere test. sqrt of a multiple of
+    1/4 never lands on a rounding midpoint, so f32 and f64 snap alike. A stroke's in-between centres snap the same way.
+    Raise, dig and melt use the snapped centre and radius; their results snap in pack.
+  - *The sheet mean.* A cluster's height = the mean of its heights in 1/8 units as exact integers: q = floor(s / n), then
+    the remainder's 32nds (floor), so the height is floored to 1/256 (nest.wgsl sMean, boxmesh.ts fixMean). The level
+    edge's interpolation sums (zP k + (zQ - zP) i) in 1/256 units and floor-divides by m k (integer, both levels and the
+    reference the same expression). Limit: heights under 65,536 units and sums in i32.
+  - *Exactness.* Demote then promote is still bit-identical (unit tests and selftest). GPU = oracle now EXACTLY (max
+    difference 0 in every comparison; it was ~1e-5 from f32 against f64). Inexact where it was exact: restrict's
+    conservation (each parent bound is the block's mean snapped: within half a parent step, a thickness or gap within one
+    step plus one child step) and melt's mass (conserved in reals, then snapped: at most 1/16 a changed column).
 
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 

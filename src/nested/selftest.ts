@@ -35,13 +35,30 @@ function identical(a: Cols, b: Cols): { same: boolean; diff: number } {
 /** max |gpu - oracle| over every interval bound (the open bottom left out); -1 on a structure difference */
 function against(g: Cols, o: Level): number {
   let worst = 0;
+  // (round 18, information) bounds over the tolerance and structure differences, logged: with every bound snapped, an
+  // f32 / f64 difference near a rounding midpoint shows as a whole grid step
+  let over = 0;
+  let structs = 0;
+  const ex: string[] = [];
   for (const [key, c] of g) {
     const [x, y] = key.split(',').map(Number);
     const r = o.at(x, y)!;
-    if (c.mat.length !== r.mat.length || c.mat.some((v, i) => v !== r.mat[i])) return -1;
-    for (let i = 0; i < c.mat.length; i++) worst = Math.max(worst, Math.abs(c.z1[i] - r.z1[i]), i ? Math.abs(c.z0[i] - r.z0[i]) : 0);
+    if (c.mat.length !== r.mat.length || c.mat.some((v, i) => v !== r.mat[i])) {
+      structs++;
+      if (ex.length < 4) ex.push(`${key} structure gpu ${c.mat.join('/')} oracle ${r.mat.join('/')}`);
+      continue;
+    }
+    for (let i = 0; i < c.mat.length; i++) {
+      const d = Math.max(Math.abs(c.z1[i] - r.z1[i]), i ? Math.abs(c.z0[i] - r.z0[i]) : 0);
+      worst = Math.max(worst, d);
+      if (d >= TOL) {
+        over++;
+        if (ex.length < 4) ex.push(`${key}#${i} gpu ${c.z0[i]}..${c.z1[i]} oracle ${r.z0[i]}..${r.z1[i]}`);
+      }
+    }
   }
-  return worst;
+  if (over || structs) console.warn(`[selftest] against depth ${o.f.depth}: ${over} bounds over ${TOL}, ${structs} structure differences of ${g.size} columns; ${ex.join('; ')}`);
+  return structs ? -1 : worst;
 }
 const frame = (L: number, w: Win, s: Snapshot): Frame => ({ depth: L, gx: w.gx, gy: w.gy, n: w.n, z0: s.zOrigin(L) });
 
@@ -148,7 +165,10 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
       worst = Math.max(worst, Math.abs(S / K ** 3 - (p.S - z0)), Math.abs(air / K ** 3 - p.air));
       for (const m of new Set([...sum.keys(), ...p.v.keys()])) worst = Math.max(worst, Math.abs((sum.get(m) ?? 0) / K ** 3 - (p.v.get(m) ?? 0)));
     }
-  check('(b) restrict conserves the surface, each material and the enclosed air per block', worst < 1e-4, `worst block ${worst.toExponential(2)} parent units (tolerance 1e-4)`);
+  // (round 18, the snap: exact before; now a parent bound is the block's mean snapped to 1/8 parent unit, and each child
+  // bound to 1/8 child unit: a thickness or gap within one parent step plus one child step)
+  const tolB = 1 / 8 + 1 / (8 * K) + 1e-4;
+  check('(b) restrict conserves the surface, each material and the enclosed air per block, within the grid', worst <= tolB, `worst block ${worst.toExponential(2)} parent units (tolerance ${tolB.toFixed(4)}: one parent step + one child step)`);
   g.demote(1);
   g.promote(1, F1);
   s = await g.readAll();
@@ -171,7 +191,10 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
   s = await g.readAll();
   const after = vol(levelCols(s, 1, { ...box, gx: F1.gx, gy: F1.gy }));
   const meltShape = identical(levelCols(s, 1, F1), c1e).diff;
-  check('melt moves material and conserves it (surface sum and soil volume of the level)', meltShape > 0 && Math.abs(after[0] - before[0]) < 0.05 && Math.abs(after[1] - before[1]) < 0.05, `${meltShape} columns changed; surface sum ${before[0].toFixed(3)} -> ${after[0].toFixed(3)}, soil ${before[1].toFixed(3)} -> ${after[1].toFixed(3)} (f32 sums of 4096 columns)`);
+  // (round 18, the snap: melt conserves in reals, then every bound is snapped: at most half a step a changed column for
+  // the surface sum, a step for a thickness)
+  const tolM = 0.05 + meltShape / 16;
+  check('melt moves material and conserves it within the grid (surface sum and soil volume of the level)', meltShape > 0 && Math.abs(after[0] - before[0]) < tolM && Math.abs(after[1] - before[1]) < 2 * tolM, `${meltShape} columns changed; surface sum ${before[0].toFixed(3)} -> ${after[0].toFixed(3)}, soil ${before[1].toFixed(3)} -> ${after[1].toFixed(3)} (tolerance ${tolM.toFixed(2)}, ${(2 * tolM).toFixed(2)})`);
   const c1m = levelCols(s, 1, F1);
   // the oracle follows the melt by taking the GPU's level as its own (melt has no oracle: NS-10)
   for (const [key, c] of c1m) {
@@ -341,7 +364,8 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
       };
     }
     h.root(64);
-    const R = 2.5;
+    // (round 18: a whole number of columns; a brush's radius snaps to whole columns, 2.5 became 3)
+    const R = 3;
     const res: string[] = [];
     let ok = true;
     for (const [name, tx, ty] of [
@@ -388,7 +412,7 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
       const hi = Math.max(...depths);
       const pass = lo > 0.8 * R && hi < 1.2 * R && dCross < 1.2 * R;
       if (!control) ok &&= pass;
-      res.push(`${name} (slope ${slope.toFixed(2)}): depth along the drag ${lo.toFixed(2)}..${hi.toFixed(2)} for r ${R}; at the crossing ${dCross.toFixed(2)}; snapshot pages after the stroke ${post.pagesOf(32)}`);
+      res.push(`${name} (slope ${slope.toFixed(2)}): depth along the drag ${lo.toFixed(2)}..${hi.toFixed(2)} for r ${R} (${depths.map((d) => d.toFixed(2)).join(' ')}); at the crossing ${dCross.toFixed(2)}; snapshot pages after the stroke ${post.pagesOf(32)}`);
       ok &&= post.pagesOf(32) === 0;
     }
     check('strokes: a drag carves one even layer on the surface as it was (depth within 20 % of the radius, flat and sloped), crossing its own path digs no deeper; the snapshot is let go', ok, res.join('; '));

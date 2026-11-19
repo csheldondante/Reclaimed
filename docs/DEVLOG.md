@@ -27428,3 +27428,28 @@ ops finished, 3 still frames); the 1-frame count is information.
 round). `?selftest=1&smooth=only` 11 of 11 (235 s). Full `?selftest=1` smooth on 45 of 45 (670 s; settled 0 hole pixels
 over 162 poses, 1 frame after each teleport 128,032 as information); smooth off (`smooth=0`) 36 of 36 (433 s).
 `nested-shaft --smooth 1`: passed, 0 settled over 36 poses (1-frame 408,884 information), coverage 0.
+
+## 2026-11-19 — Nested scales lab, round 18 deliverable B: snap to the grid
+
+**Why.** The owner: "Do the operations not snap to the grid? Just snap them to the grid." "... .125 for height maybe but
+brushes should snap to grid too make it cheaper and just subtract it add columns".
+
+**What** (NESTED_SCALES.md "As built (round 18)"): every stored bound on its level's 1/8 grid, round half up, in one
+place (pack / toPart: every writer goes through it); brushes on column corners, whole-column radii, 1/8 centre heights;
+a ball's span per column from its offset alone; the sheet mean as exact integers in 1/8 units, floored to 1/256; the
+level edge's interpolation an integer floor division on both levels and in the reference. The selftest's 40-interval
+stripe column (0.1 thick layers, under a step) now uses 1/8 layers; the stroke check's radius 2.5 -> 3.
+
+**Measured.** GPU against the oracle: max difference 0 in every comparison (was ~1e-5, f32 against f64). Demote /
+promote bit-identical as before. Inexact where it was exact: restrict's conservation (worst block 0.115 parent units,
+within one parent + one child step, 0.141) and melt's mass (surface sum +0.25 over 11 changed columns). Hair-thin skins
+(NS-92, carve scene (i), level 1 open): held by a hair 64 -> 0, floating 194 -> 68. Carve at level 1, sheets
+(nested-perf `--sab 1`, one disturbed page, 5 samples each, medians): 12.1 ms with bakes (round 17: 11.9), without the
+sheet pass 7.1 (the pass ~5.0; round 17 6.8), no ball 12.5, no restrict 14.7, no derive 14.8 (the leave-one-out
+medians are inside the noise: ball, restrict and derive are each under ~1 ms of it); boxes 23.1.
+
+**End gate B.** Unit tests: nested 64 of 64 (snap 5, boxmesh, oracle with restrict's bounds as above). `smooth=only` 11 of
+11 (GPU sheets = reference, 0 hole pixels settled; 1-frame information 824,170). Full selftest smooth on 44 of 45,
+smooth off 35 of 36: the one failure each time is the stroke check (NS-139: depth 2.88..3.75 for r 3, one sample over the
+20 % band). Stills: r18-bowl-rim: the bowl's wall reads as stairs of whole level-2 units with smooth faces between
+(NS-140), no holes; r18-hillside: smooth even slopes, the small bowl clean and round with a brown soil rim.

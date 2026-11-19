@@ -598,6 +598,13 @@ export function asCapture(mesh: BoxMesh, scene: MeshScene, L: number): { depth: 
 // edge instead: per parent surface the interpolation of the clusters holding it on the edge's two rim lines (integer
 // i of k), averaged; positions never decide closure (identities do).
 export const SHEET_FIX = 256;
+/** (round 18) a cluster's height from the sum `s` of its n heights in 1/8 units (every stored bound is on the 1/8 grid):
+ *  exact integer arithmetic, floored to 1/256 (q = floor(s / n), then the remainder's 32nds); nest.wgsl sMean */
+export function fixMean(s: number, n: number): number {
+  const q = Math.floor(s / n);
+  const rem = s - q * n;
+  return (q * 32 + Math.floor((rem * 32) / n)) / 256;
+}
 
 export interface SheetCluster {
   /** breakpoints (line units) bottom up */
@@ -761,8 +768,8 @@ export function sheetMesh(scene: MeshScene): SheetMesh {
     }
     for (const c of clusters) {
       let sum = 0;
-      for (const z of c.bps) sum += fixOf(z);
-      c.z = Math.fround(Math.fround(sum) / Math.fround(c.bps.length * SHEET_FIX));
+      for (const z of c.bps) sum += Math.floor(z * 8);
+      c.z = fixMean(sum, c.bps.length);
     }
     const wx = cx / Math.pow(k, L);
     const wy = cy / Math.pow(k, L);
@@ -803,7 +810,7 @@ export function sheetMesh(scene: MeshScene): SheetMesh {
           const zq = fixOf(Q.clusters[clusterIndex(Q, z)].z);
           sum += zp * k + (zq - zp) * i;
         }
-        c.z = Math.fround(Math.fround(sum) / Math.fround(ps.length * k * SHEET_FIX));
+        c.z = Math.floor(sum / (ps.length * k)) / SHEET_FIX;
         c.interp = true;
       });
     }

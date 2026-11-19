@@ -96,12 +96,15 @@ await run({ name: 'r17-stills', kind: 'behaviour', size: '960x640', dpr: 1, echo
     'lip-side': look([P.lip[0] - 3, P.lip[1] - 1.1, feat.tl - 0.4], [P.lip[0], P.lip[1] - 1.1, feat.tl - 0.3]),
   };
   fs.mkdirSync('local/nested', { recursive: true });
+  // (round 18: --only a,b picks poses, --prefix names the files, e.g. --only bowl-rim,hillside --prefix r18)
+  const only = R.opt('only', '').split(',').filter(Boolean);
   for (const [name, v] of Object.entries(poses)) {
+    if (only.length && !only.includes(name)) continue;
     await page.evaluate((t) => nested.tint(t), !!v.tint);
     await page.evaluate((v) => nested.setView(v), { yaw: v.yaw, pitch: v.pitch, eye: v.eye });
     await sleep(3000);
     const got = await page.evaluate(() => nested.eye());
-    const file = `local/nested/r17-${name}${box ? '-box' : ''}${tag}.png`;
+    const file = `local/nested/${R.opt('prefix', 'r17')}-${name}${box ? '-box' : ''}${tag}.png`;
     await page.screenshot({ path: file });
     const lift = Math.hypot(got.x - v.eye[0], got.y - v.eye[1], got.z - v.eye[2]);
     console.log(`${file}: eye asked ${v.eye.map((x) => x.toFixed(2)).join(', ')} got ${[got.x, got.y, got.z].map((x) => x.toFixed(2)).join(', ')} (moved ${lift.toFixed(3)}), level ${got.level}, dHit ${got.dHit?.toFixed(2)}`);

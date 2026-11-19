@@ -191,10 +191,13 @@ export function toPart(c: Col): Part {
     }
   };
   for (let i = 0; i < c.mat.length; i++) {
-    if (i > 0 && !(c.z1[i] > c.z0[i])) continue;
+    // (round 18) every bound snapped to the level's grid here, the store's one entry (gpu: nest.wgsl packCol)
+    const z1 = snapZ(c.z1[i]);
+    const z0 = i > 0 ? snapZ(c.z0[i]) : c.z0[i];
+    if (i > 0 && !(z1 > z0)) continue;
     const n = out.mat.length;
-    if (n && i > 0 && c.z0[i] > out.top[n - 1]) push(c.z0[i], AIR);
-    push(c.z1[i], c.mat[i]);
+    if (n && i > 0 && z0 > out.top[n - 1]) push(z0, AIR);
+    push(z1, c.mat[i]);
   }
   return out;
 }
@@ -496,7 +499,9 @@ export class Nest {
   /** an edit at a depth: a brush over global columns of that depth, then restrict up every ancestor, residuals and
    *  derive down */
   /** cz: the ball's centre height (local units of that depth; carve and add) */
-  edit(depth: number, op: EditOp, cx: number, cy: number, r: number, amount: number, cz = 0): void {
+  edit(depth: number, op: EditOp, cx0: number, cy0: number, r0: number, amount: number, cz0 = 0): void {
+    // (round 18) the brush on the level's grid, as the GPU's plan snaps it
+    const { cx, cy, r, cz } = snapBrush(cx0, cy0, r0, cz0);
     const lv = this.levels[depth];
     const box = clip({ x0: Math.floor(cx - r), y0: Math.floor(cy - r), x1: Math.ceil(cx + r) + 1, y1: Math.ceil(cy + r) + 1 }, lv.f);
     if (!box) return;
@@ -506,7 +511,7 @@ export class Nest {
         const d = dd / r;
         if (d >= 1) continue;
         if (op === 'carve' || op === 'add') {
-          const h = Math.sqrt(r * r - dd * dd);
+          const h = ballHalf(x + 0.5 - cx, y + 0.5 - cy, r);
           lv.set(x, y, applyBall(lv.at(x, y)!, op, cz - h, cz + h));
           continue;
         }
@@ -684,4 +689,27 @@ export function applyOp(c: Col, op: EditOp, a: number): Col {
     }
   }
   return { mat: c.mat.slice(), z0, z1 };
+}
+
+// ---- (round 18) the owner's snap to the grid ("just snap them to the grid"; ".25 or .125 for height maybe but brushes
+// should snap to grid too") ------------------------------------------------------------------------------------------
+/** a level's height grid: 1/SNAP of its column unit (with k = 8 one parent step is one child unit) */
+export const SNAP = 8;
+/** a bound on the grid: round half up (gpu: store.wgsl snapZ); OPEN_BOTTOM kept */
+export function snapZ(z: number): number {
+  if (z <= OPEN_BOTTOM) return z;
+  return Math.floor(z * SNAP + 0.5) / SNAP;
+}
+/** a brush on the edited level's grid: the centre on a column corner, the radius a whole number of columns (at least
+ *  one, at most 76: nest.wgsl MAX_R), the centre height on the 1/8 grid; round half up (gpu: nest.wgsl plan) */
+export function snapBrush(cx: number, cy: number, r: number, cz: number): { cx: number; cy: number; r: number; cz: number } {
+  return { cx: Math.floor(cx + 0.5), cy: Math.floor(cy + 0.5), r: Math.max(1, Math.floor(Math.min(r, 76) + 0.5)), cz: snapZ(cz) };
+}
+/** a snapped ball's half span on a column at offset (dx, dy) from its centre (the column's centre minus the brush's
+ *  corner: half-integers), or -1 outside it. On the grid, and a function of the offset alone (gpu: nest.wgsl ballSpan).
+ *  sqrt of a multiple of 1/4 never lies on a rounding midpoint (j + 1/2) / 8, so f32 and f64 snap it alike. */
+export function ballHalf(dx: number, dy: number, r: number): number {
+  const d2 = dx * dx + dy * dy;
+  if (d2 >= r * r) return -1;
+  return snapZ(Math.sqrt(r * r - d2));
 }
