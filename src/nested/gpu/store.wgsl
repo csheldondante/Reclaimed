@@ -25,13 +25,6 @@ const NOT_LOADED: u32 = 0xfffffffeu;
 const TOMB: u32 = 0xfffffffdu;
 const BUSY: u32 = 0xfffffffcu;
 const OPEN_BOTTOM: f32 = -1e30;
-/** (round 18, the owner's snap to the grid) every stored bound is a multiple of 1/SNAP of its level's column unit; with
- *  k = 8 one parent step is exactly one child unit. Round half up (oracle.ts snapZ); OPEN_BOTTOM kept as it is. */
-const SNAP: f32 = 8.0;
-fn snapZ(z: f32) -> f32 {
-  if (z <= OPEN_BOTTOM) { return z; }
-  return floor(z * SNAP + 0.5) / SNAP;
-}
 const RES_ID: u32 = 8u;
 const FACE_ID: u32 = 16u;
 const SNAP_ID: u32 = 32u;

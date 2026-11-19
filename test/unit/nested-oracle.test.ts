@@ -73,10 +73,7 @@ describe('nested scales oracle', () => {
         // child units: area 1, heights k times the parent's
         worst = Math.max(worst, Math.abs(sum[0] - K * K * K * (pl.v[0] - f.z0)), ...pl.v.slice(1).map((v, i) => Math.abs(sum[i + 1] - K * K * K * v)));
       }
-    // (round 18, the snap) exact before; now within the grid: the parent's bound is the children's mean snapped to 1/8
-    // parent unit (at most 1/16 off: K^3 / 16 in these child-volume units) and each child's bound is snapped to 1/8
-    // child unit (at most K^2 / 16 over the block)
-    expect(worst).toBeLessThanOrEqual(K ** 3 / 16 + K ** 2 / 16);
+    expect(worst).toBeLessThan(1e-6);
   });
 
   it('(c) a three-level chain: an edit at depth 2, both demoted, both promoted again, identical', () => {
@@ -197,11 +194,9 @@ describe('nested scales oracle', () => {
     const z0 = n.levels[2].f.z0;
     expect(new Set(kids.map((c) => c.mat.length)).size).toBeGreaterThan(1);
     const kidS = kids.reduce((s, c) => s + c.z1[c.z1.length - 1], 0) / K ** 3 + z0;
-    // (round 18, the snap: exact before; now the parent's surface within half a parent step, a thickness or a gap
-    // within one step, both its ends snapped)
-    expect(Math.abs(kidS - parentCol.z1[parentCol.z1.length - 1])).toBeLessThanOrEqual(1 / 16);
-    expect(Math.abs(kids.reduce((s, c) => s + soilOf(c), 0) / K ** 3 - soilOf(parentCol))).toBeLessThanOrEqual(1 / 8);
-    expect(Math.abs(kids.reduce((s, c) => s + airOf(c), 0) / K ** 3 - airOf(parentCol))).toBeLessThanOrEqual(1 / 8);
+    expect(Math.abs(kidS - parentCol.z1[parentCol.z1.length - 1])).toBeLessThan(1e-9);
+    expect(Math.abs(kids.reduce((s, c) => s + soilOf(c), 0) / K ** 3 - soilOf(parentCol))).toBeLessThan(1e-9);
+    expect(Math.abs(kids.reduce((s, c) => s + airOf(c), 0) / K ** 3 - airOf(parentCol))).toBeLessThan(1e-9);
     // demote both, promote both, 20 times: identical
     const s1 = snap(n.levels[1]);
     const s2 = snap(n.levels[2]);
@@ -300,9 +295,8 @@ describe('nested scales oracle', () => {
     const z1: number[] = [];
     for (let i = 0; i < 40; i++) {
       mat.push(i % 2 ? MAT.clay : MAT.sand);
-      // (round 18: layers one grid step thick, 1/8; the round 9 test's 0.1 is under a step and snaps away)
-      z0.push(i ? s - 5 + i * 0.125 : OPEN_BOTTOM);
-      z1.push(s - 5 + (i + 1) * 0.125);
+      z0.push(i ? s - 4 + i * 0.1 : OPEN_BOTTOM);
+      z1.push(s - 4 + (i + 1) * 0.1);
     }
     n.setColumn(0, px, py, { mat, z0, z1 });
     const f = withZ0(n, F1);

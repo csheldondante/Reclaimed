@@ -292,16 +292,20 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   pinhole at a seam or the pit check's ground guess (NS-84). Not investigated; the other two runs 0.
   Round 11: not reproduced on its own; taken as NS-97's family (a single stable pixel at a pose with three levels) and
   covered by the same fix; the narrow check (scripts/nested-shaft.mjs) runs the pit poses too.
-- NS-139 (test, round 18) The selftest's stroke check fails after the snap: drag A depth 2.88..3.75 for r 3 (one sample
+- NS-139 `dropped` (round 19: the snap reverted, radius back to 2.5; the end gate confirms the check) (test, round 18)
+  The selftest's stroke check fails after the snap: drag A depth 2.88..3.75 for r 3 (one sample
   0.15 over the 20 % band), drag B 2.75..3.38 inside it. Only this check fails (44 of 45 smooth on, 35 of 36 off). Likely
   the centre's xy snapping to a corner while its height stays the pick's hit at the pointer (a hit on a box wall can sit
   below the snapped column's top). Not loosened: decide whether the stroke's centre height should be read at the snapped
   centre, or the check's band widened by a step.
-- NS-140 (look, round 18) With heights snapped, a level-1 bowl seen from level 2 shows its wall as stairs of whole
+- NS-140 `done` (round 19: the snap reverted by the owner's ruling, so no stairs) (look, round 18) With heights snapped,
+  a level-1 bowl seen from level 2 shows its wall as stairs of whole
   level-2 units (local/nested/r18-bowl-rim.png): each level-1 bound sits on a level-2 integer, and the enhanced wall
   keeps the steps. The owner's grid, as asked; judge it in the page.
-- NS-92 (round 18: in carve scene (i), level 1 open, the pieces held by a hair went 64 -> 0 and the floating ones 194 ->
-  68 with the snap; root floating 2 -> 4)
+- NS-92 (REOPENED round 19: the snap that closed the hair-held pieces is reverted, the owner: "Snapping doesn't seem
+  worth it then. I only suggested the vertical snap to simplify things."; back to round 17's numbers) (round 18: in
+  carve scene (i), level 1 open, the pieces held by a hair went 64 -> 0 and the floating ones 194 -> 68 with the snap;
+  root floating 2 -> 4)
   (limit, round 10) Thin contacts part at finer levels. A carve can leave a skin whose only hold on its neighbours
   is a z-overlap thinner than the enhance's seeded detail moves a bound (DETAIL_AMP x (2 + 4) child units = 0.06 parent
   units each side); its children can then float as a whole block (scenario i: a 0.03-thick soil skin, 64 child records).

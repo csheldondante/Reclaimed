@@ -1063,7 +1063,8 @@ the solid below the next air gap down." "Why make those [skirts, outer ring] if 
   failure: with only a coarse level open, a narrow deep shaft is pinched shut by the owner's accepted collapse rule, and
   a teleported eye sits under that sheet until the finer level opens. If the owner wants the 1-frame view hole-free,
   the answer is in the promote timing, not in the sheets.
-- *Snap to the grid (the owner: "Just snap them to the grid ... .25 or .125 for height maybe but brushes should snap to
+- *Snap to the grid (REVERTED in round 19 by the owner's ruling; see "As built (round 19)"; kept here as the record of
+  what was tried) (the owner: "Just snap them to the grid ... .25 or .125 for height maybe but brushes should snap to
   grid too").* Rounding everywhere: round half up, floor(x * 8 + 0.5) / 8 (store.wgsl / oracle.ts snapZ).
   - *Heights.* Every stored bound at every level is a multiple of 1/8 of that level's column unit; with k = 8 one parent
     step is one whole child unit. One place does it: pack (nest.wgsl packCol; oracle.ts toPart), the store's only entry
@@ -1084,6 +1085,15 @@ the solid below the next air gap down." "Why make those [skirts, outer ring] if 
     difference 0 in every comparison; it was ~1e-5 from f32 against f64). Inexact where it was exact: restrict's
     conservation (each parent bound is the block's mean snapped: within half a parent step, a thickness or gap within one
     step plus one child step) and melt's mass (conserved in reals, then snapped: at most 1/16 a changed column).
+
+**As built (round 19; current state).**
+- *The snap is reverted* (the owner: "Snapping doesn't seem worth it then. I only suggested the vertical snap to
+  simplify things."). Heights, brush centres and radii are free f32 again; the sheet mean is round 16/17's fixed-order
+  form (sum of floor(z * 256), one division); GPU against the oracle back to round 17's tolerance; restrict and melt
+  exact as before. What the snap measured, so nobody retries it blind: hair-held pieces in carve scene (i) 64 -> 0,
+  floating 194 -> 68 (NS-92 reopens); the sheet pass inside a level-1 carve 6.8 -> 5.0 ms; bowl walls read as stairs of
+  whole child units (NS-140); restrict's conservation inexact (worst block 0.115 parent units); the stroke check failed
+  at r 3 (NS-139, dropped with it). Commit 79e6768a holds it.
 
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 

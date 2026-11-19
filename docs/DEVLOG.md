@@ -27453,3 +27453,16 @@ medians are inside the noise: ball, restrict and derive are each under ~1 ms of 
 smooth off 35 of 36: the one failure each time is the stroke check (NS-139: depth 2.88..3.75 for r 3, one sample over the
 20 % band). Stills: r18-bowl-rim: the bowl's wall reads as stairs of whole level-2 units with smooth faces between
 (NS-140), no holes; r18-hillside: smooth even slopes, the small bowl clean and round with a brown soil rim.
+
+## 2026-11-19 — Nested scales lab, round 19: the snap reverted (the owner's ruling)
+
+**Why.** The owner, on round 18 B: "Snapping doesn't seem worth it then. I only suggested the vertical snap to simplify
+things." It bought little speed (the sheet pass in a level-1 carve 6.8 -> 5.0 ms), made bowl walls read as stairs
+(NS-140), made restrict inexact (worst block 0.115 parent units) and broke the stroke check (NS-139). Its one real gain,
+hair-held pieces 64 -> 0 and floating 194 -> 68 in carve scene (i), goes with it: NS-92 reopens.
+
+**What.** `git revert` of 79e6768a for the code and tests (boxmesh.ts, nest.wgsl, store.wgsl, oracle.ts, selftest.ts,
+nested-oracle.test.ts; nested-snap.test.ts deleted). Kept, independent of the snap: the docs (the record of what was
+tried), nested-perf's leave-one-out modes, the r17 stills' `--only` / `--prefix`, and the stroke check's per-sample
+depths in its detail line. Heights, brush centres and radii free f32 again; the stroke radius back to 2.5. NS-139 is
+dropped (the end gate of round 19 confirms the stroke check).
