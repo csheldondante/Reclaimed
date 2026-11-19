@@ -748,6 +748,14 @@ wallTmpl / emitColS / faceBake (SMOOTH), draw.wgsl tCorner / vsT / vsS / fsS / c
   dirFinish the indirect arguments at (8 + L) x 16: 256 x 14 x 3 vertices an instance) and the exceptions (the face
   pages, the box draw's corner decode, z already placed). The fragment stage takes the face normal from the screen
   derivatives of the level-local position, turned toward the eye.
+- *Shading (step C, as built):* the cluster table covers the chunk's lines and the ring round them (19 x 19, CLOFF 361
+  words) so that the cache pass can place the four corners of every column round the chunk (-1..16) and take its top
+  quad's area normal (the diagonals' cross product; zero where a corner is a rim line). A slot's normal is the
+  normalised sum over the line's columns whose slot is the same placed vertex (octahedral, slot word 3); a border line's
+  normals are the same in both chunks. The template passes it per vertex; fsS uses the interpolated normal where it lies
+  within the crease angle of the face's (renderer.crease, default 50 degrees, `?crease=`), else the face's: a template
+  wall's vertices carry their caps' normals, so walls (and cliffs taller than T) stay flat and sharp. Exceptions are flat
+  (no normal; not attempted this round). The input hash covers 20 x 20 columns (the normals' reach).
 - *Proof on the GPU (tests only; `?selftest=1` smooth section, `?selftest=1&smooth=only`):* a small chain (root 64, level
   1 64 wide, level 2 32 wide; a carve across level 2's rim, a cave at level 2, an add at level 1): every drawn triangle
   (capture: template + exceptions) equals the reference's collapse mesh after dropCapPairs per level as a multiset of

@@ -132,6 +132,7 @@ export class App {
     this.limitsText = `${Math.round(Math.min(lim.maxBufferSize, lim.maxStorageBufferBindingSize) / 2 ** 20)} MB${q.has('maxbuf') ? `, clamped by ?maxbuf` : ''}`;
     this.render = new Renderer(device, ctx, this.nest);
     this.render.tint = q.get('tint') === '1';
+    if (q.has('crease')) this.render.crease = Number(q.get('crease'));
     if (q.has('detail')) this.nest.detailAmp = Number(q.get('detail'));
     this.shrinkOn = q.get('shrink') !== '0';
     if (q.has('yaw')) this.yaw = Number(q.get('yaw'));

@@ -188,6 +188,15 @@ struct TCorner {
   kind: u32,
   /** (capture) the corner line and slot this vertex reads */
   line: u32,
+  /** (step C) the slot's vertex normal (octahedral word) */
+  nrm: u32,
+}
+/** (step C) a vertex normal from its word (nest.wgsl octEnc) */
+fn octDec(w: u32) -> vec3<f32> {
+  let p = unpack2x16snorm(w);
+  var n = vec3<f32>(p, 1.0 - abs(p.x) - abs(p.y));
+  if (n.z < 0.0) { n = vec3<f32>((1.0 - abs(n.yx)) * select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xy >= vec2<f32>(0.0)), n.z); }
+  return normalize(n);
 }
 /** the cache words of corner line (lx, ly) of a cache page */
 fn tLine(page: u32, lx: u32, ly: u32) -> u32 { return page * PW + CHDR + (ly * 17u + lx) * CLW; }
@@ -206,7 +215,7 @@ fn tClamp(r: f32, q: u32, lo: f32, loS: u32, hi: f32, hiS: u32) -> vec2<f32> {
 /** vertex v of template triangle slot `tri` (column tri / 14, part tri % 14) of cache page `inst` of the level's list
  *  (boxmesh.ts templateTris, the same rule) */
 fn tCorner(inst: u32, tri: u32, v0: u32) -> TCorner {
-  var c = TCorner(false, vec3<f32>(0.0), 0u, 0u, 0u);
+  var c = TCorner(false, vec3<f32>(0.0), 0u, 0u, 0u, 0u);
   let L = u32(d.lvl.w);
   let e = 16u + ((8u + L) * d.misc2.x + inst) * 2u;
   let page = dir[e];
@@ -227,6 +236,7 @@ fn tCorner(inst: u32, tri: u32, v0: u32) -> TCorner {
     let qx = lx + (cc & 1u);
     let qy = ly + (cc >> 1u);
     c.lp = tPos(tLine(page, qx, qy), 3u - cc, ox + i32(qx), oy + i32(qy));
+    c.nrm = pgLoad(tLine(page, qx, qy) + 4u + (3u - cc) * 4u + 3u);
     c.ok = true;
     c.mat = (mw >> 8u) & 255u;
     c.kind = 4u;
@@ -304,10 +314,12 @@ fn tCorner(inst: u32, tri: u32, v0: u32) -> TCorner {
     s = u32(pl[idx].y);
     c.lp = tPos(bP, s, ox + i32(px), oy + i32(py));
     c.line = ((py * 17u + px) << 2u) | s;
+    c.nrm = pgLoad(bP + 4u + s * 4u + 3u);
   } else {
     s = u32(ql[idx].y);
     c.lp = tPos(bQ, s, ox + i32(lx + 1u), oy + i32(ly + 1u));
     c.line = (((ly + 1u) * 17u + lx + 1u) << 2u) | s;
+    c.nrm = pgLoad(bQ + 4u + s * 4u + 3u);
   }
   c.ok = true;
   c.mat = (mw >> (16u + 8u * dr)) & 255u;
@@ -324,6 +336,8 @@ struct VOutS {
   @location(3) dEye: f32,
   /** toward the eye, local units (which side of a face is out) */
   @location(4) toEye: vec3<f32>,
+  /** (step C) the interpolated vertex normal (the template's; zero for the exceptions: flat) */
+  @location(5) vn: vec3<f32>,
 }
 /** a vertex of the smooth draw from its level-local point (rim: a parent's vertex on a child's rim line, placed as the
  *  boxes place it) */
@@ -347,6 +361,7 @@ fn smoothOut(lp: vec3<f32>, kid: bool, mat: u32) -> VOutS {
   let eye = vec3<f32>(cam[eb + 16u], cam[eb + 17u], cam[eb + 18u]);
   o.dEye = length(pc.lp - eye) * sk;
   o.toEye = (eye - pc.lp) * sk;
+  o.vn = vec3<f32>(0.0);
   return o;
 }
 @vertex
@@ -367,7 +382,9 @@ fn vsT(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VO
     o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
     return o;
   }
-  return smoothOut(c.lp, false, c.mat);
+  var o = smoothOut(c.lp, false, c.mat);
+  o.vn = octDec(c.nrm);
+  return o;
 }
 @fragment
 fn fsS(v: VOutS) -> FOut {
@@ -378,6 +395,13 @@ fn fsS(v: VOutS) -> FOut {
   let cl = length(cr);
   var n = select(vec3<f32>(0.0, 0.0, 1.0), cr / cl, cl > 0.0);
   if (dot(n, v.toEye) < 0.0) { n = -n; }
+  // (step C) the template's interpolated vertex normal where it is within the crease angle of the face's (d.sun.w: its
+  // cosine; ?crease=); flat beyond it, so cliffs and kept walls stay sharp; the exceptions carry none (flat)
+  let vl = length(v.vn);
+  if (vl > 1e-3) {
+    let nv = v.vn / vl;
+    if (dot(nv, n) >= d.sun.w) { n = nv; }
+  }
   let pat = pattern(v.wp, n, px);
   let sun = normalize(d.sun.xyz);
   let lit = 0.35 + 0.65 * max(dot(n, sun), 0.0) + 0.12 * n.z;

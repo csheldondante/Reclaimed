@@ -30,6 +30,8 @@ export class Renderer {
   tint = false;
   /** (diagnostics) 0 off, 1 colour by triangle parity, 2 by face kind */
   diag = 0;
+  /** (round 14) the smooth draw's crease angle, degrees: shaded flat where vertex and face normals differ by more */
+  crease = 50;
 
   constructor(
     private device: GPUDevice,
@@ -155,7 +157,8 @@ export class Renderer {
       f.set([this.diag, 0, this.tint ? 1 : 0, this.nest.k], 0);
       // (want.w: 1 / k, exact on the CPU, for the rim vertices: round 11)
       f.set([lv.want, 0, 0, 1 / this.nest.k], 4);
-      f.set([0.45, -0.35, 0.82, 0], 8);
+      // (sun.w, round 14: the smooth draw's crease angle as its cosine)
+      f.set([0.45, -0.35, 0.82, Math.cos((this.crease * Math.PI) / 180)], 8);
       new Uint32Array(st, lv.depth * DU + 64, 4).set([this.nest.cap, tpages[lv.depth] ?? 0, 0, pages[lv.depth] ?? 0]);
       new Float32Array(st, lv.depth * DU + 80, 16).set(IDENTITY);
       // (round 11, NS-97) the live child's window: the parent's rim vertices are placed in its units

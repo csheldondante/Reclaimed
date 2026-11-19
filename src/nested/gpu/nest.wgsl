@@ -2632,11 +2632,12 @@ fn joinedAboveC(nc: u32, z: f32) -> bool {
 // placement after that (the slots, the exceptions, the fans) is a lookup in that table (a breakpoint in no stored
 // cluster stays where it is). One computation a line and chunk: a vertex the template and an exception share reads the
 // same stored bits. A chunk's border lines are walked by both chunks' cache passes, the same function on the same inputs.
-/** per corner line: its first interval | count << 20 */
+/** per corner line: its first interval | count << 20. The table covers the chunk's 17 x 17 lines and the ring round
+ *  them (19 x 19; step C: the normals of the border lines' slots need the neighbouring columns' corners) */
 const CLOFF: u32 = 6040u;
 /** intervals (bot, top, placed): from CIV in the chunk's cache page 0 (CIV0 of them), then whole pages cz 1, 2, ... */
-const CIV: u32 = 6329u;
-const CIV0: u32 = 2071u;
+const CIV: u32 = 6401u;
+const CIV0: u32 = 2047u;
 const CIVP: u32 = 4181u;
 /** the chunk's cache page 0 (cache pass and smooth exception bake; bChunk is the chunk) */
 var<private> sCp: u32;
@@ -2646,8 +2647,14 @@ fn civ(i: u32) -> u32 {
   let p = pageOf(CACHE_ID + u.a.w, bChunk.x, bChunk.y, 1u + j / CIVP);
   return p * PW + (j % CIVP) * 3u;
 }
-/** the chunk's index of corner line (CX, CY) (0..288) */
-fn lnIdx(CX: i32, CY: i32) -> u32 { return u32((CY - bChunk.y * 16) * 17 + (CX - bChunk.x * 16)); }
+/** the chunk's table index of corner line (CX, CY) (lines -1..17 of the chunk: 0..360) */
+fn lnIdx(CX: i32, CY: i32) -> u32 { return u32((CY - bChunk.y * 16 + 1) * 19 + (CX - bChunk.x * 16 + 1)); }
+/** (step C) a unit normal as one word (octahedral, 2 x 16-bit snorm) */
+fn octEnc(n: vec3<f32>) -> u32 {
+  var p = n.xy / (abs(n.x) + abs(n.y) + abs(n.z));
+  if (n.z < 0.0) { p = (1.0 - abs(p.yx)) * select(vec2<f32>(-1.0), vec2<f32>(1.0), p >= vec2<f32>(0.0)); }
+  return pack2x16snorm(p);
+}
 /** (boxmesh.ts mesh.cluster, from the table) the cluster of breakpoint z on the chunk's corner line (CX, CY): its lowest
  *  and highest breakpoint and its placed height; z itself when it is alone. On a parent's rim line the table is the
  *  child's line (z in the child's units). */
@@ -2788,7 +2795,8 @@ fn lineBound(L: u32, CX: i32, CY: i32) -> u32 {
   }
   return nb / 2u;
 }
-var<workgroup> wCB: array<f32, 1156>;
+/** (step C) the top normals of the columns round the chunk (-1..16, 18 x 18) */
+var<workgroup> wQN: array<vec3<f32>, 324>;
 var<workgroup> wCp: u32;
 /** (round 14) the cache pass over a slot's chunks (a workgroup a chunk): each corner line's four slots (raw height, placed
  *  position, cluster bottom), then (barrier) each column's mask word. Runs before the exception bake of the same chunks
@@ -2813,17 +2821,20 @@ fn cacheBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
   sCp = cp;
   let base = cp * PW;
   // (round 14) the chunk's inputs unchanged: no cache pass and no exception bake. Off a rim, everything the chunk's
-  // cache and exceptions are made of is its 18 x 18 columns as the bake reads them (drawn or not, every record, the
-  // bottoms): hashed (two independent 32-bit sums), compared with the hash kept in the cache page (words 0-1; word 2 tells
-  // the exception bake that follows). A fresh page's header is zero and the hash is never 0. Rim chunks always bake.
+  // cache and exceptions are made of is its 20 x 20 columns as the bake reads them (drawn or not, every record, the
+  // bottoms; the outer ring for the normals of step C): hashed (two independent 32-bit sums), compared with the hash kept
+  // in the cache page (words 0-1; word 2 tells the exception bake that follows). A fresh page's header is zero and the
+  // hash is never 0. Rim chunks always bake.
   var ha = 0u;
   var hb = 0u;
-  for (var q = li; q < 324u; q += 256u) {
-    let X = sOrg.x + i32(q % 18u);
-    let Y = sOrg.y + i32(q / 18u);
-    let n = sN[q];
-    var a = ((q + 1u) * 0x9e3779b1u) ^ (n * 0x85ebca6bu) ^ (bitcast<u32>(sB[q]) * 0xc2b2ae35u);
-    var b = ((q + 7u) * 0x27d4eb2du) ^ (n * 0x165667b1u) ^ (bitcast<u32>(sB[q]) * 0x7feb352du);
+  for (var q = li; q < 400u; q += 256u) {
+    let X = sOrg.x - 1 + i32(q % 20u);
+    let Y = sOrg.y - 1 + i32(q / 20u);
+    let n = bCount(L, X, Y);
+    var zb = 0.0;
+    if (n > 0u) { zb = bBot(L, X, Y); }
+    var a = ((q + 1u) * 0x9e3779b1u) ^ (n * 0x85ebca6bu) ^ (bitcast<u32>(zb) * 0xc2b2ae35u);
+    var b = ((q + 7u) * 0x27d4eb2du) ^ (n * 0x165667b1u) ^ (bitcast<u32>(zb) * 0x7feb352du);
     for (var j = 0u; j < n; j++) {
       let r = bRec(L, X, Y, j);
       a = (a ^ r.x ^ (r.y << 24u)) * 0x2c1b3c6du;
@@ -2848,7 +2859,7 @@ fn cacheBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
   // sized by that bound (a scan), the pages for them made, then each line walked once, writing (one call site of the
   // walk; the count kept is the walk's)
   var bound = 0u;
-  for (var q = li; q < 289u; q += 256u) { bound += lineBound(L, cx * 16 + i32(q % 17u), cy * 16 + i32(q / 17u)); }
+  for (var q = li; q < 361u; q += 256u) { bound += lineBound(L, cx * 16 - 1 + i32(q % 19u), cy * 16 - 1 + i32(q / 19u)); }
   let sc = wgScan(li, bound);
   if (li == 0u) {
     var need = 1u;
@@ -2858,14 +2869,36 @@ fn cacheBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
   storageBarrier();
   workgroupBarrier();
   var first = sc.x;
-  for (var q = li; q < 289u; q += 256u) {
-    let CX = cx * 16 + i32(q % 17u);
-    let CY = cy * 16 + i32(q / 17u);
+  for (var q = li; q < 361u; q += 256u) {
+    let CX = cx * 16 - 1 + i32(q % 19u);
+    let CY = cy * 16 - 1 + i32(q / 19u);
     let c = walkLine(L, CX, CY, true, first);
     pgStore(base + CLOFF + q, first | (c << 20u));
     first += lineBound(L, CX, CY);
   }
   storageBarrier();
+  workgroupBarrier();
+  // (step C) each column round the chunk (-1..16): its top's area normal from its four placed corners (the quad's
+  // diagonals' cross product; zero where it is not drawn or a corner is a rim line)
+  for (var q = li; q < 324u; q += 256u) {
+    let X = sOrg.x + i32(q % 18u);
+    let Y = sOrg.y + i32(q / 18u);
+    var nq = vec3<f32>(0.0);
+    let n = sN[q];
+    if (n > 0u) {
+      let t = bitcast<f32>(bRec(L, X, Y, n - 1u).x);
+      var z = vec4<f32>(0.0);
+      var rim = false;
+      for (var c = 0u; c < 4u; c++) {
+        let CX = X + i32(c & 1u);
+        let CY = Y + i32(c >> 1u);
+        if (rimP(L, CX, CY) || rimC(L, CX, CY)) { rim = true; }
+        z[c] = clusterAt(CX, CY, t).z;
+      }
+      if (!rim) { nq = vec3<f32>(z.z - z.y - z.w + z.x, z.x + z.y - z.z - z.w, 2.0); }
+    }
+    wQN[q] = nq;
+  }
   workgroupBarrier();
   for (var q = li; q < 289u; q += 256u) {
     let lx = i32(q % 17u);
@@ -2874,29 +2907,36 @@ fn cacheBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
     let CY = cy * 16 + ly;
     let lb = base + CHDR + q * CLW;
     let kid = rimP(L, CX, CY);
+    var zs = vec4<f32>(NONE_Z);
     for (var s = 0u; s < 4u; s++) {
       let X = CX - 1 + i32(s & 1u);
       let Y = CY - 1 + i32(s >> 1u);
       var raw = NONE_Z;
-      var z = NONE_Z;
-      var bot = NONE_Z;
       let n = bCount(L, X, Y);
       if (n > 0u) {
         raw = bitcast<f32>(bRec(L, X, Y, n - 1u).x);
         // (a parent's rim line holds the child's clusters: never a template vertex, the mask leaves rim lines out)
         var zq = raw;
         if (kid) { zq = toKid(L, raw); }
-        let c = clusterAt(CX, CY, zq);
-        z = c.z;
-        bot = c.x;
-        if (kid) { bot = NONE_Z; }
+        zs[s] = clusterAt(CX, CY, zq).z;
       }
       pgStore(lb + s, bitcast<u32>(raw));
       pgStore(lb + 4u + s * 4u, bitcast<u32>(0.0));
       pgStore(lb + 4u + s * 4u + 1u, bitcast<u32>(0.0));
-      pgStore(lb + 4u + s * 4u + 2u, bitcast<u32>(z));
-      pgStore(lb + 4u + s * 4u + 3u, 0u);
-      wCB[q * 4u + s] = bot;
+      pgStore(lb + 4u + s * 4u + 2u, bitcast<u32>(zs[s]));
+    }
+    // (step C) a slot's normal: the sum of the top normals of the line's columns whose slot here is the same placed
+    // vertex (the same sheet: a cliff taller than T keeps its sheets apart), normalised
+    for (var s = 0u; s < 4u; s++) {
+      var nsum = vec3<f32>(0.0);
+      if (zs[s] != NONE_Z) {
+        for (var s2 = 0u; s2 < 4u; s2++) {
+          if (zs[s2] == zs[s]) { nsum += wQN[u32(lx) + (s2 & 1u) + 18u * (u32(ly) + (s2 >> 1u))]; }
+        }
+      }
+      var w = 0u;
+      if (dot(nsum, nsum) > 0.0) { w = octEnc(normalize(nsum)); }
+      pgStore(lb + 4u + s * 4u + 3u, w);
     }
   }
   workgroupBarrier();
@@ -2909,10 +2949,11 @@ fn cacheBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
     mw = (bRec(L, X, Y, n - 1u).y & 255u) << 8u;
     let zb = bBot(L, X, Y);
     var cap = true;
+    let t = bitcast<f32>(bRec(L, X, Y, n - 1u).x);
     for (var c = 0u; c < 4u; c++) {
-      let qx = lid.x + (c & 1u);
-      let qy = lid.y + (c >> 1u);
-      if (rimP(L, X + i32(c & 1u), Y + i32(c >> 1u)) || rimC(L, X + i32(c & 1u), Y + i32(c >> 1u)) || !(wCB[(qy * 17u + qx) * 4u + 3u - c] > zb)) { cap = false; }
+      let CX = X + i32(c & 1u);
+      let CY = Y + i32(c >> 1u);
+      if (rimP(L, CX, CY) || rimC(L, CX, CY) || !(clusterAt(CX, CY, t).x > zb)) { cap = false; }
     }
     if (cap) { mw |= 1u; }
     for (var dir = 0u; dir < 2u; dir++) {
