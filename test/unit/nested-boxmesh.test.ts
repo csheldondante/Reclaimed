@@ -5,7 +5,7 @@
 // with a repeated vertex, each level closed by itself, and no T-junction across a rim line.
 import { describe, expect, it } from 'vitest';
 import { AIR, type Part } from '../../src/nested/oracle';
-import { asCapture, boxMesh, closure, collapse, collapseCols, dropCapPairs, identity, place, random, rimJunctionsRef, type MeshLevel, type MeshScene, type Placement } from '../../src/nested/boxmesh';
+import { asCapture, boxMesh, closure, collapse, collapseCols, dropCapPairs, identity, place, random, rimJunctionsRef, smoothSplit, type MeshLevel, type MeshScene, type Placement } from '../../src/nested/boxmesh';
 import { manifold } from '../../src/nested/watertight';
 
 const STONE = 1;
@@ -78,6 +78,11 @@ const scenes: Record<string, () => MeshScene> = {
       return part(...a);
     });
   },
+  // (round 13) the lab's terrain shape: soil over stone (two records), hills steep enough that some walls cross a stone top
+  'soil over stone hills': () => one((x, y) => {
+    const t = 6 + 3 * Math.sin(x / 3) + 2 * Math.cos(y / 2.5);
+    return part(t - (1.2 + 0.6 * Math.sin(x + 2 * y)), STONE, t, SOIL);
+  }),
   'diagonal saddles': () => one((x, y) => part((x + y) % 2 ? 2 : 8, STONE)),
   'fluids next to air': () => one((x, y) => (x >= 5 && x < 12 && y >= 5 && y < 12 ? part(2, STONE, 4, WATER) : x === 12 && y >= 5 && y < 12 ? part(2, STONE, 3, WATER) : part(x < 5 ? 6 : 3, STONE))),
   random: () => {
@@ -193,6 +198,42 @@ describe('nested scales: the box mesh and the smooth draw step 1', () => {
         rows.push(`T=${T}: ${before.tris} tris, coincident ${before.coincident} -> ${after.coincident} (${d.pairs} pairs dropped), ${after.tris} left; zero-area ${after.zeroArea}`);
       }
       console.log(`[pairs] ${sn}\n  ${rows.join('\n  ')}`);
+    });
+
+  // (round 13) the smooth draw's split: a fixed template expanded from the vertex cache + exceptions baked by the box
+  // rule = the collapse mesh after dropCapPairs, triangle for triangle by identity; the union exactly closed per level,
+  // no T-junction across a rim
+  for (const [sn, make] of Object.entries(scenes))
+    it(`${sn}: template + exceptions = the collapse mesh after the pair rule, closed`, () => {
+      const scene = make();
+      const rows: string[] = [];
+      for (const T of [2, 0.5]) {
+        const s = smoothSplit(scene, T);
+        expect(s.unknown, `${sn} T=${T} template identities the box mesh lacks`).toBe(0);
+        expect(s.missing, `${sn} T=${T} reference triangles neither part draws`).toBe(0);
+        expect(s.extra, `${sn} T=${T} triangles drawn that the reference lacks`).toBe(0);
+        for (let L = 0; L < scene.levels.length; L++) {
+          const c = closure(s.union, (i) => s.lv[i] === L);
+          expect(c.odd, `${sn} T=${T} L${L} odd edges`).toBe(0);
+          expect(c.unbalanced, `${sn} T=${T} L${L} unbalanced`).toBe(0);
+          expect(c.repeated).toBe(0);
+          expect(c.coincident, `${sn} T=${T} L${L} coincident`).toBe(0);
+        }
+        if (scene.levels.length > 1) expect(rimJunctionsRef(s.unionIds).junctions, `${sn} T=${T} rim junctions`).toBe(0);
+        // gentle terrain: two visible template triangles a column; exceptions only on the window's edge ring (its walls
+        // face air outside the window) and bottoms
+        if (sn === 'gentle') {
+          const st = s.stats[0];
+          expect(st.templateVisible / st.drawn).toBeCloseTo(2, 1);
+          expect(st.exceptionCells).toBeLessThanOrEqual(4 * N - 4);
+          expect(st.exceptionTris - st.exceptionBottomTris).toBeLessThanOrEqual(2 * (4 * N - 4) * 2);
+        }
+        for (const st of s.stats)
+          rows.push(
+            `T=${T} L${st.L}: ${st.drawn} drawn, ${st.simple} simple; template ${st.templateVisible} visible of ${st.templateSlots} slots (${(st.templateVisible / st.drawn).toFixed(2)} a column, caps ${(st.templateCaps / st.drawn).toFixed(2)}); exceptions ${st.exceptionTris} tris (${st.exceptionBottomTris} bottoms), ${st.exceptionCells} cells (${((100 * st.exceptionCells) / st.drawn).toFixed(1)} %)`,
+          );
+      }
+      console.log(`[split] ${sn}\n  ${rows.join('\n  ')}`);
     });
 
   it('collapse: triangles a column on gentle terrain, and what one-column features lose', () => {

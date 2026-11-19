@@ -27046,3 +27046,45 @@ repeated vertex, volume unchanged) and leaves 0 coincident triangles: deep thin 
 | unit tests | nested 44 of 44 (box mesh 29) |
 | carve median with bakes | 14.2-16.2 ms: target 12 (14 at a rim) NOT met; cause NS-105 |
 | draw alone, worst view | 6.0-6.7 ms |
+
+## 2026-11-19 — Nested scales lab, round 13 step A: the smooth draw as a fixed template + vertex cache + baked exceptions (reference)
+
+**Why.** The owner asked why a carve costs milliseconds: "Do we really build the mesh or just take an already present mesh
+with masked triangle bits and then set their heights to the grid? Those both seem very cheap". The lab rebuilt face lists
+per chunk on every edit, which drifted from his round 3 rule ("deforming vertices and baking the seam mesh nothing per
+frame"). So the smooth draw reaches the screen as one fixed template mesh (the same for every chunk) whose vertices read a
+per-corner-line cache, plus exceptions baked by the box rule where the template cannot express the surface. Watertightness
+first ("Water tight is the more important requirement"), so the reference decides the split before any GPU code.
+
+**Built (reference + tests only, no browser).** boxmesh.ts: smoothCache (four slots a corner line: each column's top,
+its collapseCols placement, its cluster's bottom), templateMask (per column: cap, the walls of edges +x and +y, the top
+material; the rules in NESTED_SCALES.md "The smooth draw: template, cache, exceptions"), templateTris (14 triangles a
+column, expanded from the cache and mask alone as the vertex stage will: a wall clamps each line's two other slots to the
+wall's range, sorts them and zips the two lists of four in 6 steps, ties to P, the box mesher's rule) and smoothSplit (the
+exceptions = every other box face, placed and pair-dropped by the reference's own functions; the comparison). The box
+mesher's triangles carry tags (down cap, wall piece range); BoxMesh exposes col, zb and rim.
+
+**Result.** On all 15 unit scenes (a new one: soil over stone hills, the lab's two-record terrain) at T = 2 and 0.5:
+template + exceptions = the collapse mesh after dropCapPairs as a multiset of oriented identity triangles: 0 missing, 0
+extra, 0 template identities absent from the box mesh; the union per level: 0 odd edges, 0 unbalanced, 0 repeated
+vertices, 0 coincident faces; rim junctions 0 (child in parent, three random levels). No counter-example; no special case.
+Unit tests: box mesh 46 of 46.
+
+| scene (20 x 20, T = 2) | visible template tris a column | exception cells |
+|---|---|---|
+| gentle | 2.00 (caps 2.00) | 19 % (the window's edge ring only) |
+| slope / cliff / fluids / pillars and pits | 1.98-2.10 | 19 % (edge ring) |
+| soil over stone hills | 1.99 | 19 % (61.8 % at T = 0.5: stone tops inside surviving walls, NS-108) |
+| tunnel / one-column tunnels / overhang | 1.40-1.80 | 41.5 % / 36.5 % / 46 % |
+| diagonal saddles (every wall 6 high) | 5.80 | 19 % |
+| random / three random levels | 0.89-1.38 | 73-94 % |
+| deep thin stacks | 0 | 100 % |
+
+Bottoms (down caps, 2 a column in the reference; the GPU's fans of NS-83 make ~0.25) are exceptions by design and need
+re-baking only when a chunk's bottom changes. Template slots: 14 triangles a column (42 vertex invocations) for ~2 visible
+on gentle ground: the cost risk step D must measure (NESTED_SCALES.md names the fallback).
+
+**Not done this round (context budget):** B (GPU cache pass, template draw, masked exception bake, toggle, capture tests,
+pose sets), C (crease shading), D (measurements, stills). The design for them is written in NESTED_SCALES.md; BACKLOG
+NS-107. The smooth-off gate was not re-run: no runtime code changed (boxmesh.ts is tests-only; the tags are new optional
+fields).

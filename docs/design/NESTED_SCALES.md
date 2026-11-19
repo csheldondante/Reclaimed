@@ -603,6 +603,101 @@ also preserve sharp edges." Thin features softening is accepted.
     the mesh stays exactly closed. A column whose down cap the GPU bakes as a fan (NS-83) keeps its down cap out of the
     runs. (boxmesh.ts dropCapPairs; NS-102, NS-104.)
 
+## The smooth draw: template, cache, exceptions (round 13; written before the GPU code)
+
+The owner's rulings this is built on: "Water tight is the more important requirement." / "Definitely don't give me
+something with crappy performance that still has holes." (round 6). Round 3: "it should be deforming vertices and baking
+the seam mesh nothing per frame". 2026-11-19, on why a carve costs milliseconds: "Do we really build the mesh or just take
+an already present mesh with masked triangle bits and then set their heights to the grid? Those both seem very cheap"
+(the lab rebuilt face lists per chunk on every edit, which drifted from his rule; this section corrects that for the
+smooth draw). And: "we want some sdf based or normal based smoothing though so we can have rims and carves not look
+stepped but also preserve sharp edges" (the stored plane word and the plane fit are the next round; nothing here bakes a
+height into topology: a vertex's position is a vec3 read from a per-vertex cache).
+
+The principle of "The smooth draw" is unchanged: the smooth mesh is the box mesh with its vertices moved by the collapse
+(collapseCols), triangles with a repeated vertex not drawn, coincident cap pairs dropped (dropCapPairs). New: how it
+reaches the screen. The surface splits into a FIXED TEMPLATE (the same for every chunk of every level, never rebuilt)
+whose vertices read a VERTEX CACHE, plus EXCEPTIONS baked as face lists by the box rule.
+
+**Rules (decided by the reference, src/nested/boxmesh.ts smoothCache, templateMask, templateTris, smoothSplit).**
+- *Simple column:* drawn by its level, every record solid (no air record: its only solid/air boundary is its top). Any
+  materials, fluids included (a material is drawn solid by the material table).
+- *Vertex cache:* per corner line (CX, CY) of a level, four slots, slot q = column (CX - 1 + (q & 1), CY - 1 + (q >> 1))
+  (boxmesh.ts slotOf). A slot holds that column's last record top (`raw`, the vertex identity's height; NONE = -3e38 where
+  the level does not draw the column), its placed position (this round (CX, CY, cluster z); a vec3 so the next round's
+  plane fit can move x and y) and the bottom of its cluster. The placement is the general collapseCols rule (the line's
+  four columns, on a child's rim line also the parent's four), so slots next to complex columns and on rim lines are right
+  too. One slot a column because a cliff taller than T keeps separate vertices; slots with equal raw heights are one
+  identity and get bit-identical positions (same function of the same inputs).
+- *Template mask (one word a column):* `cap` iff the column is simple, none of its four corner lines is a rim line (rimP
+  or rimC), and on every corner its top's cluster stays above its own bottom zb (else its up and down caps may coincide
+  and the pair rule decides: exception). `w[dir]` for the edges +x (dir 0) and +y (dir 1) iff both columns are simple,
+  neither corner line of the edge is a rim line, and on both lines every breakpoint strictly between the two tops is the
+  last top of one of the line's four columns (no other record boundary, no bottom zb in that range). Plus the column's top
+  material. Owner of an edge: the column on its low side.
+- *Template, per column 14 triangles (TEMPLATE_TRIS), most degenerate:* part 0 the top cap (corners (c0, c1, c3) and (c0,
+  c3, c2) at the column's slot on each corner line, up); parts 1-6 the wall fan of edge +x, 7-12 of edge +y. A wall: P is
+  the edge's corner line with the lower coordinate along it, Q the other (edgeOf). lo, hi = the two columns' tops (raw, the
+  same on P and Q); on each line the two other slots clamp to [lo, hi] and sort (min, max), giving lists [lo, a, b, hi]: a
+  clamped slot IS the identity (line, lo) or (line, hi), so its position is that of the lower or higher column's slot. The
+  strip zips the two lists from the bottom in 6 steps: advance P while its next height <= Q's next (ties to P), else Q
+  (exactly the box mesher's wall rule); step s emits (P_i, Q_j, next). A step onto an equal height is a repeated vertex: no
+  pixels. The face looks toward the lower column (kind 0-3 by which column is higher), its material the higher column's
+  top material; winding by the out direction (orientIds).
+- *Exceptions:* every box face the template does not draw, baked by the box rule (faceBake), placed by the same collapse,
+  then repeated-vertex triangles and coincident cap pairs dropped: every face of a non-simple column (caves, overhangs,
+  tunnels, thin stacks), caps and walls touching a rim line, walls whose range holds a record boundary or a bottom, the
+  wall pieces under the ground (skirts between different bottoms), walls facing a column the level does not draw (window
+  edge, child footprint), and down caps (bottoms, the GPU's fans of NS-83).
+- *Proof (unit tests, 15 scenes x T = 2 and 0.5):* template (expanded from the cache and mask alone) + exceptions = the
+  collapse mesh after dropCapPairs, triangle for triangle by vertex identity (multiset, orientation kept), 0 missing, 0
+  extra, 0 template identities the box mesh lacks; the union's closure per level 0 odd, 0 unbalanced, 0 repeated, 0
+  coincident; rim junctions 0. No counter-example and no special case was needed.
+- *Counts (unit scenes, 20 x 20 windows):* gentle 2.00 visible template triangles a column (all caps), exceptions only on
+  the window's edge ring (76 of 400 cells: their walls face air outside the window; 1.6 % of a 256 window) plus 2 bottom
+  triangles a column (the GPU's fans make that ~0.25). Exception cells: slope, cliff, fluids, pillars 19 % (the edge ring
+  only); tunnel 41.5 %, one-column tunnels 36.5 % (T = 2), overhang 46 %, random 73 % (T = 2) / 88 % (T = 0.5), deep thin
+  stacks 100 %; soil over stone hills 19 % at T = 2 but 61.8 % at T = 0.5 (stone tops inside wall ranges: walls that
+  survive the collapse cross a record boundary; BACKLOG NS-108).
+
+**The GPU design (step B onward; not built yet).**
+- *Cache page (level id 48 + depth, one a chunk, from the one pool, keyed like the column pages; no cap):* the chunk's 17
+  x 17 corner lines (its border lines are written in both chunks by the same arithmetic, so the copies are bit-identical)
+  x 20 words: raw vec4 (the four slots' tops), then per slot (x, y, z, normal as an octahedral 2 x 16 bit word), then 256
+  mask words (bits 0 cap, 1 w+x, 2 w+y, 8-15 top material). 6,036 words, inside a 12,544-word page. Room for next round's
+  x, y moves without a layout change.
+- *Cache pass (compute, one workgroup a chunk, one thread a line):* for the chunks an op bakes today (the same dilated
+  unions), each line's four slots: raw, cluster (the WGSL twin of mesh.cluster: bpPrev / bpNext / joinedAbove over the
+  line's columns, on a rimC line the parent's too through toKid; f32 sums bottom up, then / n), written once (one writer a
+  word). Then the classify step (barrier; one thread a column) writes the mask from the columns and the cache's cluster
+  bottoms. The cluster function is ONE WGSL function used by this pass and by the exception bake, so positions are
+  bit-identical (no multiply-add in it: sums and one division; risk: a driver reordering the sums; the capture test
+  checks bit equality).
+- *Template draw (one instanced draw a level):* an instance a chunk (the level's cache page list), 256 x 14 x 3 vertices.
+  The vertex stage decodes column, part, corner; reads the mask word; a cap vertex reads its slot (1 read); a wall vertex
+  reads the raw vec4 of P and of Q and its slot (3 reads). Unset bits and repeated vertices give a degenerate triangle
+  (all three vertices at one point, no pixels). The vertex stage never reads column pages.
+- *Exception bake:* faceBake with the template's parts masked off per column (emitCol skips the up cap where `cap`, and
+  the wall piece [lo, hi] of an edge where its bit is set), each vertex's z replaced by its placed z (the shared cluster
+  function), triangles with two corners in one cluster skipped, coincident cap pairs dropped per column (the rule of
+  dropCapPairs: a cap is kept iff no cap of its run is above it and an even number below). Rim chunks keep the round 11
+  rim rule (exception vertices on rim lines are the child's, placed through the child's view-projection).
+- *What an edit re-bakes:* the cache pass over the op's chunks (cheap: 289 lines a chunk, a few breakpoints each). The
+  exception bake of a chunk only when its exception output changes: the count phase hashes the chunk's exception face
+  words (placed z included) and compares with the hash kept in the face page's header; equal: no ensurePages, no write.
+  So a carve on open ground costs the cache pass plus a count walk of the exceptions (bottoms, the edge ring); the bottom
+  fans are not rewritten unless the chunk's bottom changed. Target under 1 ms on open ground (gate 1.5 ms).
+- *Shading (step C):* the cache pass writes per slot a normal: the normalised sum of the area normals of the template caps
+  of the columns whose slot on this line has the same placed position (the same sheet; walls excluded), placed corners
+  read from the cache (a second pass after positions, reading neighbour chunks' pages for border lines). The fragment
+  stage takes the interpolated vertex normal and the face normal (derivatives); where they differ by more than the crease
+  angle (default 50 degrees, `?crease=`) it shades flat: cliffs and kept walls stay sharp. Exceptions are flat this round.
+- *Switch:* `?smooth=1` and a "Smooth" toggle; boxes stay the default. With smooth off nothing above runs.
+- *Cost risk:* 14 triangles = 42 vertex invocations a column for ~2 visible triangles on gentle ground (the box draw:
+  ~4 + walls). If the vertex stage measures as the draw's bottleneck (step D's tiny-viewport split), the fallback is a
+  per-chunk list of the edges whose wall bit is set and whose tops differ (one word an edge, written by the classify
+  step's scan), drawn as a second instanced draw of 6 triangles an edge; the caps stay a fixed template.
+
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

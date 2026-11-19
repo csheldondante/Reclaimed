@@ -61,6 +61,11 @@ export interface Tri {
   L: number;
   X: number;
   Y: number;
+  /** (round 13) the column's down cap (its bottom at zb) */
+  down?: boolean;
+  /** (round 13) a wall's piece: its height range in the emitting column's own units */
+  p0?: number;
+  p1?: number;
 }
 export interface BoxMesh {
   ids: VertexId[];
@@ -73,6 +78,11 @@ export interface BoxMesh {
   /** (round 12) whether column (X, Y) of level L lies in a 4 x 4 block whose down caps the GPU bakes as one fan (NS-83):
    *  its down cap takes no part in dropping coincident cap pairs */
   fan: (L: number, X: number, Y: number) => boolean;
+  /** (round 13) the column as level L draws it (null where it is air to the level), its bottom, and whether a corner
+   *  line is a rim line (a parent's rimP or a child's rimC) */
+  col: (L: number, X: number, Y: number) => Part | null;
+  zb: (L: number, X: number, Y: number) => number;
+  rim: (L: number, CX: number, CY: number) => boolean;
 }
 
 const NO_DEPTH = 3e38;
@@ -236,7 +246,7 @@ export function boxMesh(scene: MeshScene): BoxMesh {
     { off: [0, -1], cA: 0, cB: 1, out: [0, -1, 0] },
   ];
   // a triangle, oriented so its normal (by the identity positions) points along `out`
-  const put = (L: number, X: number, Y: number, kind: number, mat: number, a: VertexId, b: VertexId, c: VertexId, out: Vec3) => {
+  const put = (L: number, X: number, Y: number, kind: number, mat: number, a: VertexId, b: VertexId, c: VertexId, out: Vec3, tag: Partial<Tri> = {}) => {
     const pa = toWorld(scene, a.L, a.cx, a.cy, a.z);
     const pb = toWorld(scene, b.L, b.cx, b.cy, b.z);
     const pc = toWorld(scene, c.L, c.cx, c.cy, c.z);
@@ -247,7 +257,7 @@ export function boxMesh(scene: MeshScene): BoxMesh {
     const ib = vid(b);
     const ic = vid(c);
     const flip = n[0] * out[0] + n[1] * out[1] + n[2] * out[2] < 0;
-    tris.push({ v: flip ? [ia, ic, ib] : [ia, ib, ic], kind, mat, L, X, Y });
+    tris.push({ v: flip ? [ia, ic, ib] : [ia, ib, ic], kind, mat, L, X, Y, ...tag });
   };
   for (let L = 0; L < levels.length; L++) {
     const w = levels[L];
@@ -276,8 +286,8 @@ export function boxMesh(scene: MeshScene): BoxMesh {
           put(L, X, Y, s0 ? 4 : 5, mat, corner(0, z), corner(3, z), corner(2, z), out);
         }
         if (solid(p.mat[0])) {
-          put(L, X, Y, 5, p.mat[0], corner(0, z0), corner(1, z0), corner(3, z0), [0, 0, -1]);
-          put(L, X, Y, 5, p.mat[0], corner(0, z0), corner(3, z0), corner(2, z0), [0, 0, -1]);
+          put(L, X, Y, 5, p.mat[0], corner(0, z0), corner(1, z0), corner(3, z0), [0, 0, -1], { down: true });
+          put(L, X, Y, 5, p.mat[0], corner(0, z0), corner(3, z0), corner(2, z0), [0, 0, -1], { down: true });
         }
         // walls
         for (let d = 0; d < 4; d++) {
@@ -327,10 +337,10 @@ export function boxMesh(scene: MeshScene): BoxMesh {
                     const A0 = vAt(L, AX, AY, za, mA === 1 ? 1 : 0);
                     const B0 = vAt(L, BX, BY, zc, mB === 1 ? 1 : 0);
                     if (za < eA && (sideOwn(L, mA, na) <= sideOwn(L, mB, nc) || zc >= eB)) {
-                      put(L, X, Y, d, p.mat[j], A0, B0, vAt(L, AX, AY, na, mA === 1 ? 1 : 0), out);
+                      put(L, X, Y, d, p.mat[j], A0, B0, vAt(L, AX, AY, na, mA === 1 ? 1 : 0), out, { p0, p1 });
                       za = na;
                     } else {
-                      put(L, X, Y, d, p.mat[j], A0, B0, vAt(L, BX, BY, nc, mB === 1 ? 1 : 0), out);
+                      put(L, X, Y, d, p.mat[j], A0, B0, vAt(L, BX, BY, nc, mB === 1 ? 1 : 0), out, { p0, p1 });
                       zc = nc;
                     }
                   }
@@ -450,7 +460,7 @@ export function boxMesh(scene: MeshScene): BoxMesh {
     for (let e = 0; e <= 4; e++) if (rimP(L, bx + e, by) || rimP(L, bx + e, by + 4) || rimP(L, bx, by + e) || rimP(L, bx + 4, by + e)) return false;
     return true;
   };
-  return { ids, tris, drawn, cluster, fan };
+  return { ids, tris, drawn, cluster, fan, col: drawnPart, zb, rim: (L, CX, CY) => rimP(L, CX, CY) || rimC(L, CX, CY) };
 }
 
 /** (round 12) the collapse as the GPU bakes it: each identity at its cluster's height from the columns (mesh.cluster) */
@@ -700,6 +710,379 @@ export function rimJunctionsRef(mesh: BoxMesh): { lines: number; junctions: numb
     for (const s of [0, 1])
       for (const [a, b] of l.e[s]) for (const z of l.v[1 - s]) if (z > a && z < b) junctions++;
   return { lines: lines.size, junctions };
+}
+
+// ---- (round 13) the smooth draw as it reaches the screen: a fixed template + a vertex cache + baked exceptions ------
+// (docs/design/NESTED_SCALES.md "The smooth draw: template, cache, exceptions (round 13)".) The reference decides the
+// design: smoothSplit proves, scene by scene, that the template expanded from the cache plus the exceptions baked by the
+// box rule is the collapse mesh after dropCapPairs, triangle for triangle (by vertex identity), up to triangles the
+// template leaves degenerate.
+
+/** a cache slot with no column (not drawn by the level): it clamps to the wall's bottom, so it is never a vertex */
+export const NONE = -3e38;
+
+/** corner line (CX, CY)'s slots: slot q is column (CX - 1 + (q & 1), CY - 1 + (q >> 1)); raw: that column's last record
+ *  top (the identity's height), z: its placed height (collapseCols), bot: the bottom of its cluster */
+export interface LineSlots {
+  raw: number[];
+  z: number[];
+  bot: number[];
+}
+export interface SmoothCache {
+  T: number;
+  line: (L: number, CX: number, CY: number) => LineSlots;
+}
+/** the slot of column (X, Y) on corner line (CX, CY) (one of its four corners) */
+export const slotOf = (X: number, Y: number, CX: number, CY: number) => X - CX + 1 + 2 * (Y - CY + 1);
+
+/** the vertex cache: what the GPU's cache pass writes per corner line (the general collapse rule, so it is right next to
+ *  complex columns and across rims too) */
+export function smoothCache(mesh: BoxMesh, T: number): SmoothCache {
+  const memo = new Map<string, LineSlots>();
+  const line = (L: number, CX: number, CY: number) => {
+    const key = `${L}:${CX}:${CY}`;
+    let s = memo.get(key);
+    if (s) return s;
+    s = { raw: [], z: [], bot: [] };
+    for (let q = 0; q < 4; q++) {
+      const p = mesh.col(L, CX - 1 + (q & 1), CY - 1 + (q >> 1));
+      if (!p) {
+        s.raw.push(NONE);
+        s.z.push(NONE);
+        s.bot.push(NONE);
+        continue;
+      }
+      const t = p.top[p.top.length - 1];
+      const c = mesh.cluster({ L, cx: CX, cy: CY, z: t }, T);
+      s.raw.push(t);
+      s.z.push(c.z);
+      s.bot.push(c.bot);
+    }
+    memo.set(key, s);
+    return s;
+  };
+  return { T, line };
+}
+
+/** a column's template word: its top cap, its walls on edges +x and +y (dir 0, 1), its top material */
+export interface TemplateWord {
+  cap: boolean;
+  w: [boolean, boolean];
+  mat: number;
+}
+/** an edge's two corner lines and the neighbour: dir 0 = edge +x (B = X + 1), dir 1 = edge +y (B = Y + 1); P is the
+ *  line with the lower coordinate along the edge */
+export const edgeOf = (X: number, Y: number, dir: number) =>
+  dir === 0 ? { BX: X + 1, BY: Y, P: [X + 1, Y], Q: [X + 1, Y + 1] } : { BX: X, BY: Y + 1, P: [X, Y + 1], Q: [X + 1, Y + 1] };
+
+/** the template mask, from the columns (what the GPU's classify pass writes per column). Rules:
+ *  - simple column: drawn, every record solid (its only solid/air boundary is its top);
+ *  - cap: the column is simple, none of its corner lines is a rim line, and on every corner its top's cluster stays above
+ *    its own bottom (else the up and down caps may coincide and the pair rule decides: exception);
+ *  - wall on an edge: both columns simple, neither corner line a rim line, and on both lines every breakpoint strictly
+ *    between the two tops is the last top of one of the line's four columns (no record boundary, no bottom there). */
+export function templateMask(scene: MeshScene, mesh: BoxMesh, cache: SmoothCache) {
+  const solid = scene.solid ?? ((m: number) => m !== AIR);
+  const simple = (L: number, X: number, Y: number) => {
+    const p = mesh.col(L, X, Y);
+    return !!p && p.mat.every(solid);
+  };
+  const top = (L: number, X: number, Y: number) => {
+    const p = mesh.col(L, X, Y)!;
+    return p.top[p.top.length - 1];
+  };
+  const lineOk = (L: number, CX: number, CY: number, lo: number, hi: number) => {
+    if (mesh.rim(L, CX, CY)) return false;
+    for (let q = 0; q < 4; q++) {
+      const X = CX - 1 + (q & 1);
+      const Y = CY - 1 + (q >> 1);
+      const p = mesh.col(L, X, Y);
+      if (!p) continue;
+      const b = mesh.zb(L, X, Y);
+      if (b > lo && b < hi) return false;
+      for (let j = 0; j + 1 < p.top.length; j++) if (p.top[j] > lo && p.top[j] < hi) return false;
+    }
+    return true;
+  };
+  const memo = new Map<string, TemplateWord>();
+  return (L: number, X: number, Y: number): TemplateWord => {
+    const key = `${L}:${X}:${Y}`;
+    let w = memo.get(key);
+    if (w) return w;
+    w = { cap: false, w: [false, false], mat: 0 };
+    if (simple(L, X, Y)) {
+      const p = mesh.col(L, X, Y)!;
+      w.mat = p.mat[p.mat.length - 1];
+      const zb = mesh.zb(L, X, Y);
+      let cap = true;
+      for (let c = 0; c < 4 && cap; c++) {
+        const CX = X + (c & 1);
+        const CY = Y + (c >> 1);
+        if (mesh.rim(L, CX, CY) || !(cache.line(L, CX, CY).bot[slotOf(X, Y, CX, CY)] > zb)) cap = false;
+      }
+      w.cap = cap;
+      for (let dir = 0; dir < 2; dir++) {
+        const e = edgeOf(X, Y, dir);
+        if (!simple(L, e.BX, e.BY)) continue;
+        const a = top(L, X, Y);
+        const b = top(L, e.BX, e.BY);
+        const lo = Math.min(a, b);
+        const hi = Math.max(a, b);
+        w.w[dir] = lineOk(L, e.P[0], e.P[1], lo, hi) && lineOk(L, e.Q[0], e.Q[1], lo, hi);
+      }
+    }
+    memo.set(key, w);
+    return w;
+  };
+}
+
+/** a triangle of identities oriented so its normal (identity positions) points along `out` (the box mesher's rule) */
+export function orientIds(scene: MeshScene, a: VertexId, b: VertexId, c: VertexId, out: Vec3): [VertexId, VertexId, VertexId] {
+  const pa = toWorld(scene, a.L, a.cx, a.cy, a.z);
+  const pb = toWorld(scene, b.L, b.cx, b.cy, b.z);
+  const pc = toWorld(scene, c.L, c.cx, c.cy, c.z);
+  const u = [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]];
+  const w = [pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]];
+  const n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+  return n[0] * out[0] + n[1] * out[1] + n[2] * out[2] < 0 ? [a, c, b] : [a, b, c];
+}
+
+export interface TemplateTri {
+  v: [VertexId, VertexId, VertexId];
+  /** the template slot: the column (X, Y), part 0 cap, 1 + 6 dir + i wall fan triangle i of edge dir */
+  L: number;
+  X: number;
+  Y: number;
+  part: number;
+  kind: number;
+  mat: number;
+}
+/** template triangles per column: 2 cap + 2 edges x 6 wall = 14, most degenerate */
+export const TEMPLATE_TRIS = 14;
+const OUT: Vec3[] = [
+  [1, 0, 0],
+  [-1, 0, 0],
+  [0, 1, 0],
+  [0, -1, 0],
+];
+
+/** the template expanded from the cache and the mask alone, as the vertex stage does it: every slot, degenerate ones
+ *  included. A wall: the higher column's top is hi, the lower's lo, on both lines; each line's two other slots clamp to
+ *  [lo, hi] and sort (a clamped slot IS the identity (line, lo) or (line, hi)); the strip zips the two sorted lists of
+ *  four from the bottom, the side whose next height is lower first, ties to P (the box mesher's wall rule): 6 steps. */
+export function templateTris(scene: MeshScene, cache: SmoothCache, mask: (L: number, X: number, Y: number) => TemplateWord): TemplateTri[] {
+  const out: TemplateTri[] = [];
+  for (let L = 0; L < scene.levels.length; L++) {
+    const w = scene.levels[L];
+    for (let Y = w.gy; Y < w.gy + w.n; Y++)
+      for (let X = w.gx; X < w.gx + w.n; X++) {
+        const m = mask(L, X, Y);
+        if (m.cap) {
+          const c = [0, 1, 2, 3].map((i): VertexId => {
+            const CX = X + (i & 1);
+            const CY = Y + (i >> 1);
+            return { L, cx: CX, cy: CY, z: cache.line(L, CX, CY).raw[slotOf(X, Y, CX, CY)] };
+          });
+          out.push({ v: [c[0], c[1], c[3]], L, X, Y, part: 0, kind: 4, mat: m.mat });
+          out.push({ v: [c[0], c[3], c[2]], L, X, Y, part: 0, kind: 4, mat: m.mat });
+        }
+        for (let dir = 0; dir < 2; dir++) {
+          if (!m.w[dir]) continue;
+          const e = edgeOf(X, Y, dir);
+          const sP = cache.line(L, e.P[0], e.P[1]);
+          const sQ = cache.line(L, e.Q[0], e.Q[1]);
+          const tC = sP.raw[slotOf(X, Y, e.P[0], e.P[1])];
+          const tB = sP.raw[slotOf(e.BX, e.BY, e.P[0], e.P[1])];
+          const lo = Math.min(tC, tB);
+          const hi = Math.max(tC, tB);
+          const aIsC = tC > tB;
+          const kind = dir === 0 ? (aIsC ? 0 : 1) : aIsC ? 2 : 3;
+          const mat = aIsC ? m.mat : mask(L, e.BX, e.BY).mat;
+          const list = (s: LineSlots, CX: number, CY: number) => {
+            const own = [slotOf(X, Y, CX, CY), slotOf(e.BX, e.BY, CX, CY)];
+            const o = [0, 1, 2, 3].filter((q) => !own.includes(q)).map((q) => Math.min(Math.max(s.raw[q], lo), hi));
+            return [lo, Math.min(o[0], o[1]), Math.max(o[0], o[1]), hi];
+          };
+          const pl = list(sP, e.P[0], e.P[1]);
+          const ql = list(sQ, e.Q[0], e.Q[1]);
+          const P = (i: number): VertexId => ({ L, cx: e.P[0], cy: e.P[1], z: pl[i] });
+          const Q = (j: number): VertexId => ({ L, cx: e.Q[0], cy: e.Q[1], z: ql[j] });
+          let i = 0;
+          let j = 0;
+          for (let s = 0; s < 6; s++) {
+            let v: [VertexId, VertexId, VertexId];
+            if (i < 3 && (j === 3 || pl[i + 1] <= ql[j + 1])) {
+              v = [P(i), Q(j), P(i + 1)];
+              i++;
+            } else {
+              v = [P(i), Q(j), Q(j + 1)];
+              j++;
+            }
+            out.push({ v: orientIds(scene, v[0], v[1], v[2], OUT[kind]), L, X, Y, part: 1 + 6 * dir + s, kind, mat });
+          }
+        }
+      }
+  }
+  return out;
+}
+
+export interface SmoothSplit {
+  mesh: BoxMesh;
+  /** the reference: collapseCols placement, then dropCapPairs */
+  ref: PlacedMesh;
+  /** template + exceptions, on the reference's placed vertices; src indexes `lv` (each triangle's level) */
+  union: PlacedMesh;
+  lv: number[];
+  /** the union's triangles as identity triangles (for rimJunctionsRef) */
+  unionIds: BoxMesh;
+  /** identity triangles in one and not the other (multiset), and template triangles naming an identity the box mesh lacks */
+  missing: number;
+  extra: number;
+  unknown: number;
+  stats: {
+    L: number;
+    windowCols: number;
+    drawn: number;
+    simple: number;
+    templateSlots: number;
+    templateVisible: number;
+    templateCaps: number;
+    exceptionTris: number;
+    exceptionBottomTris: number;
+    exceptionCells: number;
+  }[];
+}
+
+/** the split, checked against the reference */
+export function smoothSplit(scene: MeshScene, T: number): SmoothSplit {
+  const solid = scene.solid ?? ((m: number) => m !== AIR);
+  const mesh = boxMesh(scene);
+  const cache = smoothCache(mesh, T);
+  const mask = templateMask(scene, mesh, cache);
+  const tt = templateTris(scene, cache, mask);
+  const placed = place(mesh, collapseCols(mesh, T), scene);
+  const ref = dropCapPairs(mesh, placed);
+  const top = (p: Part) => p.top[p.top.length - 1];
+  // which box triangles the template draws (a face of the template's parts)
+  const isTemplate = (t: Tri) => {
+    if (t.down) return false;
+    if (t.kind === 4) return mask(t.L, t.X, t.Y).cap;
+    if (t.kind === 5) return false;
+    const [ex, ey, dir] = t.kind === 0 ? [t.X, t.Y, 0] : t.kind === 1 ? [t.X - 1, t.Y, 0] : t.kind === 2 ? [t.X, t.Y, 1] : [t.X, t.Y - 1, 1];
+    if (!mask(t.L, ex, ey).w[dir]) return false;
+    const e = edgeOf(ex, ey, dir);
+    const a = top(mesh.col(t.L, ex, ey)!);
+    const b = top(mesh.col(t.L, e.BX, e.BY)!);
+    return t.p0 === Math.min(a, b) && t.p1 === Math.max(a, b);
+  };
+  const tmplBox = mesh.tris.map(isTemplate);
+  const keepIdx = placed.tris.map((_, i) => i).filter((i) => !tmplBox[placed.src[i]]);
+  const ex = dropCapPairs(mesh, { ...placed, tris: keepIdx.map((i) => placed.tris[i]), src: keepIdx.map((i) => placed.src[i]) });
+  // the template's triangles on the placed vertices: identities -> box ids -> merged vertices
+  const idIndex = new Map<string, number>();
+  mesh.ids.forEach((v, i) => idIndex.set(idKey(v), i));
+  let unknown = 0;
+  const tIds: [number, number, number][] = [];
+  const tLv: number[] = [];
+  const visible = new Map<string, number>();
+  for (const t of tt) {
+    const ks = t.v.map(idKey);
+    if (ks[0] === ks[1] || ks[1] === ks[2] || ks[0] === ks[2]) continue;
+    const ii = ks.map((k) => idIndex.get(k));
+    if (ii.some((i) => i === undefined)) {
+      unknown++;
+      continue;
+    }
+    const [a, b, c] = ii.map((i) => placed.of[i!]);
+    if (a === b || b === c || a === c) continue;
+    tIds.push(ii as [number, number, number]);
+    tLv.push(t.L);
+    const vk = `${t.L}:${t.part === 0 ? 'cap' : 'wall'}`;
+    visible.set(vk, (visible.get(vk) ?? 0) + 1);
+  }
+  // compare identity triangles (rotation-canonical, orientation kept) as multisets
+  const canon = (v: number[]) => {
+    const r = v.indexOf(Math.min(...v));
+    return `${v[r]},${v[(r + 1) % 3]},${v[(r + 2) % 3]}`;
+  };
+  const count = new Map<string, number>();
+  for (const s of ref.src) {
+    const k = canon(mesh.tris[s].v);
+    count.set(k, (count.get(k) ?? 0) + 1);
+  }
+  for (const s of ex.src) {
+    const k = canon(mesh.tris[s].v);
+    count.set(k, (count.get(k) ?? 0) - 1);
+  }
+  for (const v of tIds) {
+    const k = canon(v);
+    count.set(k, (count.get(k) ?? 0) - 1);
+  }
+  let missing = 0;
+  let extra = 0;
+  for (const c of count.values()) {
+    if (c > 0) missing += c;
+    if (c < 0) extra -= c;
+  }
+  // the union on the placed vertices
+  const lv: number[] = [];
+  const utris: [number, number, number][] = [];
+  const src: number[] = [];
+  const uTri: Tri[] = [];
+  ex.tris.forEach((t, i) => {
+    const b = mesh.tris[ex.src[i]];
+    utris.push(t);
+    src.push(lv.length);
+    lv.push(b.L);
+    uTri.push(b);
+  });
+  tIds.forEach((v, i) => {
+    utris.push([placed.of[v[0]], placed.of[v[1]], placed.of[v[2]]]);
+    src.push(lv.length);
+    lv.push(tLv[i]);
+    uTri.push({ v, kind: 0, mat: 0, L: tLv[i], X: 0, Y: 0 });
+  });
+  const union: PlacedMesh = { pos: placed.pos, of: placed.of, tris: utris, src, dropped: 0 };
+  const unionIds = { ...mesh, tris: uTri };
+  // stats per level
+  const stats: SmoothSplit['stats'] = [];
+  for (let L = 0; L < scene.levels.length; L++) {
+    const w = scene.levels[L];
+    let simple = 0;
+    for (let Y = w.gy; Y < w.gy + w.n; Y++)
+      for (let X = w.gx; X < w.gx + w.n; X++) {
+        const p = mesh.col(L, X, Y);
+        if (p && p.mat.every(solid)) simple++;
+      }
+    const cells = new Set<string>();
+    let exT = 0;
+    let exB = 0;
+    ex.src.forEach((s) => {
+      const t = mesh.tris[s];
+      if (t.L !== L) return;
+      exT++;
+      let bottom = !!t.down;
+      if (!bottom && t.kind < 4) {
+        const nb = mesh.col(L, t.X + [1, -1, 0, 0][t.kind], t.Y + [0, 0, 1, -1][t.kind]);
+        if (nb && t.p1! <= nb.top[0]) bottom = true;
+      }
+      if (bottom) exB++;
+      else cells.add(`${t.X}:${t.Y}`);
+    });
+    stats.push({
+      L,
+      windowCols: w.n * w.n,
+      drawn: mesh.drawn[L],
+      simple,
+      templateSlots: w.n * w.n * TEMPLATE_TRIS,
+      templateVisible: (visible.get(`${L}:cap`) ?? 0) + (visible.get(`${L}:wall`) ?? 0),
+      templateCaps: visible.get(`${L}:cap`) ?? 0,
+      exceptionTris: exT,
+      exceptionBottomTris: exB,
+      exceptionCells: cells.size,
+    });
+  }
+  return { mesh, ref, union, lv, unionIds, missing, extra, unknown, stats };
 }
 
 /** (the cross-check with the GPU's test) a level's box triangles in the capture's format (watertight.ts manifold: three

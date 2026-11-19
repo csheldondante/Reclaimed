@@ -376,6 +376,23 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
 - NS-106 (measurement only, round 12) GpuNest.bakeSkip (a level mask), splitBake (false: one bake pipeline, the A/B),
   skip 'ball' and 'pack', counts (dispatches, submits) and readBakes() (chunks per bake and region slot, a readback for
   tests), nested-perf.mjs `--profile 1`, `--levels 1`, and `--ab 1`'s split A/B.
+- NS-107 (step A built, round 13) The smooth draw as a fixed template + vertex cache + baked exceptions
+  (NESTED_SCALES.md "The smooth draw: template, cache, exceptions"). Built: the reference split (boxmesh.ts smoothCache,
+  templateMask, templateTris, smoothSplit; Tri tags down / p0 / p1; BoxMesh exposes col, zb, rim) and its unit tests
+  (exact on 15 scenes x T = 2, 0.5). Next, in order: B the GPU (cache pages level id 48 + depth, cache + classify pass,
+  template draw, faceBake masked and placed, the hash skip, `?smooth=1` and the toggle, a tests-only capture through
+  closure and rimJunctions, the hole-pixel pose sets with smooth on); C crease shading; D measurements and stills
+  (local/nested/r13-*.png). Not started.
+- NS-108 (limit, round 13) A wall that survives the collapse and crosses a record boundary (a stone top under soil inside
+  the wall's height range) is an exception, as is every face of a column with an air record: soil over stone hills are
+  19 % exception cells at T = 2 but 61.8 % at T = 0.5. Fine for the cost (exceptions are the box bake, already paid), but
+  if exceptions dominate on real terrain the template could take the wall's own columns' record tops as extra
+  breakpoints (material per fan triangle). Measure on the GPU first.
+- NS-109 (limit, round 13) Down caps and skirts are always exceptions (bottoms). On a window's edge ring every column is
+  an exception cell (its wall faces air outside the window). Expected, small (1.6 % of a 256 window).
+- NS-110 (limit, round 13) The template's mask treats a cap as an exception wherever its top's cluster reaches its own
+  bottom on any corner (conservative: the pair rule needs all three corners of a triangle merged). Only very thin simple
+  columns (under T from their bottom) are affected.
 - NS-95 (hack, round 10, tests only) GpuNest.oldTop (derive's u.e.x) brings back round 9's top rule, and `skip`
   'resClear' the round 9 residuals, for the before stills and counts (scripts/nested-carves.mjs, `?skip=` on
   `?selftest=1&carves=only`, nested-perf.mjs `--old 1`).
