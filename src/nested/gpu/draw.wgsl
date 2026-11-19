@@ -612,7 +612,9 @@ fn fsS(v: VOutS) -> FOut {
   }
   let pat = pattern(v.wp, n, px);
   let sun = normalize(d.sun.xyz);
-  let lit = 0.35 + 0.65 * max(dot(n, sun), 0.0) + 0.12 * n.z;
+  // (round 17, NS-123 (b)) a sky / ground ambient instead of the flat 0.35 less 0.12 for a face turned down: walls away
+  // from the sun read at 0.47 of full light (was 0.35), undersides 0.40 (was 0.23; nearly black on stone)
+  let lit = mix(0.40, 0.52, 0.5 + 0.5 * n.z) + 0.55 * max(dot(n, sun), 0.0);
   var col = matColor(v.mat, n.z) * (0.84 + 0.32 * pat) * lit;
   if (d.misc.z > 0.5) { col = mix(col, TINTS[u32(d.lvl.w) % 6u] * lit * 0.8, 0.55); }
   var o: FOut;

@@ -994,6 +994,31 @@ the solid below the next air gap down." "Why make those [skirts, outer ring] if 
   sqrt(the CPU's brush bound) + 2, ceil(side / that) bands, the last band taking every row after it (sheetBake: u.e.y =
   rows a band | bands << 16). Window ops keep a row a submit. Carve at level 1: sheets 11.9 ms, boxes 22.6, the sheet
   pass 6.8 (36 submits).
+- *Step 4, the look (stills local/nested/r17-*.png, scripts/nested-r17-stills.mjs; round 16's poses read level-local
+  heights as world heights, so the cameras sat in solid: now every feature is made at level 1 from world positions and
+  its world height read back; no pose was lifted).* (a) The sawtooth where grass meets a crater wall, from the columns:
+  13 level-1 cells round the bowl's rim (radius 0.97 of 1) hold NO air gap (all solid records); their tops alternate
+  along the circle between carved (9.46-9.69, stone on top) and uncarved (10.11-10.64, soil on top). So the owner's
+  reading (cells alternating next to an overhang and not) does not hold for this bowl: the circle's staircase of cells
+  does it: each corner line between a carved and an uncarved cell collapses its step into one vertex at the mean, so
+  the rim is a row of triangles whose apexes alternate high and low (teeth), and the top material alternates per cell
+  (grass on soil, grey or dirt on stone). (b) the thin vertical slivers in tall walls are the same collapse on the wall
+  below: neighbouring cells with different numbers of surfaces join different clusters. Geometry unchanged (the
+  owner's ruling). (c) the thin brown stripes on open slopes at a level edge are the zipper triangles: near-vertical
+  slivers (the step between the parent's straight edge and the child's vertices), whose face normal is more than the
+  crease angle from the vertex normals, so they shade flat with nz near 0 and soil reads as dirt. Not changed (the
+  colour follows the lighting normal, as the owner wants). (d) walls nearly black away from the sun: the lighting
+  floor (0.35 ambient, 0.12 less for a face turned down: 0.23 on undersides, x 0.47 stone): now a sky / ground ambient
+  (0.40 down to 0.52 up) + 0.55 sun (fsS only; the box draw unchanged). Shading: the 50 degree crease stays the default
+  (the owner likes a hard crease at a rim); the teeth at rims show FLAT facets beside creases (r17-bowl-rim,
+  r17-tunnel-inside), so by the owner's rule the next step is per-corner normals by smoothing group (each quad corner
+  averages the quads round the vertex within 50 degrees of its own, computed in the bake): NOT built this round.
+- *Status at the end of round 17:* the gate is NOT met, so the old smooth path stays and there is no page toggle (step 5
+  not done). Met: closure everywhere (fresh and dug, both draws), NS-119 / NS-126 / NS-128, sheet carve under the box
+  carve, draw at or under boxes in every view, 36 of 36 smooth off, stress, unit tests. Not met: the 1-frame pit pose
+  (NS-127, geometry or the camera's lift; no missed bake), nested-shaft (NS-135), the sheet pass 6.8 ms (target 3),
+  per-corner normals (NS-133), the level-edge still (NS-134). Pick up: NS-135 with the held-still diagnosis; decide the
+  1-frame teleport check with the owner; NS-133; per-line bakes for NS-129.
 - *A child never sits outside its parent (NS-128).* The app runs one level op a frame, so a slide of L that left L + 1
   outside it (a teleport: the selftest's setView to a shaft) left the child orphaned for a frame or more: its window-edge
   lines saw no parent columns (its whole edge open: the 1,024 open edges of NS-128) and its zippers kept the parent's old

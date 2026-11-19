@@ -453,7 +453,9 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   937,190). Either run that suite on a fresh sandbox (as the box section does) after switching on in the dug world (the
   bake-cost stress stays), or make the pose check pit-aware. Not changed this round (a test change to decide with the
   owner).
-- NS-123 (look, round 15) Open from the stills: (a) teeth along a child's window edge (rim lines placed jointly, the
+- NS-123 (round 17: (b) walls lit by a sky / ground ambient in the sheet draw; the poses fixed except the level edge
+  (NS-134); the sawtooth and slivers explained, geometry kept (owner); per-corner normals next (NS-133))
+  (look, round 15) Open from the stills: (a) teeth along a child's window edge (rim lines placed jointly, the
   lines between by the child alone: the level-edge design of NESTED_SCALES.md round 15 Step 4 replaces it); (b) walls
   facing away from the sun need the box draw's ambient floor; (c) exceptions flat beside smooth template cells (give
   them the cache normals where a slot matches); the stills script's carve-rim pose misses the carve; the phone stills
@@ -501,6 +503,16 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   twice found the deepest level's whole window edge open at one deep surface (1,024 edges, L3 line x = 29760, heights
   near -126 child units), 0 once settled. A transient between ops (likely a promote or slide whose partner bake comes
   in a later op); not found.
+- NS-133 (look, round 17; the owner's shading rule) Per-corner normals by smoothing group in the sheet draw: each quad
+  corner averages the quads round its vertex whose face normals lie within the crease angle (50 degrees) of its own,
+  computed in the sheet pass, Phong within a triangle. Needed: r17-bowl-rim and r17-tunnel-inside show flat facets on
+  the rim teeth beside the creases.
+- NS-134 (test, round 17) The stills' level-edge pose still misses the edge (r17-level-edge-grazing*: the eye 1-4 m
+  from a slope that fills the frame); place it from the child's window edge and the ground on both sides, aim along it.
+  The lip pose shows the added balls as a floating slab beside the raised block, not a lip on it.
+- NS-135 (test/bug, round 17) `nested-shaft --smooth 1` fails: 408,884 hole pixels at the 1-frame check after the
+  teleport to the shaft across the rim, L2 at the eye, 0 settled. Run it with pitAndCave's `rebake` diagnosis (held
+  still, forced bake, chunk diff); likely the camera lifting the eye out of what the finer level made solid.
 - NS-130 (limit, round 17) The region rule's partner bakes go in one submit band (rim chunks only, at most a window's
   ring); an edit's own bake bands take as many region rows as fit in a window row, from the CPU's brush bound (the
   bands still cover every window row: the bound decides only how long a submit runs, never what is baked).

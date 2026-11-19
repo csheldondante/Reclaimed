@@ -27370,3 +27370,27 @@ sheets without partner bakes 13.1 / 6.6 (noise: the partners cost under 1 ms); s
 16.7 / 9.5 (66 submits); no sheet pass 6.8 / 0.9. So the sheet carve is half the box carve (target met); the sheet pass
 is 6.8 ms, not under 3 (target NOT met): about 17 submits more than without it (~0.1 ms each) and 15-49 chunks baked.
 Next if wanted: per corner line (write only the lines in the region), and the bound's bands fewer.
+
+## 2026-11-19 — Nested scales lab, round 17 steps 3-4: the gate (not met), stills, walls lit, the sawtooth explained
+
+**Gate.** Full `?selftest=1` smooth on: 44 of 45 in three runs (runs 1-2 step 1's code, run 3 step 2's and the
+lighting); the one failure each time is NS-127's 1-frame pit pose (168 / 128,032 / 192,048 hole pixels: the forced bake
+changes nothing; either the camera still lifting the eye or level 0's accepted collapse round an eye deep in a narrow
+shaft). Union closure, level edges, coincident faces: 0 at every check, fresh and dug world. Smooth off: 36 of 36.
+`nested-stress --smooth 1` passed. `nested-shaft --smooth 1` FAILED: 408,884 hole pixels at the 1-frame check of the
+shaft across the rim (0 settled), L2 at the eye; the same pattern as NS-127, not diagnosed with the held-still tool in
+this script. Unit tests 100 of 100.
+
+**Draw** (nested-perf `--sab 1`, one page; the GPU was disturbed, samples spread 2-3x, so not three agreeing samples):
+medians boxes / sheets ms: mound 10.6 / 3.1, tunnel inside 13.4 / 11.7, looking back 7.5 / 2.5, tunnel mouth 10.5 /
+10.5, blob 10.7 / 5.9, hillside 10.4 / 6.1, map 6.5 / 4.7; carve at level 1 in that page 68.6 / 29.7 (sheets under
+boxes; the undisturbed step 2 page: 22.6 / 11.9).
+
+**Look** (local/nested/r17-*.png, desktop and -phone; scripts/nested-r17-stills.mjs places every pose from world
+heights read back, none lifted). Walls away from the sun: a sky / ground ambient (0.40 down to 0.52 up) + 0.55 sun in
+the sheet draw's fsS, was 0.35 - 0.12 for a face turned down (undersides 0.23 x stone 0.47: nearly black). The sawtooth
+explained from the columns (NESTED_SCALES.md "As built (round 17)", step 4): no air gap in the rim cells; the circle's
+staircase of carved / uncarved cells collapses into alternating teeth and alternates the top material. The grass / dirt
+colour already follows the lighting normal (matColor takes fsS's n.z after the crease rule); the per-cell switch seen at
+rims is the material itself. The rims show flat facets beside creases (the crease rule's face-normal fallback on the
+teeth), so by the owner's rule the next step is per-corner normals by smoothing group, computed in the bake: not built.

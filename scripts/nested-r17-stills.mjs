@@ -49,7 +49,8 @@ await run({ name: 'r17-stills', kind: 'behaviour', size: '960x640', dpr: 1, echo
     await ed('carve', P.bowl[0], P.bowl[1], tb - 0.3, 1.0);
     // the tunnel: the page's default brush (radius 1.5), sloping down along +x from 0.5 under the surface, 8 balls
     const tt = await top(...P.tunnel);
-    for (let i = 0; i < 8; i++) await ed('carve', P.tunnel[0] + i * 0.8, P.tunnel[1], tt - 0.5 - i * 0.45, 1.5);
+    // (the first ball breaks the surface: the mouth; from the third on the roof is under the ground)
+    for (let i = 0; i < 8; i++) await ed('carve', P.tunnel[0] + i * 0.8, P.tunnel[1], tt - 1.0 - i * 0.6, 1.5);
     // the lip: a raised block, then balls added in a row off its -y side level with its top, over the lower ground
     const tl0 = await top(...P.lip);
     await ed('raise', P.lip[0], P.lip[1], tl0, 0.8, 1.5);
@@ -69,7 +70,10 @@ await run({ name: 'r17-stills', kind: 'behaviour', size: '960x640', dpr: 1, echo
         rim.push(`${X},${Y}: ${c.z1.map((z, j) => `${(zo1 + z / k).toFixed(2)}m${c.mat[j]}`).join(' ')}`);
       }
     }
-    return { rim, P, tb, tt, tl, tl0, cx, cy, w1, lowAfter: { bowl: await top(...P.bowl), tunnel: await top(P.tunnel[0] + 4, P.tunnel[1]) } };
+    // the ground at the level-edge pose's eye and target (level 1's west edge, inside and out)
+    const ex = w1.gx / k;
+    const edge = { eye: await top(ex + 2.5, cy - 3), at: await top(ex - 0.5, cy - 3) };
+    return { edge, rim, P, tb, tt, tl, tl0, cx, cy, w1, lowAfter: { bowl: await top(...P.bowl), tunnel: await top(P.tunnel[0] + 4, P.tunnel[1]) } };
   });
   console.log('features', JSON.stringify(feat));
   const { P } = feat;
@@ -82,13 +86,13 @@ await run({ name: 'r17-stills', kind: 'behaviour', size: '960x640', dpr: 1, echo
   const poses = {
     hillside: look([feat.cx + 14, feat.cy - 12, feat.tb + 6], [feat.cx + 4, feat.cy - 4, feat.tb]),
     // a level edge: level 1's west edge, the eye inside level 1 a little above the ground, looking west along it
-    'level-edge-grazing': { ...look([ex + 2.5, feat.cy - 3, feat.tt + 0.6], [ex - 6, feat.cy - 3, feat.tt]), tint: false },
-    'level-edge-grazing-tint': { ...look([ex + 2.5, feat.cy - 3, feat.tt + 0.6], [ex - 6, feat.cy - 3, feat.tt]), tint: true },
+    'level-edge-grazing': { ...look([ex + 3, feat.cy - 3, feat.edge.eye + 1.2], [ex - 3, feat.cy - 3, feat.edge.at + 0.6]), tint: false },
+    'level-edge-grazing-tint': { ...look([ex + 3, feat.cy - 3, feat.edge.eye + 1.2], [ex - 3, feat.cy - 3, feat.edge.at + 0.6]), tint: true },
     'bowl-above': look([P.bowl[0], P.bowl[1] - 0.6, feat.tb + 4], [P.bowl[0], P.bowl[1], feat.tb - 0.6]),
     'bowl-rim': look([P.bowl[0] - 1.3, P.bowl[1] - 1.3, feat.tb + 0.35], [P.bowl[0] + 0.3, P.bowl[1] + 0.3, feat.tb - 0.8]),
     'tunnel-outside': look([P.tunnel[0] - 6, P.tunnel[1] - 3, feat.tt + 2], [P.tunnel[0], P.tunnel[1], feat.tt - 0.8]),
-    'tunnel-mouth': look([P.tunnel[0] - 1.2, P.tunnel[1], feat.tt + 0.2], [P.tunnel[0] + 2, P.tunnel[1], feat.tt - 1.6]),
-    'tunnel-inside': look([P.tunnel[0] + 4.4, P.tunnel[1], feat.tt - 0.5 - 5.5 * 0.45], [P.tunnel[0], P.tunnel[1], feat.tt - 0.3]),
+    'tunnel-mouth': look([P.tunnel[0] - 1.5, P.tunnel[1], feat.tt + 0.3], [P.tunnel[0] + 2, P.tunnel[1], feat.tt - 2.0]),
+    'tunnel-inside': look([P.tunnel[0] + 4.4, P.tunnel[1], feat.tt - 1.0 - 5.5 * 0.6], [P.tunnel[0], P.tunnel[1], feat.tt - 0.8]),
     'lip-side': look([P.lip[0] - 3, P.lip[1] - 1.1, feat.tl - 0.4], [P.lip[0], P.lip[1] - 1.1, feat.tl - 0.3]),
   };
   fs.mkdirSync('local/nested', { recursive: true });
