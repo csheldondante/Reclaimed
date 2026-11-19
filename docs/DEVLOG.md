@@ -27240,3 +27240,21 @@ which this section runs in the dug world the box pit section leaves: 942,830 "ho
 the same world 907,794: NS-120, a test question). An earlier run (files edited mid-run, so void) saw 24 rim faults in
 that world; boxes show the same intermittent fault there (NS-119, not fixed). Not run this step: the 3-run gate, the shaft
 and stress scripts (the owner's spec arrived; the next step changes the placement, so the gate runs after it).
+
+## 2026-11-19 — Nested scales lab, round 15: the owner's sheet spec, proved in the reference at T unlimited
+
+**Why.** The owner's spec (NESTED_SCALES.md "As built (round 15)", his words): a layer is an n x n quad sheet; a vertex
+averages its adjacent neighbours; air gaps break adjacency; "the vertex height averaging the bottom of the column in that
+case would make the sheets meet by construction". Read with the orchestrator: the round 13/14 collapse with every wall
+collapsed (threshold unlimited), one vertex a cluster.
+
+**Done.** The reference proofs at T = Infinity on 18 scenes, five new (a tall cliff by a cave mouth, a cave under a much
+higher surface, a slab fused to a cliff, a spiral step round a corner line, a step across a rim): 0 odd edges, 0
+unbalanced, 0 rim junctions everywhere, template + exceptions = the collapse mesh, the cave floor never above its
+ceiling. Unit tests 76 of 76 (61 before).
+
+**Found.** 4 coincident cap pairs a level at T unlimited on every scene: the walls facing outside the window collapse,
+so the edge ring folds onto its bottom and the window corners' top caps land on fan down caps. Gentle terrain: 1.62
+visible template triangles a column instead of 2.00 (the edge ring). The GPU stays at T = 2 until the owner's
+"draw nothing the camera cannot see" ruling (no skirts, no outer ring) is built: NS-122. The spiral step leaves 4
+coincident pairs at T = 2 as well (a pinch, accepted).

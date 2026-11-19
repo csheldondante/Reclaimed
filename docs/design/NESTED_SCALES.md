@@ -826,8 +826,19 @@ wallTmpl / emitColS / faceBake (SMOOTH), draw.wgsl tCorner / vsT / vsS / fsS / c
   inner air get more sheet instances; baked geometry only for rim strips, the window edge ring and the bottom skirts.
   Known and accepted: lips and cave mouths taper to a knife edge over one column; a feature one column wide collapses to
   zero thickness (a 1-wide tunnel closes); a 2-wide tunnel gets a diamond section.
-- *What this round builds of it (first form):* the collapse threshold unlimited (SMOOTH_T = 3e38 in the cache pass,
-  T = Infinity in the reference; no dial, the earlier `?collapse=` idea dropped as the spec says). Then every wall whose
+- *Built so far: the reference only.* T = Infinity in the reference's proofs (test/unit/nested-boxmesh.test.ts, 18
+  scenes with the new ones: a tall cliff by a cave mouth, a cave under a much higher surface, a slab fused to a cliff
+  crossing x = 16, a spiral step round one corner line, a step across a rim): closure 0 odd, 0 unbalanced, 0 rim
+  junctions on every scene, template + exceptions = the collapse mesh; the cave floor stays under its ceiling (never
+  rises toward the surface 24 above). Found: 4 coincident cap pairs a level on every scene at T unlimited (z-fighting,
+  not holes): the walls facing OUTSIDE the window collapse too, so the edge ring's sheet folds down onto its bottom and
+  at the window corners a top cap lands on a fan's down cap (the fan stays out of the pair rule); gentle terrain's
+  visible template triangles drop from 2.00 to 1.62 a column for the same reason. The spiral step leaves 4 at T = 2 too
+  (a pinch, accepted by the orchestrator). So the GPU stays at T = 2 this round: the owner's later ruling (no down caps
+  or skirts in the sheet draw, no outer ring at the coarsest window: the sheet just ends there) removes exactly what
+  folds and must come first (NS-122).
+- *The planned first form on the GPU (not switched on):* the collapse threshold unlimited (SMOOTH_T = 3e38 in the cache
+  pass; no dial, the earlier `?collapse=` idea dropped as the spec says). Then every wall whose
   two tops are joined on a corner line collapses, and the template draws only the cap lattice on solid terrain (the
   wall list comes out empty there; kept, it costs nothing when empty). Closure, the pair rule and the rim rule are the
   proven round 13/14 ones (a simplicial map of the closed box mesh); a cluster is placed at the f32 mean of its

@@ -437,6 +437,14 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   937,190). Either run that suite on a fresh sandbox (as the box section does) after switching on in the dug world (the
   bake-cost stress stays), or make the pose check pit-aware. Not changed this round (a test change to decide with the
   owner).
+- NS-122 (next, round 15; the owner's ruling) The sheet (smooth) draw draws nothing the camera cannot see: no bottom
+  skirts or down-cap fans (closed sheets and pinching leave the eye no way under a sheet: verify with the pit, shaft and
+  cave pose sets and report any pose that shows sky instead of restoring them), no ring at the coarsest window's outer
+  edge (the sheet just ends; finer levels' edges still meet their parent, with the rim strip this round). This is also
+  what blocks T unlimited on the GPU: in the reference the window-edge walls collapse and fold the edge sheet onto its
+  bottom (4 coincident pairs a level). Needs the closure checks to treat the coarsest window's edge and the bottoms as
+  open by design (a test change to write down first). Also to design: a child vertex on the footprint boundary taking the
+  parent's value interpolated along the parent's edge, so the rim strip can go (step 4 of the brief).
 - NS-121 (next, round 15) The owner's spec, the parts not built in round 15's first form: inner-air cells drawn as extra
   instanced sheets (a top and an underside sheet a layer, heights from the cluster tables) instead of baked exceptions,
   baked geometry only for rim strips, the window edge ring and bottom skirts; the cluster mean as an integer (fixed-
