@@ -20,6 +20,7 @@
 // surface (every edge used an even number of times; oriented: every directed edge cancelled) to a closed surface, so the
 // smooth mesh is closed by construction whatever the placement.
 import { AIR, type Part } from './oracle';
+import { edgeDec, slideOf } from './edge';
 
 export type Vec3 = [number, number, number];
 
@@ -40,6 +41,8 @@ export interface MeshScene {
   levels: MeshLevel[];
   /** whether a material is drawn solid (store.wgsl matSolid: everything but air; fluids are materials) */
   solid?: (m: number) => boolean;
+  /** (round 22, ?rimtop=1) a corner whose cell an edge crosses takes the height of its members outside the edge */
+  rimTop?: boolean;
 }
 
 /** a vertex identity: level, corner line (global columns of the level's depth: the line at the low corner of column
@@ -608,6 +611,9 @@ export interface SheetCluster {
   z: number;
   /** placed on the parent's edge */
   interp: boolean;
+  /** (round 22) the slide: the vertex's horizontal offset from its corner line (line units; edge.ts slideOf) */
+  ox: number;
+  oy: number;
 }
 export interface SheetLine {
   L: number;
@@ -660,7 +666,8 @@ export function sheetMesh(scene: MeshScene): SheetMesh {
     return w.parts[(Y - w.gy) * w.n + (X - w.gx)];
   };
   /** a column's surfaces (height, facing up), bottom up */
-  const surfCache = new Map<string, { h: number; up: boolean }[]>();
+  /** (round 22: e, an up surface's edge sample: its solid record's; a down surface has none) */
+  const surfCache = new Map<string, { h: number; up: boolean; e: number }[]>();
   const surfaces = (L: number, X: number, Y: number) => {
     const key = `${L}:${X}:${Y}`;
     let s = surfCache.get(key);
@@ -671,7 +678,7 @@ export function sheetMesh(scene: MeshScene): SheetMesh {
         for (let j = 0; j < p.top.length; j++) {
           const a = solid(p.mat[j]);
           const b = j + 1 < p.top.length ? solid(p.mat[j + 1]) : false;
-          if (a !== b) s.push({ h: p.top[j], up: a });
+          if (a !== b) s.push({ h: p.top[j], up: a, e: a ? (p.edge?.[j] ?? 0) : 0 });
         }
       surfCache.set(key, s);
     }
@@ -753,7 +760,7 @@ export function sheetMesh(scene: MeshScene): SheetMesh {
     const parentBps: Set<number>[] = [];
     for (let i = 0; i < bps.length; i++) {
       if (i === 0 || !joined(bps[i - 1])) {
-        clusters.push({ bps: [], bottomless: i === 0 && joinedBelow, z: 0, interp: false });
+        clusters.push({ bps: [], bottomless: i === 0 && joinedBelow, z: 0, interp: false, ox: 0, oy: 0 });
         parentBps.push(new Set());
       }
       clusters[clusters.length - 1].bps.push(bps[i]);
@@ -763,6 +770,36 @@ export function sheetMesh(scene: MeshScene): SheetMesh {
       let sum = 0;
       for (const z of c.bps) sum += fixOf(z);
       c.z = Math.fround(Math.fround(sum) / Math.fround(c.bps.length * SHEET_FIX));
+    }
+    // (round 22) the slide (2D dual contouring of the edge line; edge.ts slideOf): each cluster's members' edge samples
+    // (an up surface's, from its solid record), in the walk's order (height, then quadrant: absolute column position);
+    // only on a line whose four quadrants are this level's own columns (a level edge, a rim line or the root window's
+    // edge slides nothing, so the zipper and both levels' shared vertices stay put)
+    if ([0, 1, 2, 3].every((q) => qlv[q] === L)) {
+      const smp: { z: number; q: number; e: number }[] = [];
+      for (let q = 0; q < 4; q++) {
+        const o = owner(L, cx, cy, q)!;
+        for (const s of surfaces(o.lv, o.X, o.Y)) if (s.e) smp.push({ z: s.h, q, e: s.e });
+      }
+      smp.sort((a, b) => a.z - b.z || a.q - b.q);
+      for (const c of clusters) {
+        const mine = smp.filter((s) => c.bps.includes(s.z));
+        if (!mine.length) continue;
+        const sl = slideOf(mine.map((s) => ({ e: s.e, cx: -0.5 + (s.q & 1), cy: -0.5 + (s.q >> 1) })));
+        c.ox = sl.x;
+        c.oy = sl.y;
+        if (scene.rimTop && sl.crossed) {
+          // (?rimtop=1) the members outside the edge (d <= 0: the side the normal points to) give the height
+          let sum = 0;
+          let n = 0;
+          for (const s of mine)
+            if (edgeDec(s.e)!.d <= 0) {
+              sum += fixOf(s.z);
+              n++;
+            }
+          if (n) c.z = Math.fround(Math.fround(sum) / Math.fround(n * SHEET_FIX));
+        }
+      }
     }
     const wx = cx / Math.pow(k, L);
     const wy = cy / Math.pow(k, L);
@@ -862,7 +899,7 @@ export function sheetMesh(scene: MeshScene): SheetMesh {
             const z = cl === L ? s.h : toKid(L, s.h);
             const ci = clusterIndex(l, z);
             const key = vkey(l, ci);
-            if (!pos.has(key)) pos.set(key, toWorld(scene, cl, cx, cy, l.clusters[ci].z));
+            if (!pos.has(key)) pos.set(key, toWorld(scene, cl, cx + l.clusters[ci].ox, cy + l.clusters[ci].oy, l.clusters[ci].z));
             return key;
           });
           keys.push(tri.map((t) => {

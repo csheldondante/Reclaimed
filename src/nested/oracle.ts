@@ -8,6 +8,8 @@
 // downward; air between and above) and, inside enhance and restrict, its layer form: S (the top surface) and, for each
 // interval i >= 1, gap_i (air below it) and th_i (its thickness). Level.set converts back at the boundary.
 
+import { EDGE_MASK, RES_EDGE, edgeEnc, edgeFromChildren, edgeToChild } from './edge';
+
 export const OPEN_BOTTOM = -1e30;
 /** detail amplitude per wavelength (child columns) */
 export const DETAIL_AMP = 0.08;
@@ -16,12 +18,17 @@ export interface Col {
   mat: number[];
   z0: number[];
   z1: number[];
+  /** (round 22) per interval, the edge sample of its top (edge.ts; 0 or missing: none) */
+  edge?: number[];
 }
 /** layer form: v[0] = S, v[2i-1] = gap_i, v[2i] = th_i for i >= 1 (length 2n - 1) */
 export interface Layers {
   mat: number[];
   v: number[];
+  edge?: number[];
 }
+/** (round 22) interval (or record) i's edge field */
+export const edgeAt = (c: { edge?: number[] }, i: number): number => c.edge?.[i] ?? 0;
 
 export function toLayers(c: Col): Layers {
   const n = c.mat.length;
@@ -31,7 +38,7 @@ export function toLayers(c: Col): Layers {
     v[2 * i - 1] = c.z0[i] - c.z1[i - 1];
     v[2 * i] = c.z1[i] - c.z0[i];
   }
-  return { mat: c.mat.slice(), v };
+  return { mat: c.mat.slice(), v, edge: c.mat.map((_m, i) => edgeAt(c, i)) };
 }
 
 export function fromLayers(l: Layers): Col {
@@ -46,7 +53,7 @@ export function fromLayers(l: Layers): Col {
   }
   z1[0] = z;
   z0[0] = OPEN_BOTTOM;
-  return { mat: l.mat.slice(), z0, z1 };
+  return { mat: l.mat.slice(), z0, z1, edge: l.mat.map((_m, i) => edgeAt(l, i)) };
 }
 
 export const sameStructure = (a: { mat: number[] }, b: { mat: number[] }) => a.mat.length === b.mat.length && a.mat.every((m, i) => m === b.mat[i]);
@@ -174,38 +181,45 @@ export interface Frame {
 export interface Part {
   top: number[];
   mat: number[];
+  /** (round 22) per record, the edge sample of its top (edge.ts; the material word's bits 8-29 on the GPU) */
+  edge?: number[];
 }
 export const AIR = 0;
 
 /** the partition of a solid view (the pass boundary, gpu: nest.wgsl pack): air where an interval starts above the last
- *  top; empty intervals dropped; adjacent records of one material merged */
+ *  top; empty intervals dropped; adjacent records of one material merged (round 22: a merged record keeps the edge of
+ *  the interval whose top it keeps; air records have none) */
 export function toPart(c: Col): Part {
-  const out: Part = { top: [], mat: [] };
-  const push = (t: number, m: number) => {
+  const out: Part = { top: [], mat: [], edge: [] };
+  const push = (t: number, m: number, e: number) => {
     const n = out.mat.length;
     if (n && t <= out.top[n - 1]) return;
-    if (n && out.mat[n - 1] === m) out.top[n - 1] = t;
-    else {
+    if (n && out.mat[n - 1] === m) {
+      out.top[n - 1] = t;
+      out.edge![n - 1] = e;
+    } else {
       out.top.push(t);
       out.mat.push(m);
+      out.edge!.push(e);
     }
   };
   for (let i = 0; i < c.mat.length; i++) {
     if (i > 0 && !(c.z1[i] > c.z0[i])) continue;
     const n = out.mat.length;
-    if (n && i > 0 && c.z0[i] > out.top[n - 1]) push(c.z0[i], AIR);
-    push(c.z1[i], c.mat[i]);
+    if (n && i > 0 && c.z0[i] > out.top[n - 1]) push(c.z0[i], AIR, 0);
+    push(c.z1[i], c.mat[i], edgeAt(c, i));
   }
   return out;
 }
 /** the solid view of a partition: its non-air records, each from the top below it (gpu: store.wgsl ivlAt) */
 export function fromPart(p: Part): Col {
-  const out: Col = { mat: [], z0: [], z1: [] };
+  const out: Col = { mat: [], z0: [], z1: [], edge: [] };
   for (let j = 0; j < p.mat.length; j++) {
     if (p.mat[j] === AIR) continue;
     out.mat.push(p.mat[j]);
     out.z0.push(j === 0 ? OPEN_BOTTOM : p.top[j - 1]);
     out.z1.push(p.top[j]);
+    out.edge!.push(edgeAt(p, j));
   }
   return out;
 }
@@ -263,6 +277,9 @@ export interface Res {
   whole: boolean;
   mat?: number[];
   r: number[];
+  /** (round 22) per interval: a whole column's edge fields; a per-bound residual's overrides (RES_EDGE | the live
+   *  field, where the live edge differs from the enhanced one; 0: the enhanced edge stands) */
+  edge?: number[];
 }
 
 /** the chain of live levels over one root, with each depth's sparse residual (global column key -> residual) */
@@ -308,7 +325,10 @@ export class Nest {
         const fsum = ppm2(S, px, py, a, b, k);
         const s = (pref - f.z0) * k + fsum * k + detail(px * k + a, py * k + b, f.depth, k, this.seed, this.detailAmp);
         sum += s;
-        out.push({ mat: own.mat.slice(), v: [s] });
+        // (round 22) each interval's edge: the parent's line seen from this child (edge.ts edgeToChild; none past range)
+        const ox = (a + 0.5) / k - 0.5;
+        const oy = (b + 0.5) / k - 0.5;
+        out.push({ mat: own.mat.slice(), v: [s], edge: own.mat.map((_m, i) => edgeToChild(edgeAt(own, i), ox, oy, k)) });
       }
     }
     const D = k * k * k * (pref - f.z0) - sum;
@@ -357,10 +377,15 @@ export class Nest {
     let t = cols[0];
     for (const c of cols) if (c.mat.length > t.mat.length) t = c;
     const z0 = child.f.z0;
+    // (round 22) each interval's edge from the children of the template's interval count that keep one (edge.ts
+    // edgeFromChildren: the mean normal, the mean line point), children in row order
+    const offs: [number, number][] = [];
+    for (let b = 0; b < k; b++) for (let a = 0; a < k; a++) offs.push([(a + 0.5) / k - 0.5, (b + 0.5) / k - 0.5]);
+    const edge = t.mat.map((_m, i) => edgeFromChildren(cols.map((c) => (c.mat.length === t.mat.length ? edgeAt(c, i) : 0)), offs, k));
     if (cols.every((c) => sameStructure(c, t))) {
       const acc = toLayers(t).v.map(() => 0);
       for (const c of cols) toLayers(c).v.forEach((v, i) => (acc[i] += v));
-      return fromLayers({ mat: t.mat.slice(), v: acc.map((s, i) => (i === 0 ? z0 + s / kk / k : s / kk / k)) });
+      return fromLayers({ mat: t.mat.slice(), v: acc.map((s, i) => (i === 0 ? z0 + s / kk / k : s / kk / k)), edge });
     }
     const vol = (c: Col) => {
       const m = new Map<number, number>();
@@ -382,7 +407,7 @@ export class Nest {
     }
     const tv = vol(t);
     const n = t.mat.length;
-    const out: Col = { mat: t.mat.slice(), z0: new Array(n), z1: new Array(n) };
+    const out: Col = { mat: t.mat.slice(), z0: new Array(n), z1: new Array(n), edge };
     let z = z0 + S / k;
     for (let i = n - 1; i >= 1; i--) {
       const m = t.mat[i];
@@ -420,7 +445,7 @@ export class Nest {
               // enhanced surface (so it rides on parent changes under it)
               const S = e.z1[e.mat.length - 1];
               const n = rr.mat!.length;
-              const c: Col = { mat: rr.mat!.slice(), z0: new Array(n), z1: new Array(n) };
+              const c: Col = { mat: rr.mat!.slice(), z0: new Array(n), z1: new Array(n), edge: rr.mat!.map((_m, i) => rr.edge?.[i] ?? 0) };
               for (let i = n - 1; i >= 0; i--) {
                 const at = 4 * (n - 1 - i);
                 c.z1[i] = S + rr.r[at] + rr.r[at + 1];
@@ -439,6 +464,9 @@ export class Nest {
               e.z1[i] = Math.min(add(e.z1[i], 4 * (n - 1 - i)), prev);
               if (i > 0) e.z0[i] = Math.min(add(e.z0[i], 4 * (n - 1 - i) + 2), e.z1[i]);
               prev = e.z0[i];
+              // (round 22) the residual's edge override where it applies
+              const ov = r ? (rr!.edge?.[i] ?? 0) : 0;
+              if (ov & RES_EDGE) e.edge![i] = ov & EDGE_MASK;
             }
             child.set(px * k + a, py * k + b, e);
           }
@@ -469,7 +497,9 @@ export class Nest {
               r.push(...resPair(live.z1[i], whole ? S : e.z1[i]));
               if (i > 0) r.push(...resPair(live.z0[i], whole ? S : e.z0[i]));
             }
-            if (whole || r.some((x) => x !== 0)) res.set(key, { whole, mat: whole ? live.mat.slice() : undefined, r });
+            // (round 22) edges: a whole column keeps its own; a per-bound residual overrides where live and enhanced differ
+            const edge = live.mat.map((_m, i) => (whole ? edgeAt(live, i) : edgeAt(live, i) !== edgeAt(e, i) ? RES_EDGE | edgeAt(live, i) : 0));
+            if (whole || r.some((x) => x !== 0) || edge.some((x) => x !== 0)) res.set(key, { whole, mat: whole ? live.mat.slice() : undefined, r, edge });
             else res.delete(key);
           }
       }
@@ -498,18 +528,22 @@ export class Nest {
   /** cz: the ball's centre height (local units of that depth; carve and add) */
   edit(depth: number, op: EditOp, cx: number, cy: number, r: number, amount: number, cz = 0): void {
     const lv = this.levels[depth];
-    const box = clip({ x0: Math.floor(cx - r), y0: Math.floor(cy - r), x1: Math.ceil(cx + r) + 1, y1: Math.ceil(cy + r) + 1 }, lv.f);
+    const ballOp = op === 'carve' || op === 'add';
+    // (round 22) a ball's box grows by EDGE_PAD: the columns round its outline get the edge sample too (nest.wgsl plan)
+    const pad = ballOp ? EDGE_PAD : 0;
+    const box = clip({ x0: Math.floor(cx - r) - pad, y0: Math.floor(cy - r) - pad, x1: Math.ceil(cx + r) + 1 + pad, y1: Math.ceil(cy + r) + 1 + pad }, lv.f);
     if (!box) return;
     for (let y = box.y0; y < box.y1; y++)
       for (let x = box.x0; x < box.x1; x++) {
         const dd = Math.hypot(x + 0.5 - cx, y + 0.5 - cy);
         const d = dd / r;
-        if (d >= 1) continue;
-        if (op === 'carve' || op === 'add') {
-          const h = Math.sqrt(r * r - dd * dd);
-          lv.set(x, y, applyBall(lv.at(x, y)!, op, cz - h, cz + h));
+        if (ballOp) {
+          const c0 = lv.at(x, y)!;
+          const c = d < 1 ? applyBall(c0, op, cz - Math.sqrt(r * r - dd * dd), cz + Math.sqrt(r * r - dd * dd)) : c0;
+          lv.set(x, y, ballEdge(c, ballSample(x + 0.5 - cx, y + 0.5 - cy, c0.z1[c0.z1.length - 1] - cz, r)));
           continue;
         }
+        if (d >= 1) continue;
         const p = (1 - d * d) * (1 - d * d);
         lv.set(x, y, applyOp(lv.at(x, y)!, op, amount * p));
       }
@@ -641,11 +675,14 @@ export const MAT = { stone: 1, soil: 2, sand: 3, clay: 4 } as const;
  *  partition (Level.set), soil touching soil is one record, so repeated adds cannot pile up intervals (gpu: nest.wgsl
  *  ball, then pack) */
 export function applyBall(c: Col, op: 'carve' | 'add', lo: number, hi: number): Col {
-  const out: Col = { mat: [], z0: [], z1: [] };
-  const push = (m: number, a: number, b: number) => {
+  const out: Col = { mat: [], z0: [], z1: [], edge: [] };
+  // (round 22) an interval whose top the ball leaves keeps its edge; a top the ball made has none (ballEdge sets the
+  // column's topmost one)
+  const push = (m: number, a: number, b: number, e = 0) => {
     out.mat.push(m);
     out.z0.push(a);
     out.z1.push(b);
+    out.edge!.push(e);
   };
   const n = c.mat.length;
   for (let i = 0; i < n; i++) {
@@ -656,8 +693,8 @@ export function applyBall(c: Col, op: 'carve' | 'add', lo: number, hi: number): 
     }
     if (op === 'carve' && c.z1[i] > lo && c.z0[i] < hi) {
       if (c.z0[i] < lo) push(c.mat[i], c.z0[i], lo);
-      if (c.z1[i] > hi) push(c.mat[i], out.mat.length ? hi : OPEN_BOTTOM, c.z1[i]);
-    } else push(c.mat[i], c.z0[i], c.z1[i]);
+      if (c.z1[i] > hi) push(c.mat[i], out.mat.length ? hi : OPEN_BOTTOM, c.z1[i], edgeAt(c, i));
+    } else push(c.mat[i], c.z0[i], c.z1[i], edgeAt(c, i));
   }
   if (op === 'add') {
     const a = Math.max(c.z1[n - 1], lo);
@@ -668,20 +705,46 @@ export function applyBall(c: Col, op: 'carve' | 'add', lo: number, hi: number): 
   return out;
 }
 
+/** (round 22) the columns round a ball's outline whose edge sample is written (nest.wgsl EDGE_PAD) */
+export const EDGE_PAD = 3;
+/** (round 22) a ball's edge sample for a column whose centre is (dx, dy) from the ball's centre, at height dz over the
+ *  ball's centre (the column's ORIGINAL top: for a carve's rim the circle where the sphere cuts the original surface):
+ *  the circle where the sphere cuts that height, as the column's tangent line (edge.ts; 0 where the sphere does not
+ *  reach that height or the line is past the range) (gpu: nest.wgsl ballEdgeAt) */
+export function ballSample(dx: number, dy: number, dz: number, r: number): number {
+  if (!(Math.abs(dz) < r)) return 0;
+  const R = Math.sqrt(r * r - dz * dz);
+  const rho = Math.hypot(dx, dy);
+  return rho > 0 ? edgeEnc(dx / rho, dy / rho, R - rho) : edgeEnc(1, 0, R);
+}
+/** (round 22) a ball's result column c (from c0) with its topmost interval's edge: the sample where there is one, else
+ *  what applyBall left (none where the ball changed that top, the old one where it did not) */
+export function ballEdge(c: Col, e: number): Col {
+  const out: Col = { mat: c.mat.slice(), z0: c.z0.slice(), z1: c.z1.slice(), edge: c.mat.map((_m, i) => edgeAt(c, i)) };
+  if (e) out.edge![out.mat.length - 1] = e;
+  return out;
+}
+
 /** a brush step on one column: raise adds to the top interval; dig removes from the top down (emptied intervals stay,
  *  with zero thickness, at the new surface; interval 0 is open below and never runs out) */
 export function applyOp(c: Col, op: EditOp, a: number): Col {
   const n = c.mat.length;
   const z0 = c.z0.slice();
   const z1 = c.z1.slice();
+  // (round 22) a top this moves loses its edge sample (raise and dig make no sharp edge)
+  const edge = c.mat.map((_m, i) => edgeAt(c, i));
   if (op === 'raise') {
     z1[n - 1] += a;
+    edge[n - 1] = 0;
   } else {
     const top = z1[n - 1] - a;
     for (let i = n - 1; i >= 0; i--) {
-      if (z1[i] > top) z1[i] = top;
+      if (z1[i] > top) {
+        z1[i] = top;
+        edge[i] = 0;
+      }
       if (i > 0 && z0[i] > top) z0[i] = top;
     }
   }
-  return { mat: c.mat.slice(), z0, z1 };
+  return { mat: c.mat.slice(), z0, z1, edge };
 }

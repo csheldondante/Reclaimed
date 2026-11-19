@@ -338,8 +338,9 @@ describe('nested scales oracle', () => {
     // a solid view with a touching pair of one material, an empty interval and a gap: one record each, air between
     const c: Col = { mat: [MAT.stone, MAT.soil, MAT.soil, MAT.clay, MAT.soil], z0: [OPEN_BOTTOM, 1, 2, 2.5, 4], z1: [1, 2, 2.5, 2.5, 5] };
     const p = toPart(c);
-    expect(p).toEqual({ top: [1, 2.5, 4, 5], mat: [MAT.stone, MAT.soil, AIR, MAT.soil] });
-    expect(fromPart(p)).toEqual({ mat: [MAT.stone, MAT.soil, MAT.soil], z0: [OPEN_BOTTOM, 1, 4], z1: [1, 2.5, 5] });
+    // (round 22: every record carries its edge field, none here)
+    expect(p).toEqual({ top: [1, 2.5, 4, 5], mat: [MAT.stone, MAT.soil, AIR, MAT.soil], edge: [0, 0, 0, 0] });
+    expect(fromPart(p)).toEqual({ mat: [MAT.stone, MAT.soil, MAT.soil], z0: [OPEN_BOTTOM, 1, 4], z1: [1, 2.5, 5], edge: [0, 0, 0] });
     // adds over one column, each overlapping the last: one soil record above the stone, however many
     const n = nest();
     const x = F1.gx / K + 6;

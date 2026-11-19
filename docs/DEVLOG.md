@@ -27608,3 +27608,17 @@ frame 9.94 s); `?selftest=1&smooth=only` 11 of 11. The full selftests were not r
 fragment shading (shade.wgsl), one uniform word the flat path never reads, and two URL flags; no geometry, bake,
 store or camera code changed. (The repository-wide unit run has 6 failures in flags, transfers and writing lints on
 files this round did not touch: nested/main.ts, table/main.ts, archgen, atlas; pre-existing.)
+
+## 2026-11-19 — Nested scales lab, round 22: round edges (the sheet slide), step b: the reference
+
+The owner: "If you can fix the rim artifacts first as they are distracting. I really want the look of something like
+dual contouring but without the cost". A record's material word keeps an edge sample in its spare bits 8-29 (materials
+use 0-7; 0 = none, so no layout, page or memory change): the edge line's normal angle (9 bits) and the signed distance
+from the column's centre (12 bits over +-2 columns). src/nested/edge.ts encodes it and solves the slide; the oracle's
+carve and add write it (the circle where the sphere cuts each column's original top), raise and dig clear what they
+move, enhance and restrict carry it as a straight line, the residual keeps the live edge where enhance would not give it
+back; boxmesh.ts sheetMesh slides each corner whose cell the edge crosses onto the least-squares point of its members'
+lines. Measured (test/unit/nested-slide.test.ts): a carve of radius 7.2 on flat ground: 58 rim corners, all slid,
+every one within 0.02 columns of the true circle beyond what the bound lets it reach; the farthest rim vertex is 0.346
+columns off the circle (0.696 unslid). The bound is 0.35, not the brief's 0.45: at 0.45 random carves folded 8
+triangles in the first run; 0.35 is the largest disc that provably never folds a sheet triangle (edge.ts SLIDE_MAX).
