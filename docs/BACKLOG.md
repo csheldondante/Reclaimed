@@ -409,6 +409,15 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   horizontal down caps out on both sides (the GPU bakes fans where the reference has two triangles a column).
 - NS-114 (limit, round 14) Smooth: a down-cap fan only where every corner line on the block's rim leaves the bottom where
   it is (clusterAt(zb) == zb); elsewhere each column keeps its placed two-triangle down cap (more triangles; never seen).
+- NS-116 (bug, round 14, blocks the smooth toggle) With the smooth draw on in a deeply dug world (the full selftest's
+  sandbox after the box pit section: shafts to -24, four levels), a bake runs past the driver's timeout and the device
+  is lost (the watertight suite's pose 15). The switch and promote now bake a chunk row a submit; slides and edits
+  still bake their regions in one dispatch. Fix the cost (NS-112) or split every smooth bake into bounded dispatches;
+  then the 3-run pose gate and the page toggle.
+- NS-117 (perf, round 14) The smooth draw is vertex-bound (a 4 x 4 canvas costs what the full one does): 2.5x the box draw
+  (hillside 9.1 vs 3.7 ms, tunnel 18 vs 7 ms) for 5x fewer visible triangles. Next: the design's fallback, walls as a
+  per-chunk list of edges whose wall bit is set and whose tops differ (one word an edge, written by the classify step),
+  drawn as a second instanced draw of 6 triangles an edge; caps a 2-triangle template.
 - NS-115 (measurement only, round 14) GpuNest.skip 'cache' / 'ex' leave out the smooth cache pass / exception bake (the
   result is then wrong); nested-perf.mjs `--smooth 1`, `--sab 1` (boxes vs smooth in one page), nested-smooth.mjs
   (`--skips 1`, `--shaft 1`, `--box 1`).

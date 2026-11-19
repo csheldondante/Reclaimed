@@ -63,6 +63,40 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
       });
       console.log(`${name}: draw boxes ${med(r.box).toFixed(2)} ms (${r.box.map((x) => x.toFixed(1)).join(' ')}), smooth ${med(r.smooth).toFixed(2)} ms (${r.smooth.map((x) => x.toFixed(1)).join(' ')}); drawn triangles boxes ${r.tris.box}; smooth ${r.tris.smooth}`);
     }
+    // (the aside) vertex vs pixel share of the draw: the same draw into a 4 x 4 canvas (the vertex work and almost no
+    // pixels) against the full one, boxes and smooth, at the hillside and inside the tunnel
+    for (const vn of ['hillside', 'tunnel inside, looking back']) {
+      await page.evaluate((v) => nested.setView(v), views[vn]);
+      await sleep(2500);
+      const vp = await page.evaluate(async () => {
+        const out = {};
+        const cv = nested.app.canvas;
+        const fr = () => new Promise((r) => requestAnimationFrame(r));
+        for (const sm of [false, true]) {
+          await nested.smooth(sm);
+          for (let i = 0; i < 10; i++) await fr();
+          const full = [];
+          const tiny = [];
+          for (let rep = 0; rep < 3; rep++) {
+            cv.style.width = '';
+            cv.style.height = '';
+            for (let i = 0; i < 4; i++) await fr();
+            full.push(await nested.benchDraw(10));
+            cv.style.width = '4px';
+            cv.style.height = '4px';
+            for (let i = 0; i < 4; i++) await fr();
+            tiny.push(await nested.benchDraw(10));
+          }
+          cv.style.width = '';
+          cv.style.height = '';
+          const med = (v) => [...v].sort((x, y) => x - y)[1];
+          out[sm ? 'smooth' : 'box'] = { full: +med(full).toFixed(2), tiny: +med(tiny).toFixed(2) };
+        }
+        await nested.smooth(false);
+        return out;
+      });
+      console.log(`${vn}: draw full vs a 4 x 4 canvas (vertex share), ms: boxes ${vp.box.full} / ${vp.box.tiny}; smooth ${vp.smooth.full} / ${vp.smooth.tiny}`);
+    }
     await page.evaluate((v) => nested.setView(v), views['tunnel mouth']);
     await sleep(2500);
     const c = await page.evaluate(async (h) => {

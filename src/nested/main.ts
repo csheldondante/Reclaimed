@@ -52,13 +52,20 @@ async function main(): Promise<void> {
     // cave and shaft poses. ?smooth=only runs this section alone; ?smooth=0 skips it.
     const smoothSection = async (res: { pass: boolean; name: string; detail: string }[], withSandbox: boolean) => {
       log.textContent += '\nThe smooth draw (round 14)\n\n';
-      const { smoothAgainstReference } = await import('./smoothref');
-      for (const c of await smoothAgainstReference(device, (s) => console.log(`[smooth] ${s}`))) {
-        res.push(c);
-        say(c);
-      }
-      if (!withSandbox) return;
+      // (the GPU against the reference last: a second pool of its own beside the sandbox's)
+      const reference = async () => {
+        const { smoothAgainstReference } = await import('./smoothref');
+        for (const c of await smoothAgainstReference(device, (s) => console.log(`[smooth] ${s}`))) {
+          res.push(c);
+          say(c);
+        }
+      };
+      if (!withSandbox) return reference();
       const api = (window as unknown as { nested: Parameters<typeof import('./suite').watertightSuite>[0] & { smooth(on: boolean): Promise<void> } }).nested;
+      {
+        const a = (api as unknown as { app: { nest: import('./gpu/nest').GpuNest } }).app;
+        console.warn(`[smooth] switching the sandbox on: ${a.nest.live} levels, pool ${JSON.stringify(a.nest.stats)}`);
+      }
       await api.smooth(true);
       await new Promise((r) => setTimeout(r, 1500));
       const { watertightSuite, pitAndCave } = await import('./suite');
@@ -68,15 +75,17 @@ async function main(): Promise<void> {
         res.push(s);
         say(s);
       }
-      if (q.get('pit') === '0') return;
-      const pit = await pitAndCave(api, { taps: 4, log: (s) => console.log(`[suite] smooth ${s}`) });
-      for (const c of [
-        { name: 'smooth: screen: no hole pixels in the pit, cave and shaft poses, also after a cruise, a demote and the pool\'s shrinks', pass: pit.total === 0, detail: `${pit.total} hole pixels over ${pit.poses} poses` },
-        { name: 'smooth: coverage after the pit, cave, shafts, a cruise, a demote and shrinks', pass: pit.coverage === 0, detail: `${pit.coverage} faults` },
-      ]) {
-        res.push(c);
-        say(c);
+      if (q.get('pit') !== '0') {
+        const pit = await pitAndCave(api, { taps: 4, log: (s) => console.log(`[suite] smooth ${s}`) });
+        for (const c of [
+          { name: 'smooth: screen: no hole pixels in the pit, cave and shaft poses, also after a cruise, a demote and the pool\'s shrinks', pass: pit.total === 0, detail: `${pit.total} hole pixels over ${pit.poses} poses` },
+          { name: 'smooth: coverage after the pit, cave, shafts, a cruise, a demote and shrinks', pass: pit.coverage === 0, detail: `${pit.coverage} faults` },
+        ]) {
+          res.push(c);
+          say(c);
+        }
       }
+      await reference();
     };
     if (q.get('smooth') === 'only') {
       const res: { pass: boolean; name: string; detail: string }[] = [];

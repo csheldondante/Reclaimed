@@ -193,12 +193,8 @@ export class App {
       this.buttons.get('tint')!.classList.toggle('on', this.render.tint);
     });
     this.buttons.get('tint')!.classList.toggle('on', this.render.tint);
-    // (round 14, NS-107) the smooth draw: the boxes' vertices moved by the collapse (boxes stay the default)
-    add('smooth', 'Smooth', () => {
-      this.wantSmooth = !this.wantSmooth;
-      this.buttons.get('smooth')!.classList.toggle('on', this.wantSmooth);
-    });
-    this.buttons.get('smooth')!.classList.toggle('on', this.wantSmooth);
+    // (round 14, NS-107) the smooth draw is a URL switch only (?smooth=1), no page toggle: in a deeply dug world its bakes
+    // can still run past the driver's timeout (NS-116), so it does not meet the watertight gate on every pose set yet
     this.setMode(this.mode);
     const c = this.canvas;
     c.addEventListener('pointerdown', (e) => {

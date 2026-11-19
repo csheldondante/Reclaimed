@@ -141,5 +141,8 @@ export async function smoothAgainstReference(device: GPUDevice, log: (s: string)
   const rim = rimJunctions(caps, g.wins.slice(0, 3) as { gx: number; gy: number; n: number }[], K);
   const j = rim.reduce((a, r) => a + r.junctions + r.unflagged, 0);
   out.push({ name: 'smooth: rim lines of the small chain, no junctions, every parent rim vertex in the child\'s units', pass: j === 0 && rim.every((r) => r.lines > 0), detail: JSON.stringify(rim.map((r) => ({ L: r.depth, lines: r.lines, junctions: r.junctions, unflagged: r.unflagged, where: r.where }))) });
+  // (the small pool's memory given back before the sandbox's tests)
+  await device.queue.onSubmittedWorkDone();
+  g.destroy();
   return out;
 }

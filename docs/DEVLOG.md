@@ -27130,3 +27130,52 @@ outward within the cluster 43 ... 508. The suite's pit then passes.
   directory's cache branch).
 
 Step C (crease shading) and D (measurements, stills) follow in this round.
+
+## 2026-11-19 — Nested scales lab, round 14 steps C and D: crease shading; what the smooth draw costs and looks like
+
+**C, built.** The cache pass writes a vertex normal per slot (the normalised sum of the top-quad normals of the line's
+columns on the same placed vertex; the cluster table now covers the ring of lines round the chunk so border lines get
+the same normals in both chunks); the template interpolates it and the fragment stage uses it within the crease angle
+(default 50 degrees, `?crease=`) of the face normal, else flat. Exceptions are flat (not attempted). NESTED_SCALES.md
+"As built (round 14)".
+
+**The device was lost in the full selftest, not in the smooth-only one.** After the box sections the sandbox holds a deep
+dug world at three to four levels; with the smooth draw on, a whole-window bake in one dispatch (the switch itself, then
+a promote to depth 3) ran past the driver's timeout. Both now bake a row of chunks a submit (still one op in one frame).
+Measured on the way: switching on after 35 box shaft carves, 2 levels: 965 ms. It is still lost later in the same run (the
+watertight suite's pose 15 at four live levels: every pixel a hole, then the device gone): some other whole-region smooth
+bake (a slide's entering chunks, an edit) is still too long for one dispatch in that world. So the smooth draw stays a
+URL switch only (`?smooth=1`), the page toggle is taken out (NS-116).
+
+**D, measured** (nested-perf.mjs `--sab 1`, boxes and smooth alternating in one page, 960 x 640, medians of 3; the GPU was
+quiet this run, earlier runs were 2x noisier).
+
+| view | draw boxes | draw smooth | drawn triangles boxes | smooth |
+|---|---|---|---|---|
+| mound outside | 4.8 ms | 13.4 ms | L0 758k, L1 605k | L0 152k, L1 188k |
+| tunnel inside | 7.2 | 18.0 | 758k, 592k, 1,063k | 152k, 185k, 329k |
+| tunnel inside, looking back | 7.1 | 18.0 | 758k, 589k, 1,267k | 152k, 184k, 390k |
+| tunnel mouth | 6.7 | 18.2 | | |
+| blob on a stalk | 4.2 | 10.1 | | |
+| hillside | 3.7 | 9.1 | | |
+| the map | 2.9 | 5.9 | 769k | 152k |
+
+- Vertex vs pixel (the same draw into a 4 x 4 canvas): boxes 5.7 full / 3.3 tiny (hillside), 8.1 / 7.3 (tunnel); smooth
+  10.3 / 10.6 and 17.4 / 16.3. The smooth draw is entirely vertex-bound: the template's 14 triangle slots a column (42
+  vertex invocations, each decoding a mask and reading the cache) for ~2 visible triangles. The design's fallback (the
+  walls as a per-chunk edge list drawn as a second instanced draw, caps a 2-triangle template) is the next step (NS-117).
+- Carve at level 1 (tunnel mouth, three levels): boxes median 13.1 ms, bakes' share 7.0; smooth 17.0 ms, bakes' share
+  9.1; the cache pass alone ~2.4 ms (with the exception bake skipped), over the 1.5 ms target.
+- Switching the smooth draw on (pipelines already made, fresh sandbox): 224 ms.
+
+**Gate.**
+
+| | smooth off | smooth on |
+|---|---|---|
+| selftest | 36 of 36 (every full run this round) | `smooth=only`: 11 of 11 once (closure, rim lines, coverage, 0 hole pixels over 40 poses, cruise and 162 pit poses, GPU = reference); the full run loses the device in the dug world (NS-116): NOT met (3 runs) |
+| closure / rim / coincident | 0 / 0 / - | 0 odd, 0 junctions, 0 coincident, 0 degenerate |
+| draw, worst view | 7.2 ms | 18.2 ms: NOT under boxes |
+| carve median | 13.1 ms | 17.0 ms: NOT under boxes |
+
+Stills: only the development shots (local/nested/r14-dev-boxes.png, r14-dev-smooth.png, r14-dev-carved.png); the
+pose set script (scripts/nested-r14-stills.mjs) is written but was not run.

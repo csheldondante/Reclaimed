@@ -748,6 +748,11 @@ wallTmpl / emitColS / faceBake (SMOOTH), draw.wgsl tCorner / vsT / vsS / fsS / c
   dirFinish the indirect arguments at (8 + L) x 16: 256 x 14 x 3 vertices an instance) and the exceptions (the face
   pages, the box draw's corner decode, z already placed). The fragment stage takes the face normal from the screen
   derivatives of the level-local position, turned toward the eye.
+- *Status at the end of round 14:* `?smooth=1` only (no page toggle): watertight on every check that ran to the end
+  (closure, rim lines, coverage, 0 hole pixels over the 40 poses, cruise and 162 pit poses, GPU = reference), but in the
+  full selftest's dug world a smooth bake still overruns the driver's timeout (NS-116), and the draw is vertex-bound at
+  2.5x the boxes (NS-117: the edge-list fallback is next). Whole-window smooth bakes (the switch, a promote) go a chunk
+  row a submit. Where to pick up: NS-116, then NS-117, then the 3-run gate, the stills (scripts/nested-r14-stills.mjs).
 - *Shading (step C, as built):* the cluster table covers the chunk's lines and the ring round them (19 x 19, CLOFF 361
   words) so that the cache pass can place the four corners of every column round the chunk (-1..16) and take its top
   quad's area normal (the diagonals' cross product; zero where a corner is a rim line). A slot's normal is the

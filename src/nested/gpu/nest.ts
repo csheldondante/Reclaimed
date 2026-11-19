@@ -302,6 +302,10 @@ export class GpuNest {
     });
   }
 
+  /** (tests) every buffer let go: a pool made for one test and dropped */
+  destroy(): void {
+    for (const b of [...this.segs, this.tab, this.ctl, this.scr, this.reg, this.args, this.drawArgs, this.dir, this.cam, this.ubuf]) b?.destroy();
+  }
   /** live levels: the chain's length */
   get live(): number {
     let n = 0;
@@ -714,14 +718,19 @@ export class GpuNest {
     }
     if (!on) for (let m = 0; m < live; m++) this.run('release', this.uni(({ a, e }) => ((a[2] = 8), (a[3] = m), e.set([0, 0, 0, 0]))), TCAP / 64);
     this.mergeFrees();
-    // (one submit a level: the CPU slots are written before each submit)
+    // (one submit a row of chunks: a whole dug window in one dispatch may run past the driver's timeout and lose the
+    // device; the CPU slot is written before each submit)
     for (let m = 0; m < live; m++) {
       const w = this.wins[m]!;
-      this.bakeRects(m, [{ x0: w.gx / 16, y0: w.gy / 16, x1: (w.gx + w.n) / 16, y1: (w.gy + w.n) / 16 }], 0);
-      this.directory();
-      this.mergeFrees();
-      this.submit();
+      for (let y = w.gy / 16; y < (w.gy + w.n) / 16; y++) {
+        this.bakeRects(m, [{ x0: w.gx / 16, y0: y, x1: (w.gx + w.n) / 16, y1: y + 1 }], 0);
+        this.mergeFrees();
+        this.submit(false);
+      }
     }
+    this.directory();
+    this.mergeFrees();
+    this.submit();
     this.trace?.(this, `smooth ${on}`);
     return true;
   }
@@ -773,8 +782,17 @@ export class GpuNest {
     this.runIndirect('derive', this.uni(({ a, r, e }) => ((a[2] = 0), (a[3] = L), (r[0] = s), (e[0] = this.oldTop))), s);
     this.pack(L, s);
     // the child's faces, and in the same submit the parent's round the footprint (it stops drawing there, its walls
-    // face the child): the parent's surface is never missing for a frame
-    this.bake(L, [s]);
+    // face the child): the parent's surface is never missing for a frame. (Round 14: with the smooth draw on, the child's
+    // window a row of chunks a submit: the whole window in one dispatch ran past the driver's timeout and lost the device
+    // in a dug world. The op still runs in one frame, so no frame draws a part.)
+    if (this.smooth) {
+      this.submit(false);
+      for (let y = w.gy / 16; y < (w.gy + w.n) / 16; y++) {
+        this.bakeRects(L, [{ x0: w.gx / 16, y0: y, x1: (w.gx + w.n) / 16, y1: y + 1 }], 0);
+        this.mergeFrees();
+        this.submit(false);
+      }
+    } else this.bake(L, [s]);
     this.bakeRects(L - 1, [fc], 1);
     this.directory();
     this.mergeFrees();

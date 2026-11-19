@@ -70,6 +70,15 @@ await run({ name: 'nested-smooth', kind: 'behaviour', size: '960x640', dpr: 1, e
       return out;
     });
     console.log(`shaft carves ms: ${r.join(' ')}`);
+    if (R.opt('box', '0') === '1') {
+      // (the switch in a world dug with boxes: the full selftest lost the device there)
+      const t = await page.evaluate(async () => {
+        const t0 = performance.now();
+        await nested.smooth(true);
+        return { ms: performance.now() - t0, fatal: document.querySelector('.fatal')?.textContent ?? '' };
+      });
+      console.log(`switch on after the shafts: ${JSON.stringify(t)}`);
+    }
   }
   // (--skips 1) how many chunks a carve's cache pass found unchanged (cache page word 2; all 0 after the switch)
   if (R.opt('skips', '0') === '1') {
