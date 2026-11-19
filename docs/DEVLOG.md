@@ -27560,4 +27560,7 @@ views each). Cost: at most 9 3D gradient noises a pixel (7 band, 1 broad, 1 crac
 textured boxes 136-214 ms, sheets 176-244, sky 24-34; made in 450-470 ms after the first frame in headless Chrome.
 Boot gate: reload first frame 6.5-7.3 s, every boot pipeline 11.9-13.1 s, first sheet frame 9.1-10.1 s.
 
-**End gate of round 20**: END_GATE_PLACEHOLDER
+**End gate of round 20**: typecheck; nested unit tests 59 of 59; compile gate passed (total 15.2 s of 31.5); detail
+continuity test passed; boot gate passed (cold and reload); `smooth=only` 11 of 11; full selftest smooth on 45 of 45,
+smooth off (`smooth=0`) 36 of 36. The selftests ran with the default `tex=1`: none of them compares colours (holes,
+coverage and pops read the info target, which the sky does not write), so they exercise the textured path.
