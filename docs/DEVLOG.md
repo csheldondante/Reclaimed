@@ -27760,3 +27760,14 @@ compile gate passed (derive 2,244, restrictK 828, total 17,764 ms); boot gate pa
 12. With `rimsnap=1` (which turns edge-aware enhance on in the sandbox and the smooth reference too): `smooth=only` 12 of
 12. Perf A/B (carve, sheet pass) not run: the scope cut (NS-178). The self-test's tunnel check now logs where the GPU
 and the oracle differ and the oracle's restrict of the GPU's children there (test only).
+
+## 2026-11-20 — Nested scales lab, round 25, step 0: edge-aware enhance parked, the slide off by default
+
+The owner has stopped rendering polish (editing, simulation, performance and terrain next). Round 24's edge-aware
+enhance (`?edgeenh`, commits 62bb1d75 and 2f7e7364) was not right in the game and cost compile time, so its code and
+test (test/unit/nested-edgeenh.test.ts) are removed from `nested-scales`; they stay on the pushed branch
+`exp/nested-edge-enhance`. The code files are back to 0fb3625f (round 23: `?rimsnap` stays); the docs keep the round 24
+record, marked parked (BACKLOG NS-179 to NS-182). `?slide` now defaults to 0 (the "Round edges" toggle and `?slide=1`
+stay). Compile gate after the removal: derive 2,043 ms, restrictK 717 (round 24 with the code: 2,316 / 820; before it
+1,985 / 661); total 15,623 ms. The budgets had not been loosened in round 24 (2,700 / 1,400 are round 19's), so none
+change. Nested unit tests 68 of 68.

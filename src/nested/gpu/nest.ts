@@ -178,9 +178,6 @@ export class GpuNest {
    *  lines inside its own box at its outside members' height; each quad's diagonal from its slid corners; a slid vertex
    *  shades with its quad's own normal (set before the first bake) */
   rimSnap = false;
-  /** (round 24, ?edgeenh=1; on with ?rimsnap=1) edge-aware enhance and its restrict (the oracle's Nest.edgeEnh; u.e.w
-   *  bit 3 in every pass that does not set e.w itself: derive and restrictK read it). Set before the first derive. */
-  edgeEnh = false;
   private pipes: Record<string, GPUComputePipeline> = {};
   /** the smooth draw (setSmooth): every bake runs the sheet pass instead of the box faces (round 16) */
   smooth = false;
@@ -359,7 +356,6 @@ export class GpuNest {
     c.fill(0);
     d.set([this.now(), 0, 0, this.detailAmp]);
     e.fill(0);
-    e[3] = this.edgeEnh ? 8 : 0;
     for (let m = 0; m < MAX_LEVELS; m++) {
       const w = this.wins[m];
       lv.set(w ? [w.gx, w.gy, w.n, 1] : [0, 0, 0, 0], m * 4);

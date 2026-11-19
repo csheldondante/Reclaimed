@@ -607,7 +607,7 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
 - NS-169 (perf, round 22) The round's carve and draw costs were measured on a GPU shared with another session (two
   pages of identical code paths differed 3x): re-measure the carve and the sheet pass against round 21 on a quiet
   machine, and on the phone.
-- NS-170 (look, round 22; round 24 built edge-aware enhance behind ?edgeenh=1, not right in the game yet: NS-179) Rims are still not round on screen: at a level finer than the brush's,
+- NS-170 (look, round 22; round 24 built edge-aware enhance behind ?edgeenh=1, not right in the game yet: NS-179; round 25: the code parked on exp/nested-edge-enhance) Rims are still not round on screen: at a level finer than the brush's,
   enhance's heights inherit the parent's staircase of cells (8 child columns a stair), which a 0.35-column slide cannot
   touch. Next: edge-aware enhance (a child near its parent's edge line takes the height of the side it lies on, block
   mean kept), then rimtop=1 by default (it spikes today where a derived corner's samples are one-sided).
@@ -637,7 +637,9 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
 - NS-178 (perf, round 23) The snap's carve and sheet-pass cost not measured (quick checks only, the owner's ask); step
   4 now has a barrier after step 3 and reads four cluster words a surface with rimsnap on. (Round 24: still not
   measured; the scope cut dropped the perf A/B.)
-- NS-179 (look, round 24, ?edgeenh=1, the main open item) Edge-aware enhance (oracle.ts enhanceTops / homeTop, nest.wgsl
+- (NS-179 to NS-182: round 25 removed the edge-aware enhance code from nested-scales; it is parked on the pushed
+  branch `exp/nested-edge-enhance` (commits 62bb1d75, 2f7e7364). The items stand for whoever picks it up there.)
+- NS-179 (look, round 24, ?edgeenh=1, parked on exp/nested-edge-enhance) Edge-aware enhance (oracle.ts enhanceTops / homeTop, nest.wgsl
   derive edgeFill / restrictK) is round in the reference (a level-1 circle at level 2: 3 columns carved on the wrong
   side against 215 with the staircase, none more than 0.03 from the circle) but NOT right in the game stills
   (local/nested/r24a-edgeenh1-*): a row of small brown spikes along the crater's near rim, the far wall's staircase and
@@ -646,18 +648,18 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   contradicts the parent's line; and the parent's value is a point sample at its centre treated as its home side's
   mean, which on a steep wall puts home children too high or too low. Behind its flag, default off; on with
   ?rimsnap=1 unless ?edgeenh=0.
-- NS-180 (fault, round 24, ?edgeenh=1) With edge-aware enhance the oracle self-test fails 3 of 27 (tunnel, blob, round
+- NS-180 (fault, round 24, ?edgeenh=1, parked on exp/nested-edge-enhance) With edge-aware enhance the oracle self-test fails 3 of 27 (tunnel, blob, round
   edges): the GPU and the oracle write some edge samples differently (f32 against f64 at the range edge, d about +-2,
   normals opposite: a child (1, 0) d 1.90 on the GPU, (-1, 0) d -2.00 in the oracle), and the home-side rule makes a
   parent's top depend on its children's sample signs, so one flipped sample moves a parent by up to 0.17 parent units
   (1.34 at depth 2). Diagnosed in the self-test (the oracle's restrict of the GPU's own children gives the GPU's value
   exactly). Fix at the source: the brush's sample at the range edge decided the same way in both (e.g. no sample where
   |d| rounds to the range's end), then rerun.
-- NS-181 (hack, round 24, ?edgeenh=1) A parent cut by its line is the mean of its HOME children only (the side most of
+- NS-181 (hack, round 24, ?edgeenh=1, parked on exp/nested-edge-enhance) A parent cut by its line is the mean of its HOME children only (the side most of
   its children lie on; a tie by the sign of the sum of their samples), not of all of them: block volume is not kept
   where an edge crosses, and at the brush's own level the coarser parent shows the majority side's height instead of
   the chamfered mean. Needed so restrict(enhance(P)) == P (zoom cycle drift 0; restrict over enhanced blocks 2.7e-15).
-- NS-182 (limit, round 24, ?edgeenh=1) Edge-aware enhance moves only the TOP interval's z1 (the surface brushes write
+- NS-182 (limit, round 24, ?edgeenh=1, parked on exp/nested-edge-enhance) Edge-aware enhance moves only the TOP interval's z1 (the surface brushes write
   samples on); a top pulled under its interval's z0 empties it (pack drops it: a cave roof's children on the hole's
   side keep the cave floor). Samples on lower intervals are carried but do not shape heights. The other side's surface
   is carried on from its nearest cells linearly and clamped between that cell and the cell's own top (a crease, not a

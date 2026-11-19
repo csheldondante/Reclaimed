@@ -388,8 +388,6 @@ var<workgroup> wOrigin: vec2<i32>;
 var<workgroup> wPTop: array<f32, 144>;
 /** derive (round 10): for each own cell (up to 64) and each cell of its 5 x 5 stencil, 1 where they share a structure */
 var<workgroup> wPSame: array<u32, 1600>;
-/** derive (round 24): the edge sample of the top of each parent cell round the chunk (as wPTop) */
-var<workgroup> wPEdge: array<u32, 144>;
 /** a slot's dispatch origin, uniform across the workgroup (it is read from a storage buffer) */
 fn slotOrigin(slot: u32, li: u32) -> vec2<i32> {
   if (li == 0u) { wOrigin = vec2<i32>(slotW(slot, 4u), slotW(slot, 5u)); }
@@ -451,63 +449,6 @@ fn edgeEnh(pm: u32, k: f32) -> u32 {
   let off = vec2<f32>((f32(gA) + 0.5) / k - 0.5, (f32(gB) + 0.5) / k - 0.5);
   return (pm & 0xffu) | edgeToChild(pm & EDGE_MASK, off, k);
 }
-/** (round 24) derive: this column's edge-aware top (child units; gS where the block's parent has no line or edge-aware
- *  enhance is off). The layer pass puts it on the top interval's z1 alone, never under its z0 (the oracle's enhancedCol). */
-var<private> gSe: f32;
-fn sgnI(v: i32) -> i32 { return select(select(0, -1, v < 0), 1, v > 0); }
-/** (round 24) derive: the top surface with the block's line (the oracle's enhanceTops): the limited PPM of the parent's
- *  5 x 5 tops round (px, py) with every cell on the other side of the line from side `sd` (a cell's side: its own
- *  sample's sign, else the parent's line at its centre) replaced by side sd's surface carried on from the nearest cells
- *  of that side (linearly where the next cell back is on that side too, never past the cell's own top), relative to
- *  pref as the plain one: written to gEv, which derive's PPM then reads */
-var<private> gEv: array<f32, 25>;
-fn edgeFill(pe: u32, px: i32, py: i32, p0: vec2<i32>, ps: i32, pref: f32, sd: bool) {
-  let an = edgeAng(pe);
-  let nP = vec2<f32>(cos(an), sin(an));
-  let dP = edgeD(pe);
-  var top: array<f32, 25>;
-  var side: array<bool, 25>;
-  for (var q = 0; q < 25; q++) {
-    let c = clampTo(u.a.w - 1u, px - 2 + q % 5, py - 2 + q / 5);
-    let cq = (py - 2 + q / 5 - p0.y) * ps + (px - 2 + q % 5 - p0.x);
-    top[q] = wPTop[cq];
-    let e = wPEdge[cq];
-    side[q] = dP - dot(nP, vec2<f32>(f32(c.x - px), f32(c.y - py))) > 0.0;
-    if ((e & EDGE_ON) != 0u) { side[q] = edgeD(e) > 0.0; }
-  }
-  for (var j = 0; j < 5; j++) {
-    for (var i = 0; i < 5; i++) {
-      let c = j * 5 + i;
-      var v = top[c];
-      if (side[c] != sd) {
-        var best = 99;
-        var sum = 0.0;
-        var cnt = 0.0;
-        for (var q = 0; q < 25; q++) {
-          let qx = q % 5;
-          let qy = q / 5;
-          let d = (qx - i) * (qx - i) + (qy - j) * (qy - j);
-          if (side[q] != sd || d > best) { continue; }
-          if (d < best) {
-            best = d;
-            sum = 0.0;
-            cnt = 0.0;
-          }
-          let rx = qx - sgnI(i - qx);
-          let ry = qy - sgnI(j - qy);
-          var ext = top[q];
-          if (rx >= 0 && rx < 5 && ry >= 0 && ry < 5) {
-            if (side[ry * 5 + rx] == sd) { ext = top[q] + (top[q] - top[ry * 5 + rx]) * f32(max(abs(i - qx), abs(j - qy))); }
-          }
-          sum += min(max(ext, min(top[q], top[c])), max(top[q], top[c]));
-          cnt += 1.0;
-        }
-        if (cnt > 0.0) { v = sum / cnt; }
-      }
-      gEv[c] = v - pref;
-    }
-  }
-}
 fn resAt(L: u32, rec: u32, w: u32) -> f32 {
   let p = pageOf(RES_ID + L, gX >> 4, gY >> 4, rec / K);
   if (p >= NOT_LOADED) { return 0.0; }
@@ -564,9 +505,8 @@ fn layers(lx: u32, ly: u32, li: u32, maxN: u32, mode: u32, write: bool) {
       }
     }
     if (valid) {
+      let e1 = z;
       let e0 = z - vals[0];
-      // (round 24) the top interval's z1: the edge-aware top, never under its z0 (gSe == gS: plain)
-      let e1 = select(z, max(e0, gSe), uu == 0u);
       if (gAct && !gWhole) {
         // (round 22: one call site for the material word of either mode, for the compile)
         var lv = Ivl(0.0, 0.0, 0u);
@@ -590,12 +530,10 @@ fn layers(lx: u32, ly: u32, li: u32, maxN: u32, mode: u32, write: bool) {
     var lv0 = Ivl(0.0, 0.0, 0u);
     if (mode == 1u) { lv0 = ivlAt(L, gX, gY, 0u); }
     let mw0 = matWord(L, P, 0u, kf, mode, lv0.m);
-    // (round 24: a one-interval column's top is the edge-aware one)
-    let t0 = select(z, gSe, gN == 1u);
-    if (mode == 0u && write) { setIvl(TMP_ID + L, gX, gY, 0u, OPEN_BOTTOM, min(addRes(t0, L, 0u, 1u), dPrev), mw0); }
+    if (mode == 0u && write) { setIvl(TMP_ID + L, gX, gY, 0u, OPEN_BOTTOM, min(addRes(z, L, 0u, 1u), dPrev), mw0); }
     if (mode == 1u) {
       if (write) { setRes(L, 0u, 0.0, 0.0); }
-      putResW(lv0.z1, t0, L, 0u, 1u, write, mw0);
+      putResW(lv0.z1, z, L, 0u, 1u, write, mw0);
     }
   }
 }
@@ -700,11 +638,7 @@ fn derive(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
   let p0 = vec2<i32>(cx * 16 / k - 2, cy * 16 / k - 2);
   for (var q = li; q < u32(ps * ps); q += 256u) {
     let c = clampTo(P, p0.x + i32(q) % ps, p0.y + i32(q) / ps);
-    let cn = colCount(P, c.x, c.y);
-    wPTop[q] = topS(P, c.x, c.y, cn);
-    // (round 24) the top's edge sample (edge-aware enhance only)
-    wPEdge[q] = 0u;
-    if ((u.e.w & 8) != 0 && cn > 0u) { wPEdge[q] = ivlAt(P, c.x, c.y, cn - 1u).m & EDGE_MASK; }
+    wPTop[q] = topS(P, c.x, c.y, colCount(P, c.x, c.y));
   }
   // (round 10) which of those cells share the structure of each parent cell the chunk's blocks hang from (the nb x nb
   // "own" cells, each against its 5 x 5 stencil). The top surface interpolates between same-structure cells
@@ -724,69 +658,25 @@ fn derive(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
   workgroupBarrier();
   let pref = wPTop[(py - p0.y) * ps + (px - p0.x)];
   let ownI = (py - p0.y - 2) * nb + (px - p0.x - 2);
-  // (round 24) edge-aware enhance (the oracle's enhanceTops): where the block's parent top keeps a line, this column's
-  // top from its side of it; the home side's (most children's: the parent's centre's) corrected to the parent's mean.
-  // The child's side: its own enhanced sample's sign, else the parent's line at its centre.
-  let pe = wPEdge[(py - p0.y) * ps + (px - p0.x)];
-  let useE = (pe & EDGE_ON) != 0u;
-  var sd = false;
-  var cdv = 0.0;
-  if (useE) {
-    let off = vec2<f32>(ux, uy);
-    let ce = edgeToChild(pe, off, kf);
-    let an = edgeAng(pe);
-    sd = edgeD(pe) - dot(vec2<f32>(cos(an), sin(an)), off) > 0.0;
-    if ((ce & EDGE_ON) != 0u) {
-      cdv = edgeD(ce);
-      sd = cdv > 0.0;
+  var rows = array<f32, 5>(0.0, 0.0, 0.0, 0.0, 0.0);
+  for (var j = 0; j < 5; j++) {
+    var q = array<f32, 5>(0.0, 0.0, 0.0, 0.0, 0.0);
+    for (var i = 0; i < 5; i++) {
+      let cq = (py - 2 + j - p0.y) * ps + (px - 2 + i - p0.x);
+      // (u.e.x = 1, tests only: round 9's rule, every neighbour's top, for the before stills)
+      if (u.e.x == 1 || wPSame[u32(ownI * 25 + j * 5 + i)] != 0u) { q[i] = wPTop[cq] - pref; }
     }
+    rows[j] = ppmSub(q, f32(gA), kf);
   }
-  // the 5 x 5 values round the block, relative to pref: pass 0 the plain ones, pass 1 (edge-aware) gEv's; one PPM code
-  for (var c = 0; c < 25; c++) {
-    let cq = (py - 2 + c / 5 - p0.y) * ps + (px - 2 + c % 5 - p0.x);
-    // (u.e.x = 1, tests only: round 9's rule, every neighbour's top, for the before stills)
-    gEv[c] = select(0.0, wPTop[cq] - pref, u.e.x == 1 || wPSame[u32(ownI * 25 + c)] != 0u);
-  }
-  var fs = vec2<f32>(0.0);
-  for (var pi = 0; pi < 2; pi++) {
-    var rows = array<f32, 5>(0.0, 0.0, 0.0, 0.0, 0.0);
-    for (var j = 0; j < 5; j++) {
-      var q = array<f32, 5>(0.0, 0.0, 0.0, 0.0, 0.0);
-      for (var i = 0; i < 5; i++) { q[i] = gEv[j * 5 + i]; }
-      rows[j] = ppmSub(q, f32(gA), kf);
-    }
-    fs[pi] = ppmSub(rows, f32(gB), kf);
-    if (!useE) { break; }
-    edgeFill(pe, px, py, p0, ps, pref, sd);
-  }
+  let fsum = ppmSub(rows, f32(gB), kf);
   let z0 = zOrigin(L);
-  let det = detail(gX, gY, i32(L), k, u.a.y, u.d.w);
-  var s = (pref - z0) * kf + fs.x * kf + det;
-  let se = (pref - z0) * kf + fs.y * kf + det;
+  var s = (pref - z0) * kf + fsum * kf + detail(gX, gY, i32(L), k, u.a.y, u.d.w);
   shv[li] = s;
   workgroupBarrier();
   let sum = blockSum(lid.x, lid.y, u32(k));
   workgroupBarrier();
   let D = kf * kf * kf * (pref - z0) - sum;
   gS = s + D * bumpW(gA, k) * bumpW(gB, k) / (kf * kf / 4.0);
-  let kk = kf * kf;
-  let w = bumpW(gA, k) * bumpW(gB, k);
-  var red = vec4<f32>(0.0);
-  for (var t = 0u; t < 4u; t++) {
-    // (the block's children inside; the sum of their samples; then the home children's tops and bump weights)
-    let home = 2.0 * red.x > kk || (2.0 * red.x == kk && red.y > 0.0);
-    let isHome = sd == home;
-    shv[li] = select(select(select(se, w, t == 3u), 0.0, t >= 2u && !isHome), select(cdv, select(0.0, 1.0, sd), t == 0u), t < 2u);
-    workgroupBarrier();
-    red[t] = blockSum(lid.x, lid.y, u32(k));
-    workgroupBarrier();
-  }
-  gSe = gS;
-  if (useE) {
-    let home = 2.0 * red.x > kk || (2.0 * red.x == kk && red.y > 0.0);
-    gSe = se;
-    if (sd == home) { gSe = se + (select(kk - red.x, red.x, home) * (pref - z0) * kf - red.z) * w / red.w; }
-  }
   // which 2 x 2 samples share the block's intervals
   gCompat = 0u;
   for (var jj = 0; jj < 2; jj++) {
@@ -895,70 +785,13 @@ fn restrictK(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
   setCount(T, X, Y, n, need);
   let inv = 1.0 / (kf * kf) / kf;
   var ss = 0.0;
-  // (round 24, edge-aware enhance's restrict: the oracle's homeTop) the same loop gathers the top's line (restrictEdge's
-  // maths for the top interval: the children of n intervals with a sample) and each child's top and side (its own
-  // sample's sign; 0 none, 1 inside, 2 outside: those without one are placed by the line after the loop)
-  let eOn = (u.e.w & 8) != 0;
-  var tops: array<f32, 64>;
-  var sides: array<u32, 64>;
-  var sN = vec2<f32>(0.0);
-  var sP = vec2<f32>(0.0);
-  var sC = 0.0;
-  var dSum = 0.0;
   for (var b = 0; b < k; b++) {
     for (var a = 0; a < k; a++) {
       let c = vec2<i32>(X * k + a, Y * k + b);
-      let cn = colCount(L, c.x, c.y);
-      let t = topS(L, c.x, c.y, cn);
-      ss += t;
-      if (eOn) {
-        let ci = b * k + a;
-        tops[ci] = t;
-        sides[ci] = 0u;
-        let e = ivlAt(L, c.x, c.y, max(cn, 1u) - 1u).m & EDGE_MASK;
-        if ((e & EDGE_ON) != 0u) {
-          let d = edgeD(e);
-          dSum += d;
-          sides[ci] = select(2u, 1u, d > 0.0);
-          if (cn == n) {
-            let an = edgeAng(e);
-            let nn = vec2<f32>(cos(an), sin(an));
-            sN += nn;
-            sP += vec2<f32>((f32(a) + 0.5) / kf - 0.5, (f32(b) + 0.5) / kf - 0.5) + (d / kf) * nn;
-            sC += 1.0;
-          }
-        }
-      }
+      ss += topS(L, c.x, c.y, colCount(L, c.x, c.y));
     }
   }
   var z = zOrigin(L) + ss * inv;
-  // where the parent's top keeps a line, its top is the mean of its home children's; the top interval's z0 and every
-  // bound below as before
-  let sl = length(sN);
-  // (the line as stored: quantised as restrictEdge's, none past the range, so a child without a sample is placed as the
-  // stored line places it)
-  var te = 0u;
-  if (eOn && sC > 0.0 && sl >= 0.5 * sC) { te = edgeEncA(atan2(sN.y / sl, sN.x / sl), dot(sN / sl, sP) / sC); }
-  let useH = (te & EDGE_ON) != 0u;
-  var zH = z;
-  if (useH) {
-    let an = edgeAng(te);
-    let nQ = vec2<f32>(cos(an), sin(an));
-    var nIn = 0.0;
-    var tIn = 0.0;
-    var tOut = 0.0;
-    for (var ci = 0; ci < k * k; ci++) {
-      var sd = sides[ci] == 1u;
-      if (sides[ci] == 0u) { sd = edgeD(te) - dot(nQ, vec2<f32>((f32(ci % k) + 0.5) / kf - 0.5, (f32(ci / k) + 0.5) / kf - 0.5)) > 0.0; }
-      if (sd) {
-        nIn += 1.0;
-        tIn += tops[ci];
-      } else { tOut += tops[ci]; }
-    }
-    let kk = kf * kf;
-    let home = 2.0 * nIn > kk || (2.0 * nIn == kk && dSum > 0.0);
-    zH = zOrigin(L) + select(tOut / (kk - nIn), tIn / nIn, home) / kf;
-  }
   if (same) {
     for (var i = max(n, 1u) - 1u; i >= 1u; i--) {
       var th = 0.0;
@@ -969,7 +802,7 @@ fn restrictK(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
           gap += layerVal(L, X * k + a, Y * k + b, 2u * i - 1u);
         }
       }
-      setIvl(T, X, Y, i, z - th * inv, select(z, max(z - th * inv, zH), useH && i + 1u == n), (ivlAt(L, tpl.x, tpl.y, i).m & 0xffu) | restrictEdge(L, X, Y, k, i, n));
+      setIvl(T, X, Y, i, z - th * inv, z, (ivlAt(L, tpl.x, tpl.y, i).m & 0xffu) | restrictEdge(L, X, Y, k, i, n));
       z = z - th * inv - gap * inv;
     }
   } else {
@@ -1003,11 +836,11 @@ fn restrictK(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
       if (tm[mi] > 0.0) { th = (iv.z1 - iv.z0) * (vm[mi] / kk / tm[mi]) / kf; }
       var gap = 0.0;
       if (tair > 0.0) { gap = (iv.z0 - ivlAt(L, tpl.x, tpl.y, i - 1u).z1) * (air / kk / tair) / kf; }
-      setIvl(T, X, Y, i, z - th, select(z, max(z - th, zH), useH && i + 1u == n), (iv.m & 0xffu) | restrictEdge(L, X, Y, k, i, n));
+      setIvl(T, X, Y, i, z - th, z, (iv.m & 0xffu) | restrictEdge(L, X, Y, k, i, n));
       z = z - th - gap;
     }
   }
-  setIvl(T, X, Y, 0u, OPEN_BOTTOM, select(z, zH, useH && n <= 1u), (ivlAt(L, tpl.x, tpl.y, 0u).m & 0xffu) | restrictEdge(L, X, Y, k, 0u, n));
+  setIvl(T, X, Y, 0u, OPEN_BOTTOM, z, (ivlAt(L, tpl.x, tpl.y, 0u).m & 0xffu) | restrictEdge(L, X, Y, k, 0u, n));
 }
 /** (round 22) restrict: a parent interval's edge from its k x k children of n intervals that keep one, in row order: the
  *  mean normal (normalised) and the mean of the children's line points projected on it (edge.ts edgeFromChildren) */

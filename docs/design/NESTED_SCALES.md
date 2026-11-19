@@ -1317,8 +1317,8 @@ to a surface intersection within that cell and to give them the normal of the su
 - *Closure* is by vertex identity and unchanged; where a thin pocket's two surfaces choose different diagonals, the pair
   rule cancels other triangles (2-4 more in 4 of 26 scenes; NS-174).
 
-**As built (round 24; behind `?edgeenh=1`, on with `?rimsnap=1` unless `?edgeenh=0`, default off): edge-aware
-enhance.** The owner: "the data should really all be in the columns and as long as we fix popin I don't really care if
+**As built (round 24; PARKED in round 25: the code is removed from `nested-scales` and kept on the pushed branch
+`exp/nested-edge-enhance`; the record below describes that branch): edge-aware enhance.** The owner: "the data should really all be in the columns and as long as we fix popin I don't really care if
 it's perfect as long as it looks good." A finer level should follow its parent's edge line, not the parent's staircase
 of cells (NS-170). Reference: oracle.ts enhanceTops / homeTop / enhancedCol (Nest.edgeEnh); GPU: nest.wgsl derive
 (wPEdge, edgeFill, the home reductions, gSe) and restrictK (the same per-child loop gathers the top's line and sides).

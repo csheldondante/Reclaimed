@@ -8,7 +8,7 @@
 // downward; air between and above) and, inside enhance and restrict, its layer form: S (the top surface) and, for each
 // interval i >= 1, gap_i (air below it) and th_i (its thickness). Level.set converts back at the boundary.
 
-import { EDGE_MASK, RES_EDGE, edgeDec, edgeEnc, edgeFromChildren, edgeToChild } from './edge';
+import { EDGE_MASK, RES_EDGE, edgeEnc, edgeFromChildren, edgeToChild } from './edge';
 
 export const OPEN_BOTTOM = -1e30;
 /** detail amplitude per wavelength (child columns) */
@@ -26,9 +26,6 @@ export interface Layers {
   mat: number[];
   v: number[];
   edge?: number[];
-  /** (round 24, enhance only) the edge-aware top: the top interval's z1 (absolute, child units); its z0 and every bound
-   *  below stay where v puts them (enhancedCol) */
-  top?: number;
 }
 /** (round 22) interval (or record) i's edge field */
 export const edgeAt = (c: { edge?: number[] }, i: number): number => c.edge?.[i] ?? 0;
@@ -59,154 +56,7 @@ export function fromLayers(l: Layers): Col {
   return { mat: l.mat.slice(), z0, z1, edge: l.mat.map((_m, i) => edgeAt(l, i)) };
 }
 
-/** (round 24) an enhanced column: the layer form's bounds, then the edge-aware top (Layers.top) on the top interval's z1
- *  alone, never below its z0 (a top pulled under it empties the interval: pack drops it, e.g. a cave roof's children on
- *  the hole's side of the line keep the cave's floor as their top) */
-export function enhancedCol(E: Layers): Col {
-  const c = fromLayers(E);
-  if (E.top !== undefined) {
-    const n = c.mat.length;
-    c.z1[n - 1] = n > 1 ? Math.max(c.z0[n - 1], E.top) : E.top;
-  }
-  return c;
-}
-
-/** (round 24) a point (ox, oy) from a line's column centre (the line's units) is inside it (d > 0: the brush's side) */
-const insideOf = (s: { nx: number; ny: number; d: number }, ox: number, oy: number) => s.d - (s.nx * ox + s.ny * oy) > 0;
-
-/** (round 24) the HOME side of a block cut by its parent's line: the side most of its k x k children lie on (which is the
- *  side of the parent's centre: the children are point-symmetric round it); a tie goes by the sign of the sum of the
- *  children's samples (each pair of opposite children sums to twice the parent's d). sides[i]: child i inside; ds: the
- *  decoded samples of the children that keep one. The same inputs in enhance and restrict (the children's own samples),
- *  so both pick the same side. */
-export function homeSide(sides: boolean[], dSum: number): boolean {
-  let nIn = 0;
-  for (const s of sides) if (s) nIn++;
-  return 2 * nIn > sides.length ? true : 2 * nIn < sides.length ? false : dSum > 0;
-}
-
-/** (round 24) edge-aware enhance of a block's tops (docs/design/NESTED_SCALES.md "As built (round 24)"). Where the parent's
- *  top carries an edge sample, a child's top is the limited PPM of the parent's 5 x 5 tops with every cell on the other
- *  side of the line (by its own sample's sign, else by the parent's line at its centre) replaced by the mean top of the
- *  nearest cells of the child's side; a child's side: its own enhanced sample's sign, else the parent's line.
- *  Then the HOME side's children (homeSide) are corrected to the parent's mean (a sin^2 bump over the home children only),
- *  the others are not: a parent is the mean of its home children. null: the parent's top has no sample (plain enhance). */
-export function enhanceTops(parent: Level, own: Layers, f: Frame, px: number, py: number, k: number, seed: number, amp: number): number[] | null {
-  const ps = edgeDec(edgeAt(own, own.mat.length - 1));
-  if (!ps) return null;
-  const pe = edgeAt(own, own.mat.length - 1);
-  const pref = own.v[0];
-  const top: number[] = [];
-  const side: boolean[] = [];
-  const P = parent.f;
-  for (let j = -2; j <= 2; j++)
-    for (let i = -2; i <= 2; i++) {
-      const qx = Math.min(P.gx + P.n - 1, Math.max(P.gx, px + i));
-      const qy = Math.min(P.gy + P.n - 1, Math.max(P.gy, py + j));
-      const c = parent.at(qx, qy)!;
-      top.push(c.z1[c.mat.length - 1]);
-      const e = edgeDec(edgeAt(c, c.mat.length - 1));
-      side.push(e ? e.d > 0 : insideOf(ps, qx - px, qy - py));
-    }
-  // the value side s gives cell c of the 5 x 5: its own top where it lies on side s, else side s's surface carried on to
-  // it from the nearest cells on side s (least squared distance; all those at it, row order, averaged): from such a cell
-  // q1, one step u = sign(c - q1) per axis back to q2 = q1 - u; where q2 is on side s too, linearly (the rim is a crease,
-  // a break of slope, so the side's surface continues with its slope: t1 + (t1 - t2) * steps, steps = max |c - q1| per
-  // axis), else flat (t1). null where no cell is on side s.
-  const fillOf = (s: boolean): (number | null)[] =>
-    top.map((t, c) => {
-      if (side[c] === s) return t;
-      let best = 99;
-      let sum = 0;
-      let cnt = 0;
-      const cx = c % 5;
-      const cy = Math.floor(c / 5);
-      for (let q = 0; q < 25; q++) {
-        if (side[q] !== s) continue;
-        const qx = q % 5;
-        const qy = Math.floor(q / 5);
-        const d = (qx - cx) ** 2 + (qy - cy) ** 2;
-        if (d > best) continue;
-        if (d < best) {
-          best = d;
-          sum = 0;
-          cnt = 0;
-        }
-        const ux = Math.sign(cx - qx);
-        const uy = Math.sign(cy - qy);
-        const rx = qx - ux;
-        const ry = qy - uy;
-        const r = ry * 5 + rx;
-        const lin = rx >= 0 && rx < 5 && ry >= 0 && ry < 5 && side[r] === s;
-        // (never past the cell's own top: the two sides' surfaces meet at the crease, they do not cross)
-        const ext = lin ? top[q] + (top[q] - top[r]) * Math.max(Math.abs(cx - qx), Math.abs(cy - qy)) : top[q];
-        sum += Math.min(Math.max(ext, Math.min(top[q], t)), Math.max(top[q], t));
-        cnt++;
-      }
-      return cnt ? sum / cnt : null;
-    });
-  const fills = [fillOf(false), fillOf(true)];
-  const kk = k * k;
-  const s: number[] = [];
-  const sides: boolean[] = [];
-  let dSum = 0;
-  for (let b = 0; b < k; b++)
-    for (let a = 0; a < k; a++) {
-      const ox = (a + 0.5) / k - 0.5;
-      const oy = (b + 0.5) / k - 0.5;
-      const cd = edgeDec(edgeToChild(pe, ox, oy, k));
-      const sd = cd ? cd.d > 0 : insideOf(ps, ox, oy);
-      if (cd) dSum += cd.d;
-      sides.push(sd);
-      const V = fills[sd ? 1 : 0];
-      // (no surface of the child's side in reach: the parent's tops as they are)
-      const rows: number[] = [];
-      for (let j = 0; j < 5; j++) {
-        const q: number[] = [];
-        for (let i = 0; i < 5; i++) {
-          const c = j * 5 + i;
-          q.push((V[c] ?? top[c]) - pref);
-        }
-        rows.push(ppmSub(q, a, k));
-      }
-      s.push((pref - f.z0) * k + ppmSub(rows, b, k) * k + detail(px * k + a, py * k + b, f.depth, k, seed, amp));
-    }
-  const home = homeSide(sides, dSum);
-  let D = 0;
-  let W = 0;
-  for (let q = 0; q < kk; q++)
-    if (sides[q] === home) {
-      D += (pref - f.z0) * k - s[q];
-      W += bump(q % k, k) * bump(Math.floor(q / k), k);
-    }
-  return s.map((v, q) => (sides[q] === home ? v + (D * bump(q % k, k) * bump(Math.floor(q / k), k)) / W : v));
-}
-
-/** (round 24) restrict's top where the restricted parent's top keeps an edge sample: the mean top of the children on the
- *  home side (homeSide; a child's side: its own top's sample, else the restricted line at its centre). null: no sample
- *  (the plain mean of every child). Child units. */
-export function homeTop(cols: Col[], e: number, offs: [number, number][]): number | null {
-  const s = edgeDec(e);
-  if (!s) return null;
-  const sides: boolean[] = [];
-  let dSum = 0;
-  cols.forEach((c, i) => {
-    const ce = edgeDec(edgeAt(c, c.mat.length - 1));
-    if (ce) dSum += ce.d;
-    sides.push(ce ? ce.d > 0 : insideOf(s, offs[i][0], offs[i][1]));
-  });
-  const home = homeSide(sides, dSum);
-  let sum = 0;
-  let n = 0;
-  cols.forEach((c, i) => {
-    if (sides[i] !== home) return;
-    sum += c.z1[c.mat.length - 1];
-    n++;
-  });
-  return sum / n;
-}
-
-export const sameStructure =(a: { mat: number[] }, b: { mat: number[] }) => a.mat.length === b.mat.length && a.mat.every((m, i) => m === b.mat[i]);
+export const sameStructure = (a: { mat: number[] }, b: { mat: number[] }) => a.mat.length === b.mat.length && a.mat.every((m, i) => m === b.mat[i]);
 
 // ---- hashing and detail (mirrored in WGSL: gpu/kernels.wgsl hash3 / valueNoise / detail) -----------------------------
 
@@ -438,9 +288,6 @@ export class Nest {
   readonly res: Map<number, Res>[] = [];
   /** the seeded detail's amplitude per wavelength (0: none, the tests' no-overshoot check) */
   detailAmp = DETAIL_AMP;
-  /** (round 24, ?edgeenh=1; on with ?rimsnap=1) edge-aware enhance and its restrict (enhanceTops, homeTop). Fixed for a
-   *  nest's life: set before the first promote. */
-  edgeEnh = false;
   constructor(
     root: Level,
     readonly k: number,
@@ -486,10 +333,6 @@ export class Nest {
     }
     const D = k * k * k * (pref - f.z0) - sum;
     for (let b = 0; b < k; b++) for (let a = 0; a < k; a++) out[b * k + a].v[0] += (D * bump(a, k) * bump(b, k)) / ((k * k) / 4);
-    // (round 24) edge-aware: where the parent's top carries an edge sample, each child's TOP takes the surface of the
-    // side of the line it lies on (enhanceTops); the gaps and thicknesses below stay the plain ones
-    const tops = this.edgeEnh ? enhanceTops(parent, own, f, px, py, k, this.seed, this.detailAmp) : null;
-    if (tops) tops.forEach((t, q) => (out[q].top = t));
     // gaps and thicknesses: bilinear over compatible samples, then scaled to the parent's mean
     const n = own.mat.length;
     for (let li = 1; li < 2 * n - 1; li++) {
@@ -539,19 +382,10 @@ export class Nest {
     const offs: [number, number][] = [];
     for (let b = 0; b < k; b++) for (let a = 0; a < k; a++) offs.push([(a + 0.5) / k - 0.5, (b + 0.5) / k - 0.5]);
     const edge = t.mat.map((_m, i) => edgeFromChildren(cols.map((c) => (c.mat.length === t.mat.length ? edgeAt(c, i) : 0)), offs, k));
-    // (round 24) where the parent's top keeps a line, its top is the mean of its home children's (enhanceTops' inverse:
-    // a parent is the mean of the children on its own side); the top interval's z0 and every bound below as before
-    const ht = this.edgeEnh ? homeTop(cols, edge[t.mat.length - 1], offs) : null;
-    const withTop = (c: Col): Col => {
-      if (ht === null) return c;
-      const n = c.mat.length;
-      c.z1[n - 1] = n > 1 ? Math.max(c.z0[n - 1], z0 + ht / k) : z0 + ht / k;
-      return c;
-    };
     if (cols.every((c) => sameStructure(c, t))) {
       const acc = toLayers(t).v.map(() => 0);
       for (const c of cols) toLayers(c).v.forEach((v, i) => (acc[i] += v));
-      return withTop(fromLayers({ mat: t.mat.slice(), v: acc.map((s, i) => (i === 0 ? z0 + s / kk / k : s / kk / k)), edge }));
+      return fromLayers({ mat: t.mat.slice(), v: acc.map((s, i) => (i === 0 ? z0 + s / kk / k : s / kk / k)), edge });
     }
     const vol = (c: Col) => {
       const m = new Map<number, number>();
@@ -585,7 +419,7 @@ export class Nest {
     }
     out.z1[0] = z;
     out.z0[0] = OPEN_BOTTOM;
-    return withTop(out);
+    return out;
   }
 
   /** the window's parent cells: global parent columns the child level covers */
@@ -604,14 +438,12 @@ export class Nest {
         const E = this.enhanceBlock(parent, child.f, px, py);
         for (let b = 0; b < k; b++)
           for (let a = 0; a < k; a++) {
-            // (round 24: a whole column rides on the plain enhanced surface; the others take the edge-aware top)
-            const plain = fromLayers(E[b * k + a]);
-            const e = enhancedCol(E[b * k + a]);
+            const e = fromLayers(E[b * k + a]);
             const rr = res.get(this.key(depth, px * k + a, py * k + b));
             if (rr?.whole) {
               // a column whose structure differs from its enhanced parent: carried whole, its bounds relative to the
               // enhanced surface (so it rides on parent changes under it)
-              const S = plain.z1[plain.mat.length - 1];
+              const S = e.z1[e.mat.length - 1];
               const n = rr.mat!.length;
               const c: Col = { mat: rr.mat!.slice(), z0: new Array(n), z1: new Array(n), edge: rr.mat!.map((_m, i) => rr.edge?.[i] ?? 0) };
               for (let i = n - 1; i >= 0; i--) {
@@ -654,12 +486,12 @@ export class Nest {
           for (let a = 0; a < k; a++) {
             const key = this.key(depth, px * k + a, py * k + b);
             const live = child.at(px * k + a, py * k + b)!;
-            const e = enhancedCol(E[b * k + a]);
+            const e = fromLayers(E[b * k + a]);
             // per bound, top down, two floats each: z1 then z0 of each interval (interval 0: z1 only, its z0 is open).
             // A live column of another structure than its enhanced parent is kept whole, relative to the enhanced
-            // surface (round 24: the plain one, before the edge-aware top).
+            // surface.
             const whole = !sameStructure(live, e);
-            const S = fromLayers(E[b * k + a]).z1[e.mat.length - 1];
+            const S = e.z1[e.mat.length - 1];
             const r: number[] = [];
             for (let i = live.mat.length - 1; i >= 0; i--) {
               r.push(...resPair(live.z1[i], whole ? S : e.z1[i]));
