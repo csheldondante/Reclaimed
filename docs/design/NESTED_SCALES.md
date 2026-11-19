@@ -871,6 +871,60 @@ wallTmpl / emitColS / faceBake (SMOOTH), draw.wgsl tCorner / vsT / vsS / fsS / c
   draws it: the inner-air cells are still the baked exceptions, not extra sheet instances (NS-121). Cliffs become
   one-column ramps (vertices move only vertically this round); the stored plane word sharpens them next round.
 
+**As built (round 16; kept current while building).** The owner's spec, his words: "Each layer should be nxn for loaded
+chunk and should make a simple quad lattice except where there is an air gap next to or below a column." "Each vertex
+averages its adjacent neighbors. Air gaps mean it is not adjacent and they instead average the bottom of the column. We
+make the surface from instanced nxn sheets with a vertex shader that does the heights and we only instance more for
+overhangs and we compute in integer order to make them seamless by construction." "If the intervals do not overlap then
+the vert averages the top and bottom of that interval so it pinches them together like an empanada." "You don't need to
+mesh anything. You just need a surface pointing down with the same rule for the bottom of the interval and another for
+the solid below the next air gap down." "Why make those [skirts, outer ring] if the camera will never see them?"
+- *Step 0 (NS-119, boxes):* one run; the rim faults are transient (each pose shows them in only one of its two checks)
+  and come from a stale bake, not the arithmetic; not proved (the rebake eyes missed them) and not fixed. BACKLOG NS-119.
+- *Step 1, the reference (boxmesh.ts sheetMesh / sheetClosure; test "the sheet form is closed ...").*
+  - *Surfaces.* A column's surfaces are its solid/air changes, bottom up; sheet j of a column is its j-th surface (up or
+    down). A column continues downward as its first record (its bottom is no surface: nothing under the ground is drawn);
+    a drawn column with no records is air all the way (present, not absent).
+  - *Vertices.* A corner line's four quadrants are owned by the column drawn there: its level's, or outside a child's
+    window the parent's (heights through toKid), or nobody (outside the root window: absent). Breakpoints: the owners'
+    surface heights (distinct). Two consecutive breakpoints are joined when the present owners are not all solid or all
+    air between them (an exposed wall stands on the line there); a cluster is a maximal joined chain; a cluster is
+    bottomless when the owners already differ below the lowest breakpoint. A surface's corner is the cluster holding its
+    height on that line. Vertex identity = (level, line, cluster). No threshold.
+  - *Why it is closed.* It is the box mesh of the columns extended downward, with the walls facing outside the root
+    window left out, under the collapse map with every wall collapsed: a wall piece's two vertices on one line are always
+    in one cluster (the wall itself joins them), so every wall triangle has a repeated vertex and drops; a simplicial map
+    of a closed surface is closed. So the only open edges are on the root window's edge (no faces outside it) and the
+    ceilings of columns that are air all the way down (bottomless clusters: nothing under them is ever drawn). A sheet
+    triangle's three vertices lie on three different lines, so no sheet triangle is ever degenerate; the only faces that
+    can coincide are consecutive surfaces of one column on the same three clusters (a layer pinched to nothing): the pair
+    rule of round 12, per triangle slot (a run of consecutive surfaces on the same three vertices keeps its top one when
+    the run is odd, none when even).
+  - *Level edges (the rule chosen; closed in the reference).* A parent's corner line on its child's footprint boundary is
+    the child's line (canon). A child's window-edge lines, all of them (not only every k-th), see the parent's column
+    outside as the owner of their outside quadrants. A parent column along the footprint splits that edge at the child's
+    k - 1 lines between its two rim corners: its quad becomes a fan of k + 1 triangles from the far corner (a fixed
+    shape; the split points' vertices are the child's). So both levels use one vertex for every point of the edge: no
+    T-junction, and the union is closed by the same argument (the parent's cap is a polygon with its edge split; the
+    walls between the parent's column and the child's columns collapse like any wall). A surface one level has and the
+    other lacks at the edge (a parent overhang the child filled, a child cave the parent lacks) stands on a wall at the
+    edge, which joins it with the surfaces round it there: it pinches shut at the edge (no special case). Placement (it
+    never decides closure): a cluster on a child's edge line between two rim lines that holds parent surfaces is placed on
+    the parent's edge, per parent surface zP + (zQ - zP) * i / k from the clusters holding it on the two rim lines
+    (fixed point, integer i of k), averaged; other clusters at their own mean. Departure from the round 15 text, said
+    plainly: the parent DOES get vertices between P and Q (the fan), because the text's own analysis showed the
+    unsplit form leaves T-junctions (sub-pixel cracks); a parent surface the child lacks pinches through the wall rule,
+    not through a separate merge.
+  - *Placement.* A cluster's height = sum of floor(z * 256) over its breakpoints (integers, order free), one division
+    by n * 256 (SHEET_FIX).
+  - *Proof (25 scenes: round 15's 18 with their variants, plus a lip across x = 16, a parent tunnel the child lacks, a
+    child cave across the edge, a parent lip over the edge with a child slope):* 0 open edges inside, 0 level-edge
+    faults, 0 coincident, 0 repeated; open edges only on the root window's edge (gentle: 80 = the 4 x 20 rim) and at
+    bottomless ceilings (only the random scenes, whose columns can start with air: 266-478). Gentle terrain: exactly 2
+    triangles a column, the edge ring included. Layers pinched to nothing (information): one-column tunnels 40, spiral
+    step 3, random 103, deep thin stacks 2,523, three random levels 36 / 69 / 54, parent lip over the edge 2, all others 0.
+    Fan triangles: 80-120 a parent (k = 4).
+
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

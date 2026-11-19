@@ -27263,3 +27263,23 @@ coincident pairs at T = 2 as well (a pinch, accepted).
 window edge: rim lines are placed by the joint cluster, the lines between by the child alone. Step 4's design text
 (NESTED_SCALES.md) proposes the level-edge form that removes it. Toggle not restored (gate not met: NS-120, 3 runs not
 made).
+
+## 2026-11-19 — Nested scales lab, round 16 step 1: the sheet form in the reference, level edges included
+
+**Why.** The owner's spec (NESTED_SCALES.md "As built (round 16)"): the smooth draw is n x n quad sheets only, every
+wall collapsed, nothing drawn the camera cannot see (no skirts, no down caps, no ring outside the coarsest window).
+Round 15 left the reference with 4 coincident pairs a level at T unlimited, all from the down caps and the walls facing
+outside the window, which the spec removes.
+
+**Built.** boxmesh.ts sheetMesh: a quad per column surface, its corners the clusters of its corner lines (quadrants owned
+by the column drawn there; outside a child's window, the parent's), integer-sum placement; level edges by shared
+vertices (a parent column along the footprint draws a fan of k + 1 triangles whose split points are the child's edge
+vertices) with the round 15 interpolation as the placement; sheetClosure: exact closure by identity, open edges sorted
+into root window edge / bottomless ceiling / inside / level edge.
+
+**Measured** (25 scenes): 0 open inside, 0 level-edge faults, 0 coincident, 0 repeated. Gentle 2.00 triangles a column
+(round 15 at T unlimited: 1.62, the folded edge ring). Layers pinched to nothing: 0 on smooth scenes, 40 on one-column
+tunnels, 2,523 in deep thin stacks. Unit tests 100 of 100 (76 before).
+
+**Found.** Columns that start with air (only the random test scenes) leave the ceiling of a bottomless hole with open
+edges (266-478 edges a random scene): by design nothing under the ground is drawn (BACKLOG NS-124).

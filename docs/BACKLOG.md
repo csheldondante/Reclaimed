@@ -456,7 +456,12 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   facing away from the sun need the box draw's ambient floor; (c) exceptions flat beside smooth template cells (give
   them the cache normals where a slot matches); the stills script's carve-rim pose misses the carve; the phone stills
   and the zoom GIF were not made this round.
-- NS-122 (next, round 15; the owner's ruling) The sheet (smooth) draw draws nothing the camera cannot see: no bottom
+- NS-124 (limit, round 16) The sheet form treats a column as continuing downward as its first record, so a column whose
+  first record is air is a bottomless hole: its first (downward) surface is a ceiling whose edges stay open where it
+  meets neighbours (open by design: nothing under the ground is drawn). Only the random unit scenes have such columns;
+  check whether the lab's pack can write one (a shaft dug through the lowest record) before the sheet draw becomes the
+  default.
+- NS-122 (round 16 step 1: done in the reference, boxmesh.ts sheetMesh; the GPU next) (next, round 15; the owner's ruling) The sheet (smooth) draw draws nothing the camera cannot see: no bottom
   skirts or down-cap fans (closed sheets and pinching leave the eye no way under a sheet: verify with the pit, shaft and
   cave pose sets and report any pose that shows sky instead of restoring them), no ring at the coarsest window's outer
   edge (the sheet just ends; finer levels' edges still meet their parent, with the rim strip this round). This is also

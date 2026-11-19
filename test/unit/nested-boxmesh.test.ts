@@ -5,7 +5,7 @@
 // with a repeated vertex, each level closed by itself, and no T-junction across a rim line.
 import { describe, expect, it } from 'vitest';
 import { AIR, type Part } from '../../src/nested/oracle';
-import { asCapture, boxMesh, closure, collapse, collapseCols, dropCapPairs, identity, place, random, rimJunctionsRef, smoothSplit, type MeshLevel, type MeshScene, type Placement } from '../../src/nested/boxmesh';
+import { asCapture, boxMesh, closure, collapse, collapseCols, dropCapPairs, identity, place, random, rimJunctionsRef, sheetClosure, sheetMesh, smoothSplit, type MeshLevel, type MeshScene, type Placement } from '../../src/nested/boxmesh';
 import { manifold } from '../../src/nested/watertight';
 
 const STONE = 1;
@@ -152,6 +152,34 @@ const scenes: Record<string, () => MeshScene> = {
   },
 };
 
+// (round 16) more scenes for the sheet form: a lip crossing a chunk border, and level edges where one level has a
+// surface the other lacks
+const sheetScenes: Record<string, () => MeshScene> = {
+  ...scenes,
+  'overhang lip across a chunk border': () => one((x, y) => (x < 14 ? part(10, STONE) : x < 20 && y >= 4 && y < 16 ? part(3, STONE, 8, AIR, 10, STONE) : part(3, STONE)), 24),
+  'parent has a surface the child lacks': () => {
+    const k = 4;
+    const zo = 3;
+    const p = level(0, 0, 0, 12, 0, (x, y) => (x >= 2 && x < 6 && y >= 5 && y < 7 ? part(4, STONE, 5.5, AIR, 7, STONE) : part(7, STONE)));
+    const c = level(1, 16, 16, 16, zo, () => part((7 - zo) * k, STONE));
+    return { k, levels: [p, c] };
+  },
+  'child has a cave the parent lacks, crossing the edge': () => {
+    const k = 4;
+    const zo = 3;
+    const p = level(0, 0, 0, 12, 0, () => part(7, STONE));
+    const c = level(1, 16, 16, 16, zo, (x, y) => (y >= 22 && y < 25 && x < 21 ? part(4, STONE, 10, AIR, 16, STONE) : part(16, STONE)));
+    return { k, levels: [p, c] };
+  },
+  'parent lip over the edge, child slope': () => {
+    const k = 4;
+    const zo = 2;
+    const p = level(0, 0, 0, 12, 0, (x, y) => (x >= 7 && x < 10 && y >= 3 && y < 9 ? part(3, STONE, 6, AIR, 7, STONE) : part(x < 7 ? 3 + 0.25 * y : 3, STONE)));
+    const c = level(1, 16, 16, 16, zo, (x, y) => part(q((3 + 0.25 * (y / k) - zo) * k + 0.3 * Math.sin(x), 0.125), STONE));
+    return { k, levels: [p, c] };
+  },
+};
+
 const placements: Record<string, Placement> = { boxes: identity, 'collapse T=2': collapse(2), 'collapse T=0.5': collapse(0.5), 'collapse T=inf': collapse(Infinity), 'random 1': random(1), 'random 2': random(2), 'random 3': random(3) };
 
 describe('nested scales: the box mesh and the smooth draw step 1', () => {
@@ -264,6 +292,28 @@ describe('nested scales: the box mesh and the smooth draw step 1', () => {
           );
       }
       console.log(`[split] ${sn}\n  ${rows.join('\n  ')}`);
+    });
+
+  // (round 16) the owner's sheet form: quads only, every wall collapsed, level edges stitched by shared vertices. Exact
+  // closure by identity: every directed edge cancelled except along the root window's edge (open by design); no
+  // repeated vertex, no coincident pair
+  for (const [sn, make] of Object.entries(sheetScenes))
+    it(`${sn}: the sheet form is closed except on the root window's edge`, () => {
+      const scene = make();
+      const m = sheetMesh(scene);
+      const c = sheetClosure(m);
+      expect(c.openInterior, `${sn} open edges inside (${c.where.join('; ')})`).toBe(0);
+      expect(c.openLevelEdge, `${sn} level-edge faults`).toBe(0);
+      expect(c.repeated).toBe(0);
+      expect(c.coincident, `${sn} coincident`).toBe(0);
+      expect(c.openRootEdge).toBeGreaterThan(0);
+      if (sn === 'gentle') expect(c.tris).toBe(2 * m.stats[0].drawn);
+      if (sn === 'cave under a high surface')
+        for (const t of m.tris) if (t.j === 0 && t.Y >= 8 && t.Y < 11 && t.X < 12) for (const v of t.v) expect(m.pos.get(v)![2], `${sn} floor vertex`).toBeLessThanOrEqual(6);
+      console.log(
+        `[sheet] ${sn}: ${c.tris} tris, open on the root edge ${c.openRootEdge}, at bottomless ceilings ${c.openBottom}; ` +
+          m.stats.map((s) => `L${s.L} ${s.drawn} cols, ${(s.surfaces / s.drawn).toFixed(2)} surfaces a column, degenerate ${s.degenerate}, pairs ${s.pairs}, layers gone ${s.layersGone}, fan ${s.fan}`).join('; '),
+      );
     });
 
   it('collapse: triangles a column on gentle terrain, and what one-column features lose', () => {

@@ -1101,3 +1101,392 @@ export function asCapture(mesh: BoxMesh, scene: MeshScene, L: number): { depth: 
   });
   return { depth: L, n: w.n, tris: out };
 }
+
+// ---- (round 16) the sheet form: the owner's spec, the reference -----------------------------------------------------
+// (docs/design/NESTED_SCALES.md "As built (round 16)".) A layer is an n x n quad lattice: column (X, Y)'s j-th surface
+// (bottom up: every solid/air change of its records; a column continues downward as its first record, so its bottom is
+// no surface) is a quad on its four corner lines. A vertex is a CLUSTER of its corner line: the line's breakpoints (the
+// surface heights of the columns in its four quadrants) chained while the segment between two of them is joined (the
+// quadrants' columns are not all solid or all air there: an exposed wall stands on the line). Every wall collapses (no
+// threshold), so lips, cave back walls and the face over a cave mouth pinch shut; nothing else is drawn (no walls, no
+// skirts, no down caps, no ring outside the coarsest window). This is the box mesh (columns extended down, walls facing
+// outside the root window left out) under the collapse map at T unlimited, so it is closed by construction except along
+// the root window's edge (open by design).
+// Level edges: a quadrant outside a child's window is owned by the parent's column there, so a child's edge lines see
+// the parent's surfaces (toKid) and the parent's rim lines are the child's lines (canon); a parent column along the
+// footprint splits its edge there at the child's k - 1 lines (its quad becomes a fan of k + 1 triangles). Then the two
+// levels share every vertex of the edge (no T-junction) and the union is closed by the same argument (the parent's cap
+// is a polygon with the split edge; the walls between the parent's column and the child's collapse like any wall). A
+// cave or overhang one side has and the other lacks has a wall at the edge, which collapses: it pinches shut there.
+// Placement: a cluster's height is the mean of its breakpoints as fixed point (floor(z * SHEET_FIX), an integer sum, one
+// division); on a child's edge line between two rim lines a cluster holding parent surfaces is placed on the parent's
+// edge instead: per parent surface the interpolation of the clusters holding it on the edge's two rim lines (integer
+// i of k), averaged; positions never decide closure (identities do).
+export const SHEET_FIX = 256;
+
+export interface SheetCluster {
+  /** breakpoints (line units) bottom up */
+  bps: number[];
+  /** the chain reaches below the lowest breakpoint (columns of different states all the way down) */
+  bottomless: boolean;
+  /** placed height (line units) */
+  z: number;
+  /** placed on the parent's edge */
+  interp: boolean;
+}
+export interface SheetLine {
+  L: number;
+  cx: number;
+  cy: number;
+  clusters: SheetCluster[];
+  /** on the root window's edge (open edges allowed along it): a bit a side (west, east, south, north) */
+  rootEdge: number;
+  /** on a child window's edge (a level edge) */
+  levelEdge: boolean;
+}
+export interface SheetTri {
+  /** vertex keys (line key + cluster index) */
+  v: [string, string, string];
+  L: number;
+  X: number;
+  Y: number;
+  /** surface index in the column, bottom up, and its facing */
+  j: number;
+  up: boolean;
+  /** a triangle of a fan along a level edge */
+  fan: boolean;
+}
+export interface SheetMesh {
+  tris: SheetTri[];
+  /** vertex key -> world position */
+  pos: Map<string, Vec3>;
+  lines: Map<string, SheetLine>;
+  /** per level: drawn columns, quads (surfaces), triangles dropped as repeated-vertex, triangle pairs dropped as
+   *  coincident, solid layers and air gaps that vanished (both their quads gone), fan triangles kept */
+  stats: { L: number; drawn: number; surfaces: number; degenerate: number; pairs: number; layersGone: number; fan: number }[];
+}
+
+export function sheetMesh(scene: MeshScene): SheetMesh {
+  const { k, levels } = scene;
+  const solid = scene.solid ?? ((m: number) => m !== AIR);
+  const fdiv = (a: number, b: number) => Math.floor(a / b);
+  const inWin = (L: number, X: number, Y: number) => {
+    const w = levels[L];
+    return !!w && X >= w.gx && Y >= w.gy && X < w.gx + w.n && Y < w.gy + w.n;
+  };
+  const underKid = (L: number, X: number, Y: number) => {
+    const c = levels[L + 1];
+    return !!c && X * k >= c.gx && Y * k >= c.gy && X * k < c.gx + c.n && Y * k < c.gy + c.n;
+  };
+  const part = (L: number, X: number, Y: number): Part | null => {
+    if (!inWin(L, X, Y) || underKid(L, X, Y)) return null;
+    const w = levels[L];
+    // (a drawn column with no records is air all the way: present, not absent)
+    return w.parts[(Y - w.gy) * w.n + (X - w.gx)];
+  };
+  /** a column's surfaces (height, facing up), bottom up */
+  const surfCache = new Map<string, { h: number; up: boolean }[]>();
+  const surfaces = (L: number, X: number, Y: number) => {
+    const key = `${L}:${X}:${Y}`;
+    let s = surfCache.get(key);
+    if (!s) {
+      s = [];
+      const p = part(L, X, Y);
+      if (p)
+        for (let j = 0; j < p.top.length; j++) {
+          const a = solid(p.mat[j]);
+          const b = j + 1 < p.top.length ? solid(p.mat[j + 1]) : false;
+          if (a !== b) s.push({ h: p.top[j], up: a });
+        }
+      surfCache.set(key, s);
+    }
+    return s;
+  };
+  /** solid just above z (a column continues downward as its first record) */
+  const solidAt = (p: Part, z: number) => {
+    for (let j = 0; j < p.top.length; j++) if (p.top[j] > z) return solid(p.mat[j]);
+    return false;
+  };
+  const toKid = (lv: number, z: number) => Math.fround((z - levels[lv + 1].zo) * k);
+  /** the canonical line: a parent's line on its child's footprint boundary is the child's */
+  const onWinEdge = (L: number, cx: number, cy: number) => {
+    const w = levels[L];
+    if (!w || cx < w.gx || cy < w.gy || cx > w.gx + w.n || cy > w.gy + w.n) return false;
+    return cx === w.gx || cy === w.gy || cx === w.gx + w.n || cy === w.gy + w.n;
+  };
+  const canon = (L: number, cx: number, cy: number): [number, number, number] => (L + 1 < levels.length && onWinEdge(L + 1, cx * k, cy * k) ? [L + 1, cx * k, cy * k] : [L, cx, cy]);
+  /** the column owning quadrant q of a canonical line (null: nobody draws it) */
+  const owner = (L: number, cx: number, cy: number, q: number): { lv: number; X: number; Y: number } | null => {
+    const X = cx - 1 + (q & 1);
+    const Y = cy - 1 + (q >> 1);
+    if (part(L, X, Y)) return { lv: L, X, Y };
+    if (inWin(L, X, Y)) return null;
+    if (L > 0 && part(L - 1, fdiv(X, k), fdiv(Y, k))) return { lv: L - 1, X: fdiv(X, k), Y: fdiv(Y, k) };
+    return null;
+  };
+  const r = levels[0];
+  const lines = new Map<string, SheetLine>();
+  const lineKey = (L: number, cx: number, cy: number) => `${L}:${cx}:${cy}`;
+  const fixOf = (z: number) => Math.floor(z * SHEET_FIX);
+  /** a canonical line's clusters (own means; the edge interpolation is applied in a second step) */
+  const lineRaw = (L: number, cx: number, cy: number): SheetLine & { parentBps: Set<number>[] } => {
+    const own: { lv: number; X: number; Y: number }[] = [];
+    const quads: (Part | null)[] = [];
+    for (let q = 0; q < 4; q++) {
+      const o = owner(L, cx, cy, q);
+      quads.push(o ? part(o.lv, o.X, o.Y) : null);
+      if (o && !own.some((u) => u.lv === o.lv && u.X === o.X && u.Y === o.Y)) own.push(o);
+    }
+    const toLine = (lv: number, z: number) => (lv === L ? z : toKid(lv, z));
+    const bpSet = new Set<number>();
+    const fromParent = new Set<number>();
+    for (const o of own)
+      for (const s of surfaces(o.lv, o.X, o.Y)) {
+        const z = toLine(o.lv, s.h);
+        bpSet.add(z);
+        if (o.lv !== L) fromParent.add(z);
+      }
+    const bps = [...bpSet].sort((a, b) => a - b);
+    // quadrant states in line units: a parent quadrant's part is read in its own units
+    const qlv: number[] = [];
+    for (let q = 0; q < 4; q++) qlv.push(owner(L, cx, cy, q)?.lv ?? -1);
+    const stateAbove = (q: number, z: number) => {
+      const p = quads[q]!;
+      return qlv[q] === L ? solidAt(p, z) : solidAt(p, levels[L].zo + z / k);
+    };
+    const joined = (z: number) => {
+      let s: boolean | null = null;
+      for (let q = 0; q < 4; q++) {
+        if (!quads[q]) continue;
+        const v = stateAbove(q, z);
+        if (s === null) s = v;
+        else if (v !== s) return true;
+      }
+      return false;
+    };
+    const joinedBelow = (() => {
+      let s: boolean | null = null;
+      for (let q = 0; q < 4; q++) {
+        if (!quads[q]) continue;
+        const v = quads[q]!.top.length > 0 && solid(quads[q]!.mat[0]);
+        if (s === null) s = v;
+        else if (v !== s) return true;
+      }
+      return false;
+    })();
+    const clusters: SheetCluster[] = [];
+    const parentBps: Set<number>[] = [];
+    for (let i = 0; i < bps.length; i++) {
+      if (i === 0 || !joined(bps[i - 1])) {
+        clusters.push({ bps: [], bottomless: i === 0 && joinedBelow, z: 0, interp: false });
+        parentBps.push(new Set());
+      }
+      clusters[clusters.length - 1].bps.push(bps[i]);
+      if (fromParent.has(bps[i])) parentBps[parentBps.length - 1].add(bps[i]);
+    }
+    for (const c of clusters) {
+      let sum = 0;
+      for (const z of c.bps) sum += fixOf(z);
+      c.z = Math.fround(Math.fround(sum) / Math.fround(c.bps.length * SHEET_FIX));
+    }
+    const wx = cx / Math.pow(k, L);
+    const wy = cy / Math.pow(k, L);
+    // (a bit a side: an open edge is allowed along one side, not across a corner)
+    const rootEdge = (wx === r.gx ? 1 : 0) | (wx === r.gx + r.n ? 2 : 0) | (wy === r.gy ? 4 : 0) | (wy === r.gy + r.n ? 8 : 0);
+    return { L, cx, cy, clusters, rootEdge, levelEdge: L > 0 && onWinEdge(L, cx, cy), parentBps };
+  };
+  const raw = new Map<string, ReturnType<typeof lineRaw>>();
+  const getRaw = (L: number, cx: number, cy: number) => {
+    const key = lineKey(L, cx, cy);
+    let l = raw.get(key);
+    if (!l) raw.set(key, (l = lineRaw(L, cx, cy)));
+    return l;
+  };
+  const clusterIndex = (l: SheetLine, z: number) => {
+    const i = l.clusters.findIndex((c) => c.bps.includes(z));
+    if (i < 0) throw new Error(`sheetMesh: no cluster holds ${z} on line ${l.L}:${l.cx}:${l.cy}`);
+    return i;
+  };
+  const getLine = (L: number, cx: number, cy: number): SheetLine => {
+    const key = lineKey(L, cx, cy);
+    let l = lines.get(key);
+    if (l) return l;
+    const a = getRaw(L, cx, cy);
+    // a child's edge line between two rim lines: clusters holding parent surfaces placed on the parent's edge
+    const onX = cx === levels[L]?.gx || cx === (levels[L]?.gx ?? 0) + (levels[L]?.n ?? 0);
+    const rim = cx % k === 0 && cy % k === 0;
+    if (a.levelEdge && !rim) {
+      const i = onX ? cy - fdiv(cy, k) * k : cx - fdiv(cx, k) * k;
+      const P = onX ? getRaw(L, cx, fdiv(cy, k) * k) : getRaw(L, fdiv(cx, k) * k, cy);
+      const Q = onX ? getRaw(L, cx, fdiv(cy, k) * k + k) : getRaw(L, fdiv(cx, k) * k + k, cy);
+      a.clusters.forEach((c, ci) => {
+        const ps = [...a.parentBps[ci]].sort((x, y) => x - y);
+        if (!ps.length) return;
+        let sum = 0;
+        for (const z of ps) {
+          const zp = fixOf(P.clusters[clusterIndex(P, z)].z);
+          const zq = fixOf(Q.clusters[clusterIndex(Q, z)].z);
+          sum += zp * k + (zq - zp) * i;
+        }
+        c.z = Math.fround(Math.fround(sum) / Math.fround(ps.length * k * SHEET_FIX));
+        c.interp = true;
+      });
+    }
+    lines.set(key, a);
+    return a;
+  };
+  const tris: SheetTri[] = [];
+  const pos = new Map<string, Vec3>();
+  const vkey = (l: SheetLine, ci: number) => `${l.L}:${l.cx}:${l.cy}:${ci}`;
+  const stats: SheetMesh['stats'] = [];
+  // the polygon of a column, counter-clockwise from above: corners and the split points of an edge on a footprint
+  const CORNERS = [0, 1, 3, 2];
+  for (let L = 0; L < levels.length; L++) {
+    const w = levels[L];
+    const st = { L, drawn: 0, surfaces: 0, degenerate: 0, pairs: 0, layersGone: 0, fan: 0 };
+    for (let Y = w.gy; Y < w.gy + w.n; Y++)
+      for (let X = w.gx; X < w.gx + w.n; X++) {
+        const ss = surfaces(L, X, Y);
+        if (!ss.length) continue;
+        st.drawn++;
+        // the polygon: (level, cx, cy) of the lines in its own level's coordinates, canonical
+        const poly: [number, number, number][] = [];
+        const cornerAt: number[] = [];
+        let split = -1;
+        for (let e = 0; e < 4; e++) {
+          cornerAt.push(poly.length);
+          const c0 = CORNERS[e];
+          const c1 = CORNERS[(e + 1) % 4];
+          const ax = X + (c0 & 1);
+          const ay = Y + (c0 >> 1);
+          const bx = X + (c1 & 1);
+          const by = Y + (c1 >> 1);
+          const A = canon(L, ax, ay);
+          const B = canon(L, bx, by);
+          poly.push(A);
+          if (A[0] === L + 1 && B[0] === L + 1) {
+            split = e;
+            for (let t = 1; t < k; t++) poly.push([L + 1, A[1] + ((B[1] - A[1]) / k) * t, A[2] + ((B[2] - A[2]) / k) * t]);
+          }
+        }
+        // fan apex: the first corner not on the split edge (the split edge runs from corner e to corner e + 1)
+        const apex = split >= 0 ? cornerAt[(split + 2) % 4] : 0;
+        const tri: [number, number, number][] = [];
+        for (let t = 1; t + 1 < poly.length; t++) tri.push([apex, (apex + t) % poly.length, (apex + t + 1) % poly.length]);
+        // per surface: each polygon vertex's cluster
+        const keys: (string[] | null)[][] = [];
+        ss.forEach((s, j) => {
+          st.surfaces++;
+          const vk = poly.map(([cl, cx, cy]) => {
+            const l = getLine(cl, cx, cy);
+            const z = cl === L ? s.h : toKid(L, s.h);
+            const ci = clusterIndex(l, z);
+            const key = vkey(l, ci);
+            if (!pos.has(key)) pos.set(key, toWorld(scene, cl, cx, cy, l.clusters[ci].z));
+            return key;
+          });
+          keys.push(tri.map((t) => {
+            const a = vk[t[0]];
+            const b = vk[t[1]];
+            const c = vk[t[2]];
+            return a === b || b === c || a === c ? null : [a, b, c];
+          }));
+        });
+        // the pair rule per triangle slot: a run of consecutive surfaces on the same three vertices keeps its top one
+        // when the run is odd, none when even
+        const kept: boolean[][] = ss.map(() => tri.map(() => true));
+        for (let t = 0; t < tri.length; t++) {
+          let j = 0;
+          while (j < ss.length) {
+            const kk = keys[j][t];
+            if (!kk) {
+              kept[j][t] = false;
+              st.degenerate++;
+              j++;
+              continue;
+            }
+            const sk = [...kk].sort().join('|');
+            let e = j + 1;
+            while (e < ss.length && keys[e][t] && [...keys[e][t]!].sort().join('|') === sk) e++;
+            for (let u = j; u < e; u++) kept[u][t] = (e - j) % 2 === 1 && u === e - 1;
+            st.pairs += (e - j - ((e - j) % 2)) / 2;
+            j = e;
+          }
+        }
+        for (let j = 0; j + 1 < ss.length; j++) if (kept[j].every((x) => !x) && kept[j + 1].every((x) => !x)) st.layersGone++;
+        ss.forEach((s, j) =>
+          tri.forEach((t, ti) => {
+            if (!kept[j][ti]) return;
+            const [a, b, c] = keys[j][ti]!;
+            const isFan = split >= 0;
+            if (isFan) st.fan++;
+            tris.push({ v: s.up ? [a, b, c] : [a, c, b], L, X, Y, j, up: s.up, fan: isFan });
+          }),
+        );
+      }
+    stats.push(st);
+  }
+  return { tris, pos, lines, stats };
+}
+
+export interface SheetClosure {
+  tris: number;
+  /** directed edges not cancelled, by where they lie */
+  openInterior: number;
+  openRootEdge: number;
+  /** between two bottomless clusters: the ceiling of a column that is air all the way down (open by design: the
+   *  bottom is never drawn) */
+  openBottom: number;
+  openLevelEdge: number;
+  /** edges used an odd number of times */
+  odd: number;
+  coincident: number;
+  repeated: number;
+  where: string[];
+}
+/** the sheet mesh's closure, exact by vertex identity: every directed edge cancelled except along the root window's edge */
+export function sheetClosure(m: SheetMesh): SheetClosure {
+  const dir = new Map<string, number>();
+  const und = new Map<string, number>();
+  const faces = new Map<string, number>();
+  let repeated = 0;
+  for (const t of m.tris) {
+    const [a, b, c] = t.v;
+    if (a === b || b === c || a === c) repeated++;
+    const fk = [...t.v].sort().join('|');
+    faces.set(fk, (faces.get(fk) ?? 0) + 1);
+    for (let e = 0; e < 3; e++) {
+      const p = t.v[e];
+      const q = t.v[(e + 1) % 3];
+      const uk = p < q ? `${p}#${q}` : `${q}#${p}`;
+      und.set(uk, (und.get(uk) ?? 0) + 1);
+      dir.set(uk, (dir.get(uk) ?? 0) + (p < q ? 1 : -1));
+    }
+  }
+  const lineOf = (v: string) => m.lines.get(v.split(':').slice(0, 3).join(':'))!;
+  let openInterior = 0;
+  let openRootEdge = 0;
+  let openBottom = 0;
+  let openLevelEdge = 0;
+  const where: string[] = [];
+  for (const [uk, c] of dir) {
+    if (c === 0) continue;
+    const [p, q] = uk.split('#');
+    const lp = lineOf(p);
+    const lq = lineOf(q);
+    const ip = +p.split(':')[3];
+    const iq = +q.split(':')[3];
+    if (lp.rootEdge & lq.rootEdge) openRootEdge++;
+    else if (lp.clusters[ip].bottomless && lq.clusters[iq].bottomless) openBottom++;
+    else {
+      openInterior++;
+      if (lp.levelEdge || lq.levelEdge) openLevelEdge++;
+      if (where.length < 6) where.push(`${p} - ${q} (${c})`);
+    }
+  }
+  let odd = 0;
+  for (const c of und.values()) if (c % 2) odd++;
+  let coincident = 0;
+  for (const c of faces.values()) if (c > 1) coincident += c;
+  return { tris: m.tris.length, openInterior, openRootEdge, openBottom, openLevelEdge, odd, coincident, repeated, where };
+}
