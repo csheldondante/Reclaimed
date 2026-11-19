@@ -961,6 +961,12 @@ the solid below the next air gap down." "Why make those [skirts, outer ring] if 
     check, then the pit, cave and shaft poses (NS-120 as decided). The rim-line check has nothing to count in the sheet
     draw (no rim walls); the closure check is the union over all levels (watertight.ts unionClosure), reported as level
     0's odd edges.
+- *Status at the end of round 16:* the sheet draw is the smooth path (`?smooth=1`, URL only; no page toggle: the gate
+  was not met). Passed: reference 25 scenes closed; GPU = reference; `?selftest=1&smooth=only` 11 of 11. Open: the full
+  selftest's dug world (NS-127 pit holes, NS-128 transient), the edit fix of NS-126 not yet re-run, carve cost 3x boxes
+  (NS-129), stills poses. The old smooth code (cacheBake, template caps and walls, wall list, smooth exception bake and
+  their draw entry points) is no longer called but not yet deleted (delete once the gate passes). Where to pick up:
+  re-run the full gate; NS-127 with per-pose diagnosis; NS-129.
 
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 

@@ -27302,3 +27302,26 @@ poses (no skirt and no pose saw under a sheet); coverage 0. One fault: the union
 frames after the move") found 1,024 open edges, 0 once settled (being looked at). The first run also found 12 open
 edges on one zipper run after the cruise: a slide did not re-bake the child's edge ring; fixed (slide re-bakes it in
 the sheet draw; edits keep the same dependency open: NS-126).
+
+## 2026-11-19 — Nested scales lab, round 16 steps 2-3: the gate (not met), draw and carve measured, stills
+
+**Gate.** `?selftest=1&smooth=only` 11 of 11 (fresh sandbox: 0 hole pixels on the 40 poses, cruise and 162 pit poses;
+GPU = reference; union closed). Full `?selftest=1` run 1: 43 of 45; the two failures: 10 open edges after the stroke
+across the rim at L1 line 480,944..984 (the line of NS-119's box faults: an edit did not bake the partner level; edits
+now bake it, NS-126; not re-run), and 192,048 hole pixels over the dug world's 162 pit poses (NS-127, cause not found;
+a rerun of that sequence alone: 471). Runs 2 and 3, smooth off, shaft and stress: not run (stopped to fix the edit
+miss; the session's time ran out). Unit tests 100 of 100.
+
+**Measured** (nested-perf.mjs `--sab 1`; ANOTHER headless Chrome shared the GPU during the run (profile chrome-1), so the
+absolute numbers are disturbed; boxes' hillside read 9.5 ms against round 15's 4.2): draw medians boxes / sheets ms:
+mound 11.5 / 8.4, tunnel inside 15.3 / 6.0, looking back 13.0 / 9.7, tunnel mouth 14.8 / 15.8 (samples 23.1 15.8 7.6),
+blob 11.8 / 7.8, hillside 9.5 / 2.7, map 10.3 / 4.7. Full vs 4 x 4 canvas: boxes 9.2 / 5.5, sheets 3.2 / 3.8 (hillside):
+the sheets are no longer vertex-bound. Triangles: sheets L0 129k, L1 133-137k, L2 239-296k against boxes' 758k, 590k,
+1.0-1.25M. Carve at level 1: boxes median 27.7 ms, sheets 81.6 (the sheet pass 72.7 of it; without it 15.7): FAILS the
+target (at or under boxes). Most likely the partner bakes added this step (rim chunks always bake) and the sheet pass's
+per-line walks (two bound walks and one cluster walk a line, 361 lines a chunk); not split yet (NS-129).
+
+**Stills** (local/nested/r16-*, desktop only; the phone set not made). The new feature poses missed their features at
+the finest level (the camera was lifted out of solid 5-10 times: the default-brush tunnel is 3 m wide and the poses
+sat inside it), so cliff / bowl / lip / tunnel stills mostly show plain ground; the level-edge pose shows the big
+tunnel's mouth instead.
