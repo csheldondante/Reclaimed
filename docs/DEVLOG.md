@@ -27526,3 +27526,38 @@ passes cold and reload.
 **End gate of round 19** (the revert, C and the boot together): typecheck; nested unit tests 59 of 59; compile gate
 passed; `smooth=only` 11 of 11 (run on C's kernel); full selftest smooth on 45 of 45 (the stroke check back: depth
 2.46..3.00 for r 2.5), smooth off (`smooth=0`) 36 of 36; `nested-smoothboot` boot gate passed cold and reload.
+
+## 2026-11-19 — Nested scales lab, round 20: the textured draw (materials and light behind a toggle)
+
+**Why.** The owner: "Please use high quality textures and lighting for the next pass. Then let's keep a toggle so we
+can go back to fix the artifacts", and earlier "when you add normal maps and lighting the fine detail needs to match
+them when it loads in", "I like a hard crease at a rim", "smooth Phong within a triangle". So the detail is one height
+field in world units, as bands, whose unresolved part bends the normal now and whose resolved part a later round puts
+into the finer level's geometry; a world point must shade the same from any level, so nothing pops when a level loads.
+
+**What** (NESTED_SCALES.md "As built (round 20)"): src/nested/gpu/detail.wgsl (detailH / detailHG: 16 bands of 3D
+gradient noise, wavelength 2^(1-b) world units, amplitude by wavelength, a point as a level's integer origin plus a
+local point so the lattice is exact at any distance), src/nested/gpu/shade.wgsl (texShade: band window by the pixel
+footprint, materials, linear light, haze, sky, ACES, sRGB), draw.wgsl fsT / fsST / vsSky / fsSky, the "Textured" button
+and `?tex=0|1` (default on), `?bands=all|split` (default all), `?texbands=N`. The flat path is untouched.
+
+**Iterations on the look** (stills local/nested/r20-*, judged at play zoom and close up): (1) the first pass was washed
+out (haze 0.0045 a world unit: 16% at the near ground of the overview, 60% at the far hills), walls near black, grass
+streaked along the fall line. The streaks were checked, not guessed: the noise is isotropic (zero crossings along x,
+y, z 5 / 6 / 6 over the same span, a throwaway Dawn test) and straight down the grass is isotropic
+(r20-top-down-tex); the band cut by the pixel footprint's LONGER axis left only coarse bands at grazing angles. Now the
+shorter axis, at least a quarter of the longer (NS-148 keeps the rest). (2) Haze 0.0018, ambient up, a lower sun for
+the textured draw, darker and more varied grass. (3) Cracks were thick black worms and strata a zebra: cracks now thin
+(a pixel at least), sparse (gated by the broad noise) and lighter; strata two beating spacings at lower contrast.
+
+**Measured.** Continuity (test/gpu/nested-detail.test.ts, Dawn): a world point given as adjacent levels give it, colour
+the same to 2.6e-5 under bands=all (1/150 of an 8-bit step), bands 2 and 8 to 3.4e-4 of their scale; bands=split differ
+by 0.14 (the check is not vacuous). Flat path: pixel-identical to 3c1ccc33 (nested-r20-flatcheck, boxes and sheets, 3
+views each). Cost: at most 9 3D gradient noises a pixel (7 band, 1 broad, 1 crack on steep stone). Draw ms, desktop
+960 x 640, same page, flat -> textured (nested-perf --texab 1; another agent may share the GPU): sheets the map 1.10 ->
+2.37, hillside 1.35 -> 3.69, tunnel inside 2.65 -> 6.37 (L2 alone 1.91 -> 6.34); boxes the map 2.31 -> 6.54, hillside
+4.29 -> 11.06, tunnel inside 9.65 -> 19.23. `?texbands=4` sheets: hillside 3.21, tunnel inside 4.62. Compile (Dawn):
+textured boxes 136-214 ms, sheets 176-244, sky 24-34; made in 450-470 ms after the first frame in headless Chrome.
+Boot gate: reload first frame 6.5-7.3 s, every boot pipeline 11.9-13.1 s, first sheet frame 9.1-10.1 s.
+
+**End gate of round 20**: END_GATE_PLACEHOLDER

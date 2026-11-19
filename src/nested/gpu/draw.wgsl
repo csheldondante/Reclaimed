@@ -37,6 +37,12 @@ struct VOut {
   @location(3) wp: vec3<f32>, // world position (the pattern's coordinates, the same on every level)
   @location(4) lz: f32, // the local height (the watertight capture; 3e38: a vertex not drawn)
   @location(5) dEye: f32, // (metrics) the distance to the eye, local units
+  // (round 20, the textured draw only; the flat fs ignores them) the point in this level's units (a rim vertex brought
+  // back from the child's), toward the eye in this level's units, this level's z origin in world units
+  @location(6) q: vec3<f32>,
+  @location(7) toEye: vec3<f32>,
+  @location(8) @interpolate(flat) zo: f32,
+  @location(9) @interpolate(flat) mat: u32,
 }
 
 /** a level's z origin in world units (reg words 1..L: each level's origin in its parent's units) */
@@ -166,7 +172,13 @@ fn vs(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VOu
     wo = d.kid.xy;
   }
   o.wp = worldAt(L, wo, pc.lp);
-  o.dEye = length(pc.lp - vec3<f32>(cam[eb + 16u], cam[eb + 17u], cam[eb + 18u])) * sk;
+  let eye = vec3<f32>(cam[eb + 16u], cam[eb + 17u], cam[eb + 18u]);
+  o.dEye = length(pc.lp - eye) * sk;
+  o.toEye = (eye - pc.lp) * sk;
+  o.q = c.lp;
+  if (c.kid) { o.q = vec3<f32>(c.lp.x, c.lp.y, bitcast<f32>(reg[u32(d.lvl.w) + 1u]) + c.lp.z * d.want.w); }
+  o.zo = zOrigW(u32(d.lvl.w));
+  o.mat = c.mat;
   return o;
 }
 
@@ -189,6 +201,8 @@ struct VOutS {
   @location(4) toEye: vec3<f32>,
   /** (step C) the interpolated vertex normal (the template's; zero for the exceptions: flat) */
   @location(5) vn: vec3<f32>,
+  /** (round 20, the textured draw) this level's z origin, world units */
+  @location(6) @interpolate(flat) zo: f32,
 }
 /** a vertex of the smooth draw from its level-local point (rim: a parent's vertex on a child's rim line, placed as the
  *  boxes place it) */
@@ -213,6 +227,7 @@ fn smoothOut(lp: vec3<f32>, kid: bool, mat: u32) -> VOutS {
   o.dEye = length(pc.lp - eye) * sk;
   o.toEye = (eye - pc.lp) * sk;
   o.vn = vec3<f32>(0.0);
+  o.zo = zOrigW(u32(d.lvl.w));
   return o;
 }
 /** the sheet list (nest.wgsl sheetDir): 8 counts from 16 + 16 x cap, then per level EX_PB x cap entries of 2 words */
@@ -463,6 +478,10 @@ fn pattern(p: vec3<f32>, n: vec3<f32>, px: f32) -> f32 {
 fn fs(v: VOut) -> FOut {
   // (fwidth before anything that could branch)
   let px = length(fwidth(v.wp));
+  return flatOut(v, px);
+}
+/** the box draw's flat shading (round 6-19; the textured draw's diagnostics modes use it too) */
+fn flatOut(v: VOut, px: f32) -> FOut {
   let n = normalize(v.nrm);
   let pat = pattern(v.wp, n, px);
   let sun = normalize(d.sun.xyz);
@@ -477,5 +496,113 @@ fn fs(v: VOut) -> FOut {
   // (the distance comes from the vertex stage: reading the camera words here doubled the draw's time)
   let coarse = d.want.x > 0.0 && v.dEye < d.want.x;
   o.info = vec4<f32>(1.0, f32(d.lvl.w) / 8.0, select(0.0, 1.0, coarse), 1.0);
+  return o;
+}
+
+// ---- (round 20) the textured draw: shade.wgsl's materials and light behind the "Textured" toggle (?tex=1, default) ----
+// Separate entry points and pipelines (made after the first frame; the flat draw meanwhile), so the flat path above
+// stays exactly as it was. Both draws call one function, texOut.
+/** a level's s: log2 of its columns a world unit (k a power of two: BACKLOG NS-146) */
+fn levelS() -> i32 { return i32(d.lvl.w) * i32(round(log2(d.misc.w))); }
+fn texOut(q: vec3<f32>, zo: f32, ng: vec3<f32>, mat: u32, pxL: f32, toEye: vec3<f32>, dEye: f32) -> FOut {
+  let s = levelS();
+  let sc = ldexp(1.0, -s);
+  var si: ShadeIn;
+  si.p = DPt(d.lvl.xy, s, zo, q);
+  si.ng = ng;
+  si.mat = mat;
+  si.pxW = pxL * sc;
+  si.view = -normalize(toEye);
+  si.distW = dEye * sc;
+  si.sun = normalize(d.sun.xyz);
+  // (misc.y: ?bands=split, the per-level cut-off; else every band)
+  si.split = select(-1.0, f32(s), d.misc.y > 0.5);
+  si.debug = d.misc.x == 3.0;
+  // (want.z: ?texbands=, the band window's size; 0 the default)
+  si.nb = d.want.z;
+  var col = texShade(si);
+  if (d.misc.z > 0.5) { col = mix(col, TINTS[u32(d.lvl.w) % 6u] * dot(col, vec3<f32>(0.3, 0.5, 0.2)) * 1.3, 0.55); }
+  var o: FOut;
+  o.color = vec4<f32>(col, 1.0);
+  let coarse = d.want.x > 0.0 && dEye < d.want.x;
+  o.info = vec4<f32>(1.0, f32(d.lvl.w) / 8.0, select(0.0, 1.0, coarse), 1.0);
+  return o;
+}
+/** a pixel's footprint for the band window, from the level-local point's screen derivatives (precise at any zoom, where
+ *  the world point is not): the shorter axis, but at least a quarter of the longer, so a surface seen at a grazing angle
+ *  keeps its detail across the view (the cut by the longer axis smeared it into streaks) without bands far under a
+ *  pixel along it (shimmer) */
+fn footprint(dx: vec3<f32>, dy: vec3<f32>) -> f32 {
+  let a = length(dx);
+  let b = length(dy);
+  return max(min(a, b), max(a, b) / 4.0);
+}
+@fragment
+fn fsT(v: VOut) -> FOut {
+  // (derivatives first, in uniform control flow)
+  let px = length(fwidth(v.wp));
+  let pxL = footprint(dpdx(v.q), dpdy(v.q));
+  if (d.misc.x == 1.0 || d.misc.x == 2.0) { return flatOut(v, px); }
+  var n = normalize(v.nrm);
+  if (dot(n, v.toEye) < 0.0) { n = -n; }
+  return texOut(v.q, v.zo, n, v.mat, pxL, v.toEye, v.dEye);
+}
+@fragment
+fn fsST(v: VOutS) -> FOut {
+  // (derivatives first, as fsS; the crease rule as fsS, the detail on top of whichever normal it picks)
+  let qx = dpdx(v.q);
+  let qy = dpdy(v.q);
+  let pxL = footprint(qx, qy);
+  let cr = cross(qx, qy);
+  let cl = length(cr);
+  var n = select(vec3<f32>(0.0, 0.0, 1.0), cr / cl, cl > 0.0);
+  if (dot(n, v.toEye) < 0.0) { n = -n; }
+  let vl = length(v.vn);
+  if (vl > 1e-3) {
+    let nv = v.vn / vl;
+    if (dot(nv, n) >= d.sun.w) { n = nv; }
+  }
+  return texOut(v.q, v.zo, n, v.mat, pxL, v.toEye, v.dEye);
+}
+
+// ---- (round 20) the sky behind the textured draw: a full-screen triangle where nothing was drawn (depth still the
+// clear value 0), the direction per pixel from level 0's view-projection; info is not written (its write mask is 0)
+fn inverse4(m: mat4x4<f32>) -> mat4x4<f32> {
+  let a00 = m[0][0]; let a01 = m[0][1]; let a02 = m[0][2]; let a03 = m[0][3];
+  let a10 = m[1][0]; let a11 = m[1][1]; let a12 = m[1][2]; let a13 = m[1][3];
+  let a20 = m[2][0]; let a21 = m[2][1]; let a22 = m[2][2]; let a23 = m[2][3];
+  let a30 = m[3][0]; let a31 = m[3][1]; let a32 = m[3][2]; let a33 = m[3][3];
+  let b00 = a00 * a11 - a01 * a10; let b01 = a00 * a12 - a02 * a10; let b02 = a00 * a13 - a03 * a10;
+  let b03 = a01 * a12 - a02 * a11; let b04 = a01 * a13 - a03 * a11; let b05 = a02 * a13 - a03 * a12;
+  let b06 = a20 * a31 - a21 * a30; let b07 = a20 * a32 - a22 * a30; let b08 = a20 * a33 - a23 * a30;
+  let b09 = a21 * a32 - a22 * a31; let b10 = a21 * a33 - a23 * a31; let b11 = a22 * a33 - a23 * a32;
+  let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+  let id = 1.0 / det;
+  return mat4x4<f32>(
+    vec4<f32>(a11 * b11 - a12 * b10 + a13 * b09, a02 * b10 - a01 * b11 - a03 * b09, a31 * b05 - a32 * b04 + a33 * b03, a22 * b04 - a21 * b05 - a23 * b03) * id,
+    vec4<f32>(a12 * b08 - a10 * b11 - a13 * b07, a00 * b11 - a02 * b08 + a03 * b07, a32 * b02 - a30 * b05 - a33 * b01, a20 * b05 - a22 * b02 + a23 * b01) * id,
+    vec4<f32>(a10 * b10 - a11 * b08 + a13 * b06, a01 * b08 - a00 * b10 - a03 * b06, a30 * b04 - a31 * b02 + a33 * b00, a21 * b02 - a20 * b04 - a23 * b00) * id,
+    vec4<f32>(a11 * b07 - a10 * b09 - a12 * b06, a00 * b09 - a01 * b07 + a02 * b06, a31 * b01 - a30 * b03 - a32 * b00, a20 * b03 - a21 * b01 + a22 * b00) * id);
+}
+struct VSky {
+  @builtin(position) pos: vec4<f32>,
+  /** toward the near plane's point from the eye, level 0's units (affine in the screen, so interpolated exactly) */
+  @location(0) dir: vec3<f32>,
+}
+@vertex
+fn vsSky(@builtin(vertex_index) i: u32) -> VSky {
+  let xy = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u)) * 2.0 - 1.0;
+  let inv = inverse4(vpOf(0u) * d.model);
+  let pn = inv * vec4<f32>(xy, 1.0, 1.0);
+  var o: VSky;
+  o.pos = vec4<f32>(xy, 0.0, 1.0);
+  o.dir = pn.xyz / pn.w - vec3<f32>(cam[48], cam[49], cam[50]);
+  return o;
+}
+@fragment
+fn fsSky(v: VSky) -> FOut {
+  var o: FOut;
+  o.color = vec4<f32>(shDisplay(shSky(normalize(v.dir), normalize(d.sun.xyz))), 1.0);
+  o.info = vec4<f32>(0.0);
   return o;
 }

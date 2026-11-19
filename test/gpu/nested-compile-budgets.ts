@@ -37,6 +37,10 @@ export const BUDGET_MS: Record<string, number> = {
   sheetBake: 1000,
   drawBoxes: 400,
   drawSheets: 400,
+  // (round 20) the textured draws and the sky, made after the first frame (first measured 214, 244, 34 ms: the floor)
+  drawBoxesTex: 400,
+  drawSheetsTex: 400,
+  drawSky: 400,
   capture: 400,
   captureSheet: 400,
 };

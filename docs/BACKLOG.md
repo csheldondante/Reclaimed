@@ -556,6 +556,52 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
 - NS-144 (bug?, round 19) A reload's first frame in the headless runner takes 4.7-9.1 s (round 18 before the change:
   8.1 s), longer than a cold load's submit in round 18; the pipelines are cached (75 ms). Not investigated: the
   previous page's teardown or the runner.
+- NS-145 (look/bug, from the owner's phone, 2026-11-19; record only, not investigated) Sheet artifacts on the owner's
+  phone, 2026-11-19 (local/nested/phone-1119-a-close-4levels.png, phone-1119-b-cliff-2levels.png,
+  phone-1119-c-cliff-1level-fangs.png): (c) at the root level (3.2 m columns) a tall cliff running diagonal to the grid
+  draws as a row of tall thin fangs, alternating soil brown and stone grey per triangle (the one-column ramp with corner
+  heights alternating top / bottom along the stair-stepped cliff line, and material chosen per triangle); (b) with 2
+  levels open: a thin green outline strip along the cliff top, a small torn notch near the edge showing brown, thin
+  vertical lines down the cliff face, and a grey quad-shaped sliver at the lower right (level edge); (a) at 4 levels:
+  brown and dark striped slivers at the left (level edge zipper) and a faceted wedge in stone. Phone boot from the
+  screenshot: first frame 10,950 ms, first sheet frame 16,009 ms, frame 16.7 ms (the boot gate's desktop limits are
+  11 s and 16 s: the phone is at them). Also "one jitter bug where it flickered between two levels maybe" in sheets, no
+  pose recorded; candidates: a level opening and closing round the 0.45 x width zoom band while the camera hovers near
+  it (the stream measure already counts zoomFlips and slideReversals), or two levels' surfaces z-fighting at a level
+  edge. Round 20's textured draw does not change (c): material is still per triangle (NS-150), the fangs are geometry;
+  textured, both materials are lit by one model, so the alternation reads as grey stone and tan dirt rather than
+  brown and grey (local/nested/r20-root-cliff-far-tex.png against -flat).
+- NS-146 (limit, round 20) The detail bands (detail.wgsl DPt) need k a power of two: a level's s is L x round(log2 k),
+  so the integer window origin can be shifted into each band's lattice exactly. Another k shades with wrong band
+  scales (no error). Assert it at the page's start, or carry the scale as a float for other k.
+- NS-147 (limit, round 20) The textured draw has no shadows (no shadow maps) and no sky occlusion: a face turned from
+  the sun by its geometry gets no sun, but the inside of a tunnel or a deep pit is lit by the full sky ambient (r20-
+  tunnel-mouth-tex reads bright inside). Next: a cheap occlusion from the columns (open sky above a column, from the
+  bake) or screen-space AO; shadows from the sun by a shadow map or column ray march.
+- NS-148 (limit, round 20) Grazing-angle streaks: the band window follows a pixel footprint clamped to 4:1 anisotropy
+  (draw.wgsl footprint), so at grazing angles the noise is cut by the long axis / 4 and reads as streaks toward the
+  vanishing point (r20-closeup-tex, r20-cliff-tex; straight down it is isotropic, r20-top-down-tex). A real
+  anisotropic filter (several taps along the long axis) costs noise evaluations a tap.
+- NS-149 (perf, round 20) The textured draw's cost, desktop 960 x 640, same page (nested-perf --texab 1): sheets +1.2 to
+  +3.7 ms the whole draw (flat 1.1-3.0 ms -> 2.3-6.4), boxes +4 to +10 ms (flat 2.3-9.7 -> 6.5-19.2: the box draw's
+  overdraw shades hidden faces). Phone not measured: the owner should toggle Textured on the phone and read the frame
+  time (toggle, don't timestamp). Dials: `?texbands=4` (5 band noises a pixel at most instead of 7) saved 0.5-1.7 ms
+  of the sheets' cost; a depth pre-pass would spare the hidden box faces.
+- NS-150 (look, round 20) Material is per triangle (flat), so a material change is a hard edge along triangle edges,
+  and a stair-stepped boundary alternates per triangle (NS-145 (c)). A blend needs the material per vertex (the
+  cluster's) or a material field sampled per pixel; the bands could then dither the boundary.
+- NS-151 (hack, round 20) Two suns: the textured draw's sun (0.55, -0.45, 0.62, about 38 degrees up) is written into the
+  uniforms instead of the flat draw's (0.45, -0.35, 0.82) whenever the textured draw is drawn (render.ts uniforms), so
+  the flat path stays as it was; the light, haze, sky and material constants are hand-tuned literals in shade.wgsl
+  (no tuning panel). One sun and a panel once the look is agreed.
+- NS-152 (limit, round 20) The detail bands are not in the geometry yet: `?bands=all` (the default) bends the normal
+  by every band, also bands the geometry would resolve; `?bands=split` uses the per-level cut-off (2 columns) the next
+  round needs, once nest.wgsl feeds the bands between two levels' column sizes into the finer level's geometry
+  (include detail.wgsl there). Continuity measured (test/gpu/nested-detail.test.ts): adjacent levels give the same
+  colour to 2.6e-5 (1/150 of an 8-bit step); band 14 (1/8192 world units) is evaluated precisely only from level 3's
+  local magnitudes, which is where it is drawn.
+- NS-153 (hack, round 20) Renderer.diag 3 (the textured draw's bands as colour: red the band value, green the bent
+  normal toward the sun, blue the broad noise) has no button; scripts/nested-r20-stills.mjs --diag 3.
 - NS-137 (limit, round 18) A smooth switch holds levels, edits and shrinks still while it bakes (2 chunk rows a frame:
   16 frames, ~170 ms wall on a fresh world, longer when dug). A wish changed mid-switch abandons it; the rows it baked
   stay in the pool until the next flip lets that draw's pages go.

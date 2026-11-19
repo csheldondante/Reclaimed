@@ -4,12 +4,33 @@
 // view-projection in its own units). A second target carries per-pixel info for the measurements.
 import storeWgsl from './gpu/store.wgsl?raw';
 import drawWgsl from './gpu/draw.wgsl?raw';
+import detailWgsl from './gpu/detail.wgsl?raw';
+import shadeWgsl from './gpu/shade.wgsl?raw';
 import { MAX_LEVELS, SEG_BASE, TCAP, TPP, segWgsl, type GpuNest } from './gpu/nest';
+
+/** the draw module's source (the page and the compile gate): the pages' segments, the store, (round 20) the detail
+ *  bands and the textured shading, then the draws */
+export function drawModuleCode(S: number, segP: number): string {
+  return `const TCAP: u32 = ${TCAP}u;\n${segWgsl(S, segP, true)}\n${storeWgsl}\n${detailWgsl}\n${shadeWgsl}\n${drawWgsl}`;
+}
 
 const DU = 256;
 const DU_SIZE = 160;
 /** a grid's model matrix: one root grid at the world origin today (identity); another grid would carry its rigid frame */
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+
+/** (round 20) the sky: a full-screen triangle at depth 0 (reverse Z's clear value), drawn after the levels where the depth
+ *  is still 0; the info target untouched (write mask 0) */
+export function skyDesc(layout: GPUPipelineLayout | 'auto', module: GPUShaderModule, format: GPUTextureFormat): GPURenderPipelineDescriptor {
+  return {
+    label: 'nest draw sky',
+    layout,
+    vertex: { module, entryPoint: 'vsSky' },
+    fragment: { module, entryPoint: 'fsSky', targets: [{ format }, { format: 'rgba8unorm', writeMask: 0 }] },
+    primitive: { topology: 'triangle-list', cullMode: 'none' },
+    depthStencil: { format: 'depth32float', depthWriteEnabled: false, depthCompare: 'equal' },
+  };
+}
 
 export interface DrawLevel {
   depth: number;
@@ -52,23 +73,15 @@ export class Renderer {
         ...[1, 3, 4, 5, ...Array.from({ length: nest.S }, (_, j) => SEG_BASE + j)].map((binding) => ({ binding, visibility: V, buffer: ro })),
       ],
     });
-    const module = (this.module = device.createShaderModule({ label: 'nest draw', code: `const TCAP: u32 = ${TCAP}u;\n${segWgsl(nest.S, nest.segP, true)}\n${storeWgsl}\n${drawWgsl}` }));
-    const pl = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
+    this.module = device.createShaderModule({ label: 'nest draw', code: drawModuleCode(nest.S, nest.segP) });
+    this.pl = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
     // (round 19, NS-141: asynchronous; the app draws once `ready` resolves)
-    this.ready = device.createRenderPipelineAsync({
-      label: 'nest draw boxes',
-      layout: pl,
-      vertex: { module, entryPoint: 'vs' },
-      fragment: { module, entryPoint: 'fs', targets: [{ format: this.format }, { format: 'rgba8unorm' }] },
-      primitive: { topology: 'triangle-list', cullMode: 'none' },
-      depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' },
-    }).then((p) => {
+    this.ready = device.createRenderPipelineAsync(this.boxDesc()).then((p) => {
       this.pipe = p;
     });
     this.ubuf = device.createBuffer({ label: 'nest draw uniforms', size: DU * MAX_LEVELS, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    this.pl = pl;
   }
-  private pl: GPUPipelineLayout;
+  private pl!: GPUPipelineLayout;
   /** the smooth draw's pipeline (round 16: the sheets), made when it is first switched on */
   private smoothPipe: { sheet: GPURenderPipeline } | null = null;
   private sheetDesc(): GPURenderPipelineDescriptor {
@@ -100,6 +113,53 @@ export class Renderer {
       });
     }
     return false;
+  }
+
+  /** (round 20) the textured draw wanted (?tex=1, default; the "Textured" button). Drawn once its pipelines are made;
+   *  the flat draw meanwhile */
+  tex = true;
+  /** (round 20) ?bands=split: only the bands finer than 2 columns of the drawn level; else every band (the default) */
+  bandsSplit = false;
+  /** (round 20) ?texbands=N: the textured draw's band window (N + 1 band noises a pixel at most); 0 its default (6) */
+  texBands = 0;
+  private texPipes: { box: GPURenderPipeline; sheet: GPURenderPipeline; sky: GPURenderPipeline } | null = null;
+  private texCompile: Promise<void> | null = null;
+  /** (round 20) the textured pipelines' creation time, ms (asynchronous, after the first frame) */
+  texCompileMs = 0;
+  private texAt = 0;
+  /** whether the textured pipelines are made; starts their asynchronous creation when not */
+  prepareTex(): boolean {
+    if (this.texPipes) return true;
+    if (!this.texCompile) {
+      const t0 = (this.texAt = performance.now());
+      const box: GPURenderPipelineDescriptor = { ...this.boxDesc(), label: 'nest draw boxes (textured)', fragment: { module: this.module, entryPoint: 'fsT', targets: [{ format: this.format }, { format: 'rgba8unorm' }] } };
+      const sd = this.sheetDesc();
+      const sheet: GPURenderPipelineDescriptor = { ...sd, label: 'nest draw sheets (textured)', fragment: { module: this.module, entryPoint: 'fsST', targets: [{ format: this.format }, { format: 'rgba8unorm' }] } };
+      this.texCompile = Promise.all([this.device.createRenderPipelineAsync(box), this.device.createRenderPipelineAsync(sheet), this.device.createRenderPipelineAsync(skyDesc(this.pl, this.module, this.format))]).then(([b, s, k]) => {
+        this.texPipes = { box: b, sheet: s, sky: k };
+        this.texCompileMs = performance.now() - t0;
+      });
+    }
+    return false;
+  }
+  /** the HUD's line while the textured draw is wanted and not yet made */
+  get texText(): string {
+    if (!this.tex || this.texPipes || !this.texCompile) return '';
+    return `textured: compiling the textured draws (${(performance.now() - this.texAt).toFixed(0)} ms so far); flat until then`;
+  }
+  /** whether this frame draws textured */
+  get texDrawn(): boolean {
+    return this.tex && !!this.texPipes;
+  }
+  private boxDesc(): GPURenderPipelineDescriptor {
+    return {
+      label: 'nest draw boxes',
+      layout: this.pl,
+      vertex: { module: this.module, entryPoint: 'vs' },
+      fragment: { module: this.module, entryPoint: 'fs', targets: [{ format: this.format }, { format: 'rgba8unorm' }] },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' },
+    };
   }
 
   private targets(w: number, h: number): void {
@@ -143,20 +203,27 @@ export class Renderer {
     });
     // finest first: the depth test then spares the coarse levels' fragments under it
     const order = [...levels].sort((a, b) => b.depth - a.depth);
+    const tp = this.texDrawn ? this.texPipes : null;
     if (this.nest.smooth) {
       // (round 16) per level the sheets
       const sp = this.smoothPipes();
-      pass.setPipeline(sp.sheet);
+      pass.setPipeline(tp ? tp.sheet : sp.sheet);
       for (const lv of order) {
         pass.setBindGroup(0, this.bg!, [lv.depth * DU]);
         pass.drawIndirect(this.nest.drawArgs, (MAX_LEVELS + lv.depth) * 16);
       }
     } else {
-      pass.setPipeline(this.pipe);
+      pass.setPipeline(tp ? tp.box : this.pipe);
       for (const lv of order) {
         pass.setBindGroup(0, this.bg!, [lv.depth * DU]);
         pass.drawIndirect(this.nest.drawArgs, lv.depth * 16);
       }
+    }
+    // (round 20) the sky where nothing was drawn, with level 0's uniforms (its view-projection and eye)
+    if (tp && levels.some((l) => l.depth === 0)) {
+      pass.setPipeline(tp.sky);
+      pass.setBindGroup(0, this.bg!, [0]);
+      pass.draw(3);
     }
     pass.end();
     this.device.queue.submit([enc.finish()]);
@@ -171,11 +238,15 @@ export class Renderer {
       if (!w) continue;
       new Int32Array(st, lv.depth * DU, 4).set([w.gx, w.gy, w.n, lv.depth]);
       const f = new Float32Array(st, lv.depth * DU + 16, 12);
-      f.set([this.diag, 0, this.tint ? 1 : 0, this.nest.k], 0);
+      // (misc.y, round 20: the textured draw's band cut-off, 1 = per level (?bands=split))
+      f.set([this.diag, this.bandsSplit ? 1 : 0, this.tint ? 1 : 0, this.nest.k], 0);
       // (want.w: 1 / k, exact on the CPU, for the rim vertices: round 11)
-      f.set([lv.want, 0, 0, 1 / this.nest.k], 4);
+      // (want.z, round 20: the textured draw's band window, 0 = its default)
+      f.set([lv.want, 0, this.texBands, 1 / this.nest.k], 4);
       // (sun.w, round 14: the smooth draw's crease angle as its cosine)
-      f.set([0.45, -0.35, 0.82, Math.cos((this.crease * Math.PI) / 180)], 8);
+      // (round 20: the textured draw's sun is lower, about 38 degrees up, so the relief reads without shadows; the flat
+      // draw keeps its own)
+      f.set([...(this.texDrawn ? [0.55, -0.45, 0.62] : [0.45, -0.35, 0.82]), Math.cos((this.crease * Math.PI) / 180)], 8);
       new Uint32Array(st, lv.depth * DU + 64, 4).set([this.nest.cap, 0, 0, pages[lv.depth] ?? 0]);
       new Float32Array(st, lv.depth * DU + 80, 16).set(IDENTITY);
       // (round 11, NS-97) the live child's window: the parent's rim vertices are placed in its units

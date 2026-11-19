@@ -4,8 +4,8 @@
 import { expect, it } from 'vitest';
 import storeWgsl from '../../src/nested/gpu/store.wgsl?raw';
 import nestWgsl from '../../src/nested/gpu/nest.wgsl?raw';
-import drawWgsl from '../../src/nested/gpu/draw.wgsl?raw';
 import { segWgsl, TCAP } from '../../src/nested/gpu/nest';
+import { drawModuleCode, skyDesc } from '../../src/nested/render';
 import { BUDGET_MS, FLOOR_MS, TOTAL_BUDGET_MS, budgetOf } from './nested-compile-budgets';
 
 /** every compute pipeline of nest.wgsl the page makes: name -> (entry point, override constants) */
@@ -35,7 +35,7 @@ it('nested: both modules compile; every pipeline within its compile budget', asy
     return m;
   };
   const nest = await mod('nest', `const TCAP: u32 = ${TCAP}u;\n${segWgsl(4, 64, false)}\n${storeWgsl}\n${nestWgsl}`);
-  const draw = await mod('draw', `const TCAP: u32 = ${TCAP}u;\n${segWgsl(4, 64, true)}\n${storeWgsl}\n${drawWgsl}`);
+  const draw = await mod('draw', drawModuleCode(4, 64));
   expect(errs, errs.join('\n')).toEqual([]);
   for (const [name, entryPoint, constants] of COMPUTE) await timed(name, () => device.createComputePipelineAsync({ layout: 'auto', compute: { module: nest, entryPoint, constants } }));
   const render = (vs: string, fs: string) => () =>
@@ -48,6 +48,10 @@ it('nested: both modules compile; every pipeline within its compile budget', asy
     });
   await timed('drawBoxes', render('vs', 'fs'));
   await timed('drawSheets', render('vsSheet', 'fsS'));
+  // (round 20) the textured draws and the sky (made after the first frame)
+  await timed('drawBoxesTex', render('vs', 'fsT'));
+  await timed('drawSheetsTex', render('vsSheet', 'fsST'));
+  await timed('drawSky', () => device.createRenderPipelineAsync(skyDesc('auto', draw, 'bgra8unorm')));
   for (const e of DRAW_COMPUTE) await timed(e, () => device.createComputePipelineAsync({ layout: 'auto', compute: { module: draw, entryPoint: e } }));
   const total = Object.values(times).reduce((a, b) => a + b, 0);
   console.log(`[compile] Dawn (${(adapter as unknown as { info?: { backend?: string } }).info?.backend ?? 'default backend'}), ms (budget):\n${Object.entries(times).map(([k, v]) => `  ${k.padEnd(14)} ${v.toFixed(0).padStart(6)} (${budgetOf(k)})`).join('\n')}\n  total          ${total.toFixed(0).padStart(6)} (${TOTAL_BUDGET_MS})`);

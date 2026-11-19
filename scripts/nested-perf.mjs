@@ -10,7 +10,9 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
   page.on('console', (m) => {
     if (m.type() === 'error' || m.type() === 'warning') console.log(`[page ${m.type()}] ${m.text()}`);
   });
-  await page.goto(`https://localhost:${port}/nested.html?k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140`, { waitUntil: 'load' });
+  // (round 20: --texbands N, the textured draw's band window)
+  const tb = R.opt('texbands', '');
+  await page.goto(`https://localhost:${port}/nested.html?k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140${tb ? `&texbands=${tb}` : ''}`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.nested && nested.app.frameCount > 60, { timeout: 120000, polling: 100 });
   await sleep(1500);
   const h = await page.evaluate(async () => {
@@ -41,6 +43,32 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
     'hillside': { yaw: 0.6, pitch: 0.5, eye: [hx + 20, hy + 14, hz + 12] },
     'the map': { yaw: 0.6, pitch: 0.7, eye: [hx + 60, hy + 40, hz + 70] },
   };
+  // (round 20, --texab 1) the textured draw against the flat one in the same page, alternating 3 times: per view the
+  // whole draw and each level drawn alone (median ms, GPU done). Then stops.
+  if (R.opt('texab', '0') === '1') {
+    for (const [name, v] of Object.entries(views)) {
+      await page.evaluate((v) => nested.setView(v), v);
+      await sleep(2500);
+      const r = await page.evaluate(async () => {
+        const med = (v) => [...v].sort((x, y) => x - y)[Math.floor(v.length / 2)];
+        const depths = nested.app.drawList().map((l) => l.depth);
+        const out = { flat: { all: [] }, tex: { all: [] }, depths };
+        for (const k of ['flat', 'tex']) for (const d of depths) out[k][d] = [];
+        for (let i = 0; i < 6; i++) {
+          const on = i % 2 === 1;
+          await nested.tex(on);
+          const o = out[on ? 'tex' : 'flat'];
+          o.all.push(await nested.benchDraw(10));
+          for (const d of depths) o[d].push(await nested.benchDraw(10, d));
+        }
+        await nested.tex(true);
+        const f = (o) => `all ${med(o.all).toFixed(2)}; ${depths.map((d) => `L${d} ${med(o[d]).toFixed(2)}`).join(', ')}`;
+        return `flat: ${f(out.flat)} | textured: ${f(out.tex)}`;
+      });
+      console.log(`${name}${R.opt('smooth', '0') === '1' ? ' (sheets)' : ' (boxes)'}: draw ms ${r}`);
+    }
+    return;
+  }
   // (round 14, --sab 1) boxes against the smooth draw in the same page, alternating: per view the draw alone (5 rounds,
   // median), then carves at level 1 at the tunnel mouth alternating the two (the switch's own rebake not timed). Then
   // stops: the A/B is the measurement.

@@ -1130,6 +1130,55 @@ the solid below the next air gap down." "Why make those [skirts, outer ring] if 
   measured in aggregate (pipelines compile in parallel): cold first frame 6.8-7.2 s, every boot pipeline 12.8-14.3 s
   (round 18: the 28 synchronous pipelines, GPU done with the first frame at 22.3 s).
 
+**As built (round 20; current state): the textured draw** (the owner: "Please use high quality textures and lighting
+for the next pass. Then let's keep a toggle so we can go back to fix the artifacts."; "when you add normal maps and
+lighting the fine detail needs to match them when it loads in").
+- *The toggle.* The "Textured" button and `?tex=0|1`, default on. Off is the round 6-19 shading exactly: `fs` and `fsS`
+  are untouched (the box fragment body moved into `flatOut`, the same expressions); the vertex stages only gained
+  outputs the flat fragments ignore. Checked pixel for pixel against a pipeline built from 3c1ccc33's draw.wgsl in the
+  same page (scripts/nested-r20-flatcheck.mjs: boxes and sheets, three views each, 0 channels differ; the textured
+  control differs). The textured draw is its own entry points (`fsT` boxes, `fsST` sheets, `vsSky` / `fsSky`) and
+  pipelines, made asynchronously after the first frame (the flat draw and a status line until then; 450-470 ms in
+  headless Chrome); the boot pipelines are unchanged.
+- *One detail height, in world units (src/nested/gpu/detail.wgsl, its own snippet so nest.wgsl can include it).*
+  `detailH(p, mat, band)` / `detailHG` (with its gradient): band b is 3D gradient noise of wavelength 2^(1-b) world
+  units (16 bands, 2 down to 1/16384), amplitude proportional to the wavelength (every band the same slope, by
+  material: stone 0.7, soil 0.45, sand 0.25, clay 0.5, x 1/2 pi). No derivatives, no texture sampling: callable from any
+  stage. The point is a DPt: a level's integer window origin, s = L log2 k, its z origin and a level-local point; each
+  band's lattice is periodic (4,096 cells) so the integer part is shifted into the lattice exactly and only the local
+  fraction goes through floats. So the same world point gets the same lattice coordinate from any level, and the
+  finest bands stay exact far from the world origin (an f32 world point holds 1/16 of the finest band's wavelength at
+  x = 128).
+- *The shading normal* (shade.wgsl texShade, shared by both draws through draw.wgsl texOut) = the geometric normal the
+  crease rule picked (fsST keeps fsS's rule: the interpolated vertex normal within the crease angle, flat beyond),
+  bent by the bands' surface gradient. Which bands: from the pixel footprint (the level-local point's screen
+  derivatives, the shorter axis but at least a quarter of the longer) a band fades out as its wavelength goes from 4 to 2
+  pixels; at most 6 bands are used, the coarsest fading out as a finer one fades in. `?bands=all` (default) uses every
+  band; `?bands=split` only bands finer than 2 columns of the drawn level (fade from 2 to 1 column), the cut-off the
+  next round needs once the bands between two levels' column sizes are in the finer level's geometry. The window
+  depends on the world point and the footprint only, never the level: test/gpu/nested-detail.test.ts shades 512 points
+  from adjacent levels (each given as that level would: its own window origin, local point and z origin) and finds the
+  colour the same to 2.6e-5 under bands=all; under bands=split they differ (0.14).
+- *Materials.* Colour detail from the same bands (and one broad noise, 8 world units, that the window never drops):
+  stone with strata in world z (two spacings beating, bent by the noise, as tone and small ledges on steep faces) and
+  thin sparse cracks on steep faces (a second noise's zero line, at least a pixel wide); soil as grass where the
+  geometric normal is up (smoothstep 0.55-0.78 on nz, moved by the bands and the broad noise: grass keeps the hollows),
+  dirt on slopes; sand with wind ripples (0.04 world units) on up-facing sand; clay with the band variation. No
+  triplanar projection: the noise is 3D in world space, so nothing stretches on cliffs and ramps (a departure from the
+  brief's "triplanar", same intent). Roughness per material.
+- *Light* (linear): sun diffuse (the geometric normal gates it, so bumps on a face turned away stay unlit) + a Blinn
+  specular by roughness with Schlick Fresnel; a sky / ground hemisphere ambient; occlusion from the band value
+  (hollows darker, cracks darker); haze toward the sky colour along the view by world distance (exp(-0.0018 d)); the sky
+  (horizon to zenith, a glow and a disc at the sun) drawn behind the levels as a full-screen triangle where the depth is
+  still the clear value (its info target untouched); ACES fitted tone map and sRGB encoding (the canvas is unorm). The
+  textured sun is lower than the flat draw's (about 38 degrees, NS-151). No shadows, no sky occlusion (NS-147).
+- *Cost.* At most 9 3D gradient noises (8 hashes each) a pixel: 7 band noises (window 6 + 1 fading), the broad one,
+  and on steep stone the crack noise. Desktop 960 x 640 (nested-perf --texab 1, same page): sheets 1.1-3.0 ms flat ->
+  2.3-6.4 textured, boxes 2.3-9.7 -> 6.5-19.2 (box overdraw). `?texbands=N` sets the window (4: 0.5-1.7 ms less).
+  Compile (Dawn): textured boxes 136-214 ms, sheets 176-244, sky 24-34 (under the 400 ms floor).
+- *Diagnostics.* The level tint mixes over the textured colour as over the flat one; diag 1 and 2 draw the flat
+  diagnostics in the textured pipeline; diag 3 shows the bands (NS-153).
+
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

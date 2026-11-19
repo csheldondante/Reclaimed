@@ -143,6 +143,10 @@ export class App {
     if (q.has('yaw')) this.yaw = Number(q.get('yaw'));
     if (q.has('pitch')) this.pitch = Number(q.get('pitch'));
     this.wantSmooth = q.get('smooth') === '1';
+    // (round 20) the textured draw, default on (?tex=0 the flat shading of rounds 6-19); ?bands=split the per-level cut-off
+    this.render.tex = q.get('tex') !== '0';
+    this.render.bandsSplit = q.get('bands') === 'split';
+    if (q.has('texbands')) this.render.texBands = Number(q.get('texbands'));
     this.q = q;
   }
   private q: URLSearchParams;
@@ -233,6 +237,12 @@ export class App {
       this.buttons.get('smooth')!.classList.toggle('on', this.wantSmooth);
     });
     this.buttons.get('smooth')!.classList.toggle('on', this.wantSmooth);
+    // (round 20) textured materials and light, default on; off: the flat shading exactly as before (artifact work)
+    add('tex', 'Textured', () => {
+      this.render.tex = !this.render.tex;
+      this.buttons.get('tex')!.classList.toggle('on', this.render.tex);
+    });
+    this.buttons.get('tex')!.classList.toggle('on', this.render.tex);
     this.setMode(this.mode);
     const c = this.canvas;
     c.addEventListener('pointerdown', (e) => {
@@ -678,6 +688,12 @@ export class App {
         console.log(`[boot] first frame ${this.firstFrameAt.toFixed(0)} ms (its pipelines made at ${this.bootAt.toFixed(0)} ms), every pipeline made at ${this.pipesAt.toFixed(0)} ms`);
       });
     }
+    // (round 20) the textured pipelines, asynchronously after the first frame (the flat draw until they are made)
+    if (this.render.tex && !this.render.prepareTex()) this.texWaited = true;
+    else if (this.texWaited && this.render.texDrawn) {
+      this.texWaited = false;
+      console.log(`[tex] textured draws made in ${this.render.texCompileMs.toFixed(0)} ms, first textured frame ${performance.now().toFixed(0)} ms after the page opened`);
+    }
     if (!this.firstSheetAt && this.nest.smooth) {
       this.firstSheetAt = performance.now();
       console.log(`[smooth] first frame ${this.firstFrameAt.toFixed(0)} ms, first sheet frame ${this.firstSheetAt.toFixed(0)} ms; compile: sheet pass ${this.nest.compileMs.toFixed(0)} ms, sheet draw ${this.render.compileMs.toFixed(0)} ms; switch ${JSON.stringify(this.nest.switchLog)}`);
@@ -688,6 +704,7 @@ export class App {
   }
   /** (measurement) the frame's draw left out, so an op's GPU time is measured alone */
   benchPause = false;
+  private texWaited = false;
 
   private text(): void {
     const live = this.nest.live;
@@ -715,6 +732,7 @@ export class App {
     if (st.error) lines.push(`Memory: ${st.error}`);
     // (round 18) the smooth switch's state while the wanted draw is not the drawn one, then the boot timings
     if (this.smoothText) lines.push(this.smoothText);
+    if (this.render.texText) lines.push(this.render.texText);
     if (this.firstSheetAt) lines.push(`first frame ${this.firstFrameAt.toFixed(0)} ms, first sheet frame ${this.firstSheetAt.toFixed(0)} ms after the page opened`);
     this.info.textContent = lines.join('\n');
     if (this.speedText) this.speedText.textContent = `${this.cruiseWps.toFixed(2)} w/s`;
@@ -789,8 +807,9 @@ export class App {
         return { eyeZ: cam[2], dNear: cam[28], dHit: cam[29], lifts: cam[27], level: cam[30], levels: out };
       },
       /** (measurement) the draw alone, uncapped: n draws of the current levels back to back, ms each (GPU done) */
-      benchDraw: async (n = 20) => {
-        const list = this.drawList();
+      benchDraw: async (n = 20, depth?: number) => {
+        // (round 20: depth, one level drawn alone: its pixels are then all its own, so the time is its cost alone)
+        const list = this.drawList().filter((l) => depth === undefined || l.depth === depth);
         this.render.draw(list);
         await this.device.queue.onSubmittedWorkDone();
         const t = performance.now();
@@ -954,6 +973,14 @@ export class App {
       tint: (on: boolean) => {
         this.render.tint = on;
         this.buttons.get('tint')!.classList.toggle('on', on);
+      },
+      /** (round 20) the textured draw on or off; resolves once the frame draws what was asked */
+      tex: async (on: boolean, split?: boolean) => {
+        this.render.tex = on;
+        if (split !== undefined) this.render.bandsSplit = split;
+        this.buttons.get('tex')?.classList.toggle('on', on);
+        while (this.render.texDrawn !== on) await new Promise((r) => setTimeout(r, 30));
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       },
     };
   }
