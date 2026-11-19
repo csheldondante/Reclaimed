@@ -66,8 +66,8 @@ export class Renderer {
   private pl: GPUPipelineLayout;
   /** (round 14, NS-107) the smooth draw's two pipelines: the exceptions (the face pages, placed) and the template over
    *  the cache pages; made when it is first switched on */
-  private smoothPipe: { ex: GPURenderPipeline; tmpl: GPURenderPipeline } | null = null;
-  private smoothPipes(): { ex: GPURenderPipeline; tmpl: GPURenderPipeline } {
+  private smoothPipe: { ex: GPURenderPipeline; tmpl: GPURenderPipeline; walls: GPURenderPipeline } | null = null;
+  private smoothPipes(): { ex: GPURenderPipeline; tmpl: GPURenderPipeline; walls: GPURenderPipeline } {
     if (!this.smoothPipe) {
       const mk = (label: string, vs: string) =>
         this.device.createRenderPipeline({
@@ -78,7 +78,9 @@ export class Renderer {
           primitive: { topology: 'triangle-list', cullMode: 'none' },
           depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' },
         });
-      this.smoothPipe = { ex: mk('nest draw smooth exceptions', 'vsS'), tmpl: mk('nest draw smooth template', 'vsT') };
+      // (round 15, NS-117) the template as two draws: the caps (a fixed 2 triangles a column) and the walls with pixels
+      // (blocks of the chunks' wall lists, nest.wgsl dirBuild)
+      this.smoothPipe = { ex: mk('nest draw smooth exceptions', 'vsSB'), tmpl: mk('nest draw smooth caps', 'vsTC'), walls: mk('nest draw smooth walls', 'vsTW') };
     }
     return this.smoothPipe;
   }
@@ -131,8 +133,10 @@ export class Renderer {
         pass.setBindGroup(0, this.bg!, [lv.depth * DU]);
         pass.setPipeline(sp.tmpl);
         pass.drawIndirect(this.nest.drawArgs, (MAX_LEVELS + lv.depth) * 16);
+        pass.setPipeline(sp.walls);
+        pass.drawIndirect(this.nest.drawArgs, (2 * MAX_LEVELS + lv.depth) * 16);
         pass.setPipeline(sp.ex);
-        pass.drawIndirect(this.nest.drawArgs, lv.depth * 16);
+        pass.drawIndirect(this.nest.drawArgs, (3 * MAX_LEVELS + lv.depth) * 16);
       }
     } else {
       pass.setPipeline(this.pipe);
@@ -147,7 +151,7 @@ export class Renderer {
   }
 
   /** the per-level uniforms (pages: the capture's face pages a level) */
-  private uniforms(levels: DrawLevel[], pages: number[] = [], tpages: number[] = []): void {
+  private uniforms(levels: DrawLevel[], pages: number[] = [], tpages: number[] = [], wblocks: number[] = []): void {
     const st = new ArrayBuffer(DU * MAX_LEVELS);
     for (const lv of levels) {
       const w = this.nest.wins[lv.depth];
@@ -159,7 +163,7 @@ export class Renderer {
       f.set([lv.want, 0, 0, 1 / this.nest.k], 4);
       // (sun.w, round 14: the smooth draw's crease angle as its cosine)
       f.set([0.45, -0.35, 0.82, Math.cos((this.crease * Math.PI) / 180)], 8);
-      new Uint32Array(st, lv.depth * DU + 64, 4).set([this.nest.cap, tpages[lv.depth] ?? 0, 0, pages[lv.depth] ?? 0]);
+      new Uint32Array(st, lv.depth * DU + 64, 4).set([this.nest.cap, tpages[lv.depth] ?? 0, wblocks[lv.depth] ?? 0, pages[lv.depth] ?? 0]);
       new Float32Array(st, lv.depth * DU + 80, 16).set(IDENTITY);
       // (round 11, NS-97) the live child's window: the parent's rim vertices are placed in its units
       const c = this.nest.wins[lv.depth + 1];
@@ -168,7 +172,7 @@ export class Renderer {
     this.device.queue.writeBuffer(this.ubuf, 0, st);
   }
 
-  private capPipe: { p: GPUComputePipeline; t: GPUComputePipeline; layout: GPUBindGroupLayout } | null = null;
+  private capPipe: { p: GPUComputePipeline; t: GPUComputePipeline; sb: GPUComputePipeline; layout: GPUBindGroupLayout } | null = null;
   /** (the watertight check, test only: a readback) every triangle the draw places for each level, local units: three
    *  vec4 a triangle slot (w = 0 for an empty slot). With the smooth draw on (round 14) the template's triangles follow
    *  the exceptions' (`ex`: how many slots are the exceptions'; template slots that are degenerate have w = 0). */
@@ -179,6 +183,7 @@ export class Renderer {
       this.capPipe = {
         p: this.device.createComputePipeline({ label: 'nest capture', layout: pl, compute: { module: this.module, entryPoint: 'capture' } }),
         t: this.device.createComputePipeline({ label: 'nest capture (template)', layout: pl, compute: { module: this.module, entryPoint: 'captureT' } }),
+        sb: this.device.createComputePipeline({ label: 'nest capture (smooth exceptions, blocks)', layout: pl, compute: { module: this.module, entryPoint: 'captureSB' } }),
         layout,
       };
     }
@@ -192,13 +197,16 @@ export class Renderer {
       tmp.destroy();
       return out;
     };
-    const args = new Uint32Array(await read(this.nest.drawArgs, 2 * MAX_LEVELS * 16));
+    const args = new Uint32Array(await read(this.nest.drawArgs, 4 * MAX_LEVELS * 16));
     const pages = levels.map(() => 0);
     const tpages = levels.map(() => 0);
+    const wblocks = levels.map(() => 0);
     const smooth = this.nest.smooth;
     for (const lv of levels) {
-      pages[lv.depth] = args[lv.depth * 4 + 1];
+      // (round 15) with the smooth draw on, the exceptions as it draws them: blocks of 128 face triangles (vsSB)
+      pages[lv.depth] = args[((smooth ? 3 * MAX_LEVELS : 0) + lv.depth) * 4 + 1];
       if (smooth) tpages[lv.depth] = args[(MAX_LEVELS + lv.depth) * 4 + 1];
+      if (smooth) wblocks[lv.depth] = args[(2 * MAX_LEVELS + lv.depth) * 4 + 1];
     }
     this.bind();
     const out = [];
@@ -206,7 +214,7 @@ export class Renderer {
       const size = Math.max(16, slots * 48);
       const buf = this.device.createBuffer({ size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
       const bg1 = this.device.createBindGroup({ layout: this.capPipe!.layout, entries: [{ binding: 0, resource: { buffer: buf } }] });
-      this.uniforms(levels, pages, tpages);
+      this.uniforms(levels, pages, tpages, wblocks);
       const e = this.device.createCommandEncoder();
       const p = e.beginComputePass();
       p.setPipeline(pipe);
@@ -225,10 +233,10 @@ export class Renderer {
     for (const lv of levels) {
       // (a level demoted while this awaited: skipped)
       if (!this.nest.wins[lv.depth]) continue;
-      const ex = await one(this.capPipe.p, lv.depth, pages[lv.depth] * TPP);
+      const ex = smooth ? await one(this.capPipe.sb, lv.depth, pages[lv.depth] * 128) : await one(this.capPipe.p, lv.depth, pages[lv.depth] * TPP);
       let tris = ex;
       if (smooth) {
-        const tm = await one(this.capPipe.t, lv.depth, tpages[lv.depth] * 256 * 14);
+        const tm = await one(this.capPipe.t, lv.depth, tpages[lv.depth] * 512 + wblocks[lv.depth] * 32 * 6);
         tris = new Float32Array(ex.length + tm.length);
         tris.set(ex);
         tris.set(tm, ex.length);

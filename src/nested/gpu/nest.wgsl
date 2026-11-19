@@ -2636,8 +2636,12 @@ fn joinedAboveC(nc: u32, z: f32) -> bool {
  *  them (19 x 19; step C: the normals of the border lines' slots need the neighbouring columns' corners) */
 const CLOFF: u32 = 6040u;
 /** intervals (bot, top, placed): from CIV in the chunk's cache page 0 (CIV0 of them), then whole pages cz 1, 2, ... */
-const CIV: u32 = 6401u;
-const CIV0: u32 = 2047u;
+const CIV: u32 = 6913u;
+const CIV0: u32 = 1877u;
+/** (round 15, NS-117) the chunk's wall list (up to 512 words, its count in header word 3; draw.wgsl CWALL) */
+const CWALL: u32 = 6401u;
+/** walls a draw instance (draw.wgsl WALL_B) */
+const WALL_B: u32 = 32u;
 const CIVP: u32 = 4181u;
 /** the chunk's cache page 0 (cache pass and smooth exception bake; bChunk is the chunk) */
 var<private> sCp: u32;
@@ -2963,12 +2967,37 @@ fn cacheBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
         let nb = bCount(L, BX, BY);
         let tb = bRec(L, BX, BY, nb - 1u);
         var m = (mw >> 8u) & 255u;
-        if (bitcast<f32>(tb.x) > lastTop(L, X, Y)) { m = tb.y & 255u; }
+        let tbz = bitcast<f32>(tb.x);
+        if (tbz > t) { m = tb.y & 255u; }
         mw |= (2u << dir) | (m << (16u + 8u * dir));
+        // (round 15, NS-117) the wall has pixels iff the collapse keeps its lowest and highest identity apart on one of
+        // its two corner lines (P, Q): the clusters are intervals, so every list entry between them is then apart too,
+        // and a triangle with two vertices on one line and one on the other is never flat. Else every step is a
+        // repeated vertex: the wall is left out of the chunk's wall list (the mask bit stays: the exception bake reads it)
+        let lo = min(t, tbz);
+        let hi = max(t, tbz);
+        let PX = select(X, X + 1, dir == 0u);
+        let PY = select(Y + 1, Y, dir == 0u);
+        if (clusterAt(PX, PY, lo).z != clusterAt(PX, PY, hi).z || clusterAt(X + 1, Y + 1, lo).z != clusterAt(X + 1, Y + 1, hi).z) {
+          mw |= 8u << dir;
+        }
       }
     }
   }
   pgStore(base + CMASK + colIn(X, Y), mw);
+  // (round 15, NS-117) the chunk's wall list: the walls with pixels (mask bits 3 / 4) compacted by a scan (one writer a
+  // word, no workgroup atomics), a word each (column index | dir << 8) from CWALL, their count in header word 3. The
+  // draw instances over blocks of WALL_B of them (dirBuild), so it never runs a vertex for a wall without pixels.
+  let nw = ((mw >> 3u) & 1u) + ((mw >> 4u) & 1u);
+  let ws = wgScan(li, nw);
+  var at = ws.x;
+  for (var dir = 0u; dir < 2u; dir++) {
+    if (((mw >> (3u + dir)) & 1u) == 1u) {
+      pgStore(base + CWALL + at, colIn(X, Y) | (dir << 8u));
+      at++;
+    }
+  }
+  if (li == 0u) { pgStore(base + 3u, ws.y); }
 }
 
 /** a smooth exception triangle written at index at + t (write; count: nothing) */
@@ -3326,7 +3355,20 @@ fn faceBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id)
 @compute @workgroup_size(1)
 fn dirClear() {
   for (var L = 0u; L < 16u; L++) { atomicStore(&dir[L], 0u); }
+  for (var L = 0u; L < 8u; L++) {
+    atomicStore(&dir[wallDir() + L], 0u);
+    atomicStore(&dir[exDir() + L], 0u);
+  }
 }
+/** (round 15, NS-117) the face pages in blocks of EX_B triangles (the smooth draw's exceptions; a page's slots past its
+ *  count cost no vertex): 8 counts a level from exDir(), then per level up to EX_PB x cap entries (face list index << 5 |
+ *  block) from exDir() + 8 + L * EX_PB * cap */
+const EX_B: u32 = 128u;
+const EX_PB: u32 = 25u;
+fn exDir() -> u32 { return wallDir() + 8u + 8u * 16u * u.r.y; }
+/** (round 15, NS-117) the smooth draw's wall blocks: 8 counts a level from wallDir(), then per level L up to 16 x cap
+ *  entries (cache list index << 4 | block) from wallDir() + 8 + L * 16 * cap (a chunk has at most 512 / WALL_B blocks) */
+fn wallDir() -> u32 { return 16u + 32u * u.r.y; }
 @compute @workgroup_size(64)
 fn dirBuild(@builtin(global_invocation_id) gid: vec3<u32>) {
   let s = gid.x;
@@ -3346,6 +3388,13 @@ fn dirBuild(@builtin(global_invocation_id) gid: vec3<u32>) {
     let e = 16u + ((8u + L) * u.r.y + i) * 2u;
     atomicStore(&dir[e], p);
     atomicStore(&dir[e + 1u], atomicLoad(&tab[s * 4u]));
+    // (round 15) the chunk's walls in blocks of WALL_B: an entry a block (storage atomics: the pool's kind)
+    let nb = (pgLoad(p * PW + 3u) + WALL_B - 1u) / WALL_B;
+    if (nb > 0u) {
+      let wd = wallDir();
+      let b0 = atomicAdd(&dir[wd + L], nb);
+      for (var b = 0u; b < nb; b++) { atomicStore(&dir[wd + 8u + L * 16u * u.r.y + b0 + b], (i << 4u) | b); }
+    }
     return;
   }
   if (lid < FACE_ID || lid >= FACE_ID + 8u) { return; }
@@ -3356,6 +3405,11 @@ fn dirBuild(@builtin(global_invocation_id) gid: vec3<u32>) {
   let e = 16u + (L * u.r.y + i) * 2u;
   atomicStore(&dir[e], p);
   atomicStore(&dir[e + 1u], atomicLoad(&tab[s * 4u]));
+  // (round 15) the page's triangles in blocks of EX_B
+  let nb = (pgLoad(p * PW) + EX_B - 1u) / EX_B;
+  let xd = exDir();
+  let b0 = atomicAdd(&dir[xd + L], nb);
+  for (var b = 0u; b < nb; b++) { atomicStore(&dir[xd + 8u + L * EX_PB * u.r.y + b0 + b], (i << 5u) | b); }
 }
 /** the draw's indirect arguments a level: an instance per face page, three vertices a triangle slot */
 @compute @workgroup_size(1)
@@ -3365,11 +3419,21 @@ fn dirFinish() {
     dargs[L * 4u + 1u] = atomicLoad(&dir[L]);
     dargs[L * 4u + 2u] = 0u;
     dargs[L * 4u + 3u] = 0u;
-    // (round 14) the template: an instance a cache page, 14 triangle slots a column
-    dargs[(8u + L) * 4u] = 256u * 14u * 3u;
+    // (round 15, NS-117) the template's caps: an instance a cache page, 2 triangles a column
+    dargs[(8u + L) * 4u] = 256u * 2u * 3u;
     dargs[(8u + L) * 4u + 1u] = atomicLoad(&dir[8u + L]);
     dargs[(8u + L) * 4u + 2u] = 0u;
     dargs[(8u + L) * 4u + 3u] = 0u;
+    // (round 15) the template's walls: an instance a block of WALL_B walls with pixels, 6 triangles a wall
+    dargs[(16u + L) * 4u] = WALL_B * 6u * 3u;
+    dargs[(16u + L) * 4u + 1u] = atomicLoad(&dir[wallDir() + L]);
+    dargs[(16u + L) * 4u + 2u] = 0u;
+    dargs[(16u + L) * 4u + 3u] = 0u;
+    // (round 15) the exceptions: an instance a block of EX_B face triangles
+    dargs[(24u + L) * 4u] = EX_B * 3u;
+    dargs[(24u + L) * 4u + 1u] = atomicLoad(&dir[exDir() + L]);
+    dargs[(24u + L) * 4u + 2u] = 0u;
+    dargs[(24u + L) * 4u + 3u] = 0u;
   }
 }
 /** a bake slot (u.e.y) from up to three region slots (u.e.x: s0 | s1 << 8 | s2 << 16, 255 none): the union of their

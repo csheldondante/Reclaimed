@@ -212,8 +212,31 @@ fn tClamp(r: f32, q: u32, lo: f32, loS: u32, hi: f32, hiS: u32) -> vec2<f32> {
   if (r >= hi) { return vec2<f32>(hi, f32(hiS)); }
   return vec2<f32>(r, f32(q));
 }
+/** (round 15, NS-117) the chunk's wall list (nest.wgsl CWALL: a word a wall with pixels, column | dir << 8; its count in
+ *  header word 3) and the walls a draw instance */
+const CWALL: u32 = 6401u;
+const WALL_B: u32 = 32u;
+/** the level's wall block `inst` (nest.wgsl wallDir): (cache list index, the wall's index in its chunk's list) */
+fn tWallItem(inst: u32, k: u32) -> vec2<u32> {
+  let L = u32(d.lvl.w);
+  let w = dir[16u + 32u * d.misc2.x + 8u + L * 16u * d.misc2.x + inst];
+  return vec2<u32>(w >> 4u, (w & 15u) * WALL_B + k);
+}
+/** vertex v of a cap triangle: cache list entry `inst`, triangle tri (column tri / 2, half tri % 2) */
+fn tCap(inst: u32, tri: u32, v0: u32) -> TCorner {
+  return tCorner(inst, (tri / 2u) * TSLOTS + tri % 2u, v0);
+}
+/** vertex v of wall triangle `tri` (wall tri / 6, step tri % 6) of wall block `inst`; none past the chunk's list */
+fn tWall(inst: u32, tri: u32, v0: u32) -> TCorner {
+  let it = tWallItem(inst, tri / 6u);
+  let L = u32(d.lvl.w);
+  let page = dir[16u + ((8u + L) * d.misc2.x + it.x) * 2u];
+  if (it.y >= pgLoad(page * PW + 3u)) { return TCorner(false, vec3<f32>(0.0), 0u, 0u, 0u, 0u); }
+  let w = pgLoad(page * PW + CWALL + it.y);
+  return tCorner(it.x, (w & 255u) * TSLOTS + 2u + (w >> 8u) * 6u + tri % 6u, v0);
+}
 /** vertex v of template triangle slot `tri` (column tri / 14, part tri % 14) of cache page `inst` of the level's list
- *  (boxmesh.ts templateTris, the same rule) */
+ *  (boxmesh.ts templateTris, the same rule). Round 15 draws only the slots tCap and tWall pick. */
 fn tCorner(inst: u32, tri: u32, v0: u32) -> TCorner {
   var c = TCorner(false, vec3<f32>(0.0), 0u, 0u, 0u, 0u);
   let L = u32(d.lvl.w);
@@ -374,9 +397,27 @@ fn vsS(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VO
   }
   return smoothOut(c.lp, c.kid, c.mat);
 }
+/** (round 15, NS-117) the exceptions in blocks of EX_B triangles (nest.wgsl exDir): an instance a block, so a face page's
+ *  empty slots cost no vertex (vsS instanced a whole page, 3 x TPP vertices, whatever its count) */
+const EX_B: u32 = 128u;
+const EX_PB: u32 = 25u;
+fn exCorner(inst: u32, tri: u32, v: u32) -> Corner {
+  let L = u32(d.lvl.w);
+  let cap = d.misc2.x;
+  let w = dir[16u + 32u * cap + 8u + 128u * cap + 8u + L * EX_PB * cap + inst];
+  return corner(w >> 5u, (w & 31u) * EX_B + tri, v);
+}
 @vertex
-fn vsT(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VOutS {
-  let c = tCorner(inst, vv / 3u, vv % 3u);
+fn vsSB(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VOutS {
+  let c = exCorner(inst, vv / 3u, vv % 3u);
+  if (!c.ok) {
+    var o: VOutS;
+    o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+    return o;
+  }
+  return smoothOut(c.lp, c.kid, c.mat);
+}
+fn tOut(c: TCorner) -> VOutS {
   if (!c.ok) {
     var o: VOutS;
     o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
@@ -385,6 +426,16 @@ fn vsT(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VO
   var o = smoothOut(c.lp, false, c.mat);
   o.vn = octDec(c.nrm);
   return o;
+}
+/** (round 15, NS-117) the template's caps: an instance a cache page, 2 triangles a column */
+@vertex
+fn vsTC(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VOutS {
+  return tOut(tCap(inst, vv / 3u, vv % 3u));
+}
+/** (round 15, NS-117) the template's walls: an instance a block of WALL_B walls with pixels, 6 triangles a wall */
+@vertex
+fn vsTW(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VOutS {
+  return tOut(tWall(inst, vv / 3u, vv % 3u));
 }
 @fragment
 fn fsS(v: VOutS) -> FOut {
@@ -414,16 +465,27 @@ fn fsS(v: VOutS) -> FOut {
   return o;
 }
 /** (test only) the template's triangles as the draw places them: three vec4 a slot (local x, y, z; w 1 when the mask
- *  draws the slot and its three vertices are distinct points, else 0) */
+ *  draws the slot and its three vertices are distinct points, else 0). Round 15: the caps' slots (misc2.y cache pages x
+ *  512), then the walls' (misc2.z blocks x WALL_B x 6), as vsTC and vsTW place them. */
 @compute @workgroup_size(64)
 fn captureT(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
   let i = gid.x + gid.y * nw.x * 64u;
-  let per = 256u * TSLOTS;
-  let inst = i / per;
-  if (inst >= d.misc2.y) { return; }
-  let t0 = tCorner(inst, i % per, 0u);
-  let t1 = tCorner(inst, i % per, 1u);
-  let t2 = tCorner(inst, i % per, 2u);
+  let nc = d.misc2.y * 512u;
+  let per = WALL_B * 6u;
+  if (i >= nc + d.misc2.z * per) { return; }
+  var t0: TCorner;
+  var t1: TCorner;
+  var t2: TCorner;
+  if (i < nc) {
+    t0 = tCap(i / 512u, i % 512u, 0u);
+    t1 = tCap(i / 512u, i % 512u, 1u);
+    t2 = tCap(i / 512u, i % 512u, 2u);
+  } else {
+    let j = i - nc;
+    t0 = tWall(j / per, j % per, 0u);
+    t1 = tWall(j / per, j % per, 1u);
+    t2 = tWall(j / per, j % per, 2u);
+  }
   let ok = t0.ok && any(t0.lp != t1.lp) && any(t1.lp != t2.lp) && any(t0.lp != t2.lp);
   capOut[i * 3u] = vec4<f32>(t0.lp, select(0.0, 1.0, ok));
   capOut[i * 3u + 1u] = vec4<f32>(t1.lp, select(0.0, 1.0, ok));
@@ -442,6 +504,16 @@ fn capture(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroup
   for (var v = 0u; v < 3u; v++) {
     let c = corner(inst, i % TPP, v);
     // (w 2: a rim vertex, z in the child's units; round 11)
+    capOut[i * 3u + v] = vec4<f32>(c.lp, select(0.0, select(1.0, 2.0, c.kid), c.ok));
+  }
+}
+/** (round 15, test only) the smooth exceptions as vsSB draws them: misc2.w blocks of EX_B slots */
+@compute @workgroup_size(64)
+fn captureSB(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
+  let i = gid.x + gid.y * nw.x * 64u;
+  if (i / EX_B >= d.misc2.w) { return; }
+  for (var v = 0u; v < 3u; v++) {
+    let c = exCorner(i / EX_B, i % EX_B, v);
     capOut[i * 3u + v] = vec4<f32>(c.lp, select(0.0, select(1.0, 2.0, c.kid), c.ok));
   }
 }

@@ -27179,3 +27179,35 @@ quiet this run, earlier runs were 2x noisier).
 
 Stills: only the development shots (local/nested/r14-dev-boxes.png, r14-dev-smooth.png, r14-dev-carved.png); the
 pose set script (scripts/nested-r14-stills.mjs) is written but was not run.
+
+## 2026-11-19 — Nested scales lab, round 15 step 1: the smooth draw cheaper than boxes (NS-117)
+
+**Why.** Round 14's smooth draw was vertex-bound at 2.5x the boxes (a 4 x 4 canvas cost what the full one did): 14
+template triangle slots a column for about 2 visible. The owner: "Definitely don't give me something with crappy
+performance that still has holes." The design note's fallback was written for this.
+
+**Built** (NESTED_SCALES.md "As built (round 15)"). Caps: a fixed 2-triangle template a column. Walls: the cache pass
+marks the template walls that have pixels and compacts them into a per-chunk list (a workgroup scan, one writer a word),
+drawn in blocks of 32 walls by an indirect draw whose arguments dirFinish writes. Exceptions: the face pages drawn in
+blocks of 128 triangles (a departure: the design drew them as the boxes are, a whole page instanced at 9,405 vertices
+whatever its count; that tail was what was left of the vertex work once caps and walls were compacted).
+
+**Measured** (nested-perf.mjs `--sab 1`, boxes and smooth alternating in one page, medians of 3, ms):
+
+| view | boxes | smooth r14 | smooth, caps + wall lists | smooth, + exception blocks |
+|---|---|---|---|---|
+| mound outside | 4.3 | 13.4 | 6.2 | 1.9 |
+| tunnel inside | 7.6 | 18.0 | 7.8 | 2.7 |
+| tunnel inside, looking back | 6.9 | 18.0 | 7.7 | 2.8 |
+| tunnel mouth | 6.7 | 18.2 | 7.5 | 2.8 |
+| blob on a stalk | 4.1 | 10.1 | 5.5 | 1.5 |
+| hillside | 4.2 | 9.1 | 4.9 | 1.5 |
+| the map | 2.5 | 5.9 | 2.7 | 1.0 |
+
+Full vs a 4 x 4 canvas: boxes 5.7 / 3.9 (hillside), 8.2 / 7.5 (tunnel); smooth 1.4 / 1.1 and 2.6 / 2.3. Drawn triangles
+unchanged (L0 152k, L1 185k, L2 330-390k against boxes' 758k, 590k, 1.0-1.3M). The box draw has the same whole-page
+tail (NS-118).
+
+**Tests.** smoothref (GPU = reference, the capture reading the caps, the wall blocks and the exception blocks as drawn):
+L0 11,038, L1 12,856, L2 4,936 triangles, 0 GPU-only, 0 reference-only, 0 odd, 0 degenerate, 0 coincident, rim lines 0
+junctions; `?selftest=1&smooth=only` 11 of 11 (0 hole pixels over 40 poses, 52 cruise samples, 162 pit poses).

@@ -768,6 +768,31 @@ wallTmpl / emitColS / faceBake (SMOOTH), draw.wgsl tCorner / vsT / vsS / fsS / c
   bottom lattice's down caps left out on both sides: fans), closed (0 odd edges, 0 degenerate, 0 coincident), rim lines
   0 junctions. Then the sandbox with the smooth draw on through the watertight suite and the pit, cave and shaft poses.
 
+**As built (round 15; kept current while building, so a successor can continue from here).**
+- *Step 1 (NS-117): the draw no longer runs vertices for nothing.* Three draws a level, all indirect, arguments written
+  by dirFinish, nothing read back:
+  - *Caps:* a fixed template of 2 triangles a column (vsTC: an instance a cache page, 256 x 2 x 3 vertices), the same
+    vertex code as before (tCorner part 0 / 1: the mask's cap bit, the slot positions and normals from the cache).
+  - *Walls:* the cache pass's classify step marks a template wall *with pixels* (mask bits 3 / 4 for +x / +y): its wall
+    bit is set and on P or on Q the lowest and highest identity are placed apart (clusters are intervals, so the
+    entries between are apart too, and a triangle with two vertices on one line and one on the other is never flat;
+    otherwise every step is a repeated vertex). The walls with pixels are compacted into the chunk's wall list (cache
+    page words CWALL = 6401.., a word a wall, column | dir << 8) by the workgroup scan (wgScan: one writer a word, no
+    workgroup atomics), their count in header word 3. dirBuild (storage atomics, the pool's kind) lists each chunk's
+    walls in blocks of 32 (wallDir: per level a count and up to 16 x cap entries, list index << 4 | block); vsTW
+    draws an instance a block, 32 x 6 x 3 vertices, a vertex past the chunk's count degenerate. Same tCorner wall
+    code, so the same cluster tables and bit-identical shared vertices.
+  - *Exceptions:* the face pages in blocks of 128 triangles (exDir: per level a count and up to 25 x cap entries, face
+    list index << 5 | block); vsSB an instance a block. Departure, not in the written design: the design kept the
+    exceptions "drawn as the boxes are", and the box draw instances a whole face page (3 x 3,135 vertices whatever its
+    count). With caps and walls compacted, that tail was the rest of the smooth draw's vertex work: worst view 7.8 ms
+    against boxes' 7.0 (tunnel; 4 x 4 canvas 8.3 of 9.1 ms). With blocks: 2.8 ms. The box draw is unchanged.
+  - The cache page's cluster intervals moved up to make room for the wall list: CIV 6913, CIV0 1877 (was 6401, 2047);
+    the directory grew by 8 + 16 x 8 x cap + 8 + 25 x 8 x cap words (sized with the pool, rebuilt by every op).
+  - The capture (tests) reads what is drawn: the caps' slots, the wall blocks (captureT) and the exception blocks
+    (captureSB). smoothref: every drawn triangle equals the reference, 0 extra, 0 missing (L0 11,038, L1 12,856, L2
+    4,936: the same as round 14).
+
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

@@ -414,10 +414,16 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   is lost (the watertight suite's pose 15). The switch and promote now bake a chunk row a submit; slides and edits
   still bake their regions in one dispatch. Fix the cost (NS-112) or split every smooth bake into bounded dispatches;
   then the 3-run pose gate and the page toggle.
-- NS-117 (perf, round 14) The smooth draw is vertex-bound (a 4 x 4 canvas costs what the full one does): 2.5x the box draw
+- NS-117 (DONE round 15 step 1: caps a 2-triangle template, walls with pixels as compacted per-chunk lists drawn in
+  blocks of 32, exceptions in blocks of 128 triangles; worst view 2.8 ms against boxes' 7.6; see the round 15 DEVLOG)
+  (perf, round 14) The smooth draw is vertex-bound (a 4 x 4 canvas costs what the full one does): 2.5x the box draw
   (hillside 9.1 vs 3.7 ms, tunnel 18 vs 7 ms) for 5x fewer visible triangles. Next: the design's fallback, walls as a
   per-chunk list of edges whose wall bit is set and whose tops differ (one word an edge, written by the classify step),
   drawn as a second instanced draw of 6 triangles an edge; caps a 2-triangle template.
+- NS-118 (perf, round 15) The box draw instances every face page whole (3 x 3,135 vertices whatever its count, the
+  empty slots degenerate): a 4 x 4 canvas costs 7.5 of its 8.2 ms in the tunnel. The smooth draw's exceptions now go in
+  blocks of 128 triangles (draw.wgsl vsSB, nest.wgsl exDir); the box draw could use the same blocks (boxes are not
+  changed this round: they are the default and the reference look).
 - NS-115 (measurement only, round 14) GpuNest.skip 'cache' / 'ex' leave out the smooth cache pass / exception bake (the
   result is then wrong); nested-perf.mjs `--smooth 1`, `--sab 1` (boxes vs smooth in one page), nested-smooth.mjs
   (`--skips 1`, `--shaft 1`, `--box 1`).

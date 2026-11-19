@@ -24,6 +24,10 @@ export const TPP = 3135;
 /** the material table (store.wgsl matSolid): air is a material, the default above every column */
 export const MAT_AIR = 0;
 export const MAX_LEVELS = 8;
+/** the draw's directory (nest.wgsl dirBuild): 16 counts, the face and cache page lists (two a level, a cap each), then
+ *  (round 15, NS-117, nest.wgsl wallDir) the smooth walls' block counts (8) and blocks (16 a page a level), then
+ *  (nest.wgsl exDir) the face pages' blocks of 128 triangles (8 counts, 25 a page a level) */
+const dirWords = (cap: number) => 16 + 2 * MAX_LEVELS * cap * 2 + 8 + MAX_LEVELS * 16 * cap + 8 + MAX_LEVELS * 25 * cap;
 const UB = 256;
 const USLOTS = 256;
 /** reg: 16 header words, 64 slots of 12 (0-31 the plan's, 32-39 the CPU's, 40-63 the bakes') */
@@ -202,9 +206,10 @@ export class GpuNest {
     this.scr = device.createBuffer({ label: 'nest scratch', size: Math.max(160 * 160 * 8, TCAP * 4) * 4, usage: S }); // (the melt's box; the table's compaction)
     this.reg = device.createBuffer({ label: 'nest regions', size: REG_WORDS * 4, usage: S });
     this.args = device.createBuffer({ label: 'nest dispatch args', size: SLOTS * 16, usage: S | GPUBufferUsage.INDIRECT });
-    // (round 14: levels 0-7 the faces, 8-15 the smooth draw's template over the cache pages)
-    this.drawArgs = device.createBuffer({ label: 'nest draw args', size: 2 * MAX_LEVELS * 16, usage: S | GPUBufferUsage.INDIRECT });
-    device.queue.writeBuffer(this.drawArgs, 0, new Uint32Array(2 * MAX_LEVELS * 4));
+    // (round 14: levels 0-7 the faces, 8-15 the smooth draw's template over the cache pages; round 15: 8-15 its caps,
+    // 16-23 its wall blocks, 24-31 its exceptions in blocks)
+    this.drawArgs = device.createBuffer({ label: 'nest draw args', size: 4 * MAX_LEVELS * 16, usage: S | GPUBufferUsage.INDIRECT });
+    device.queue.writeBuffer(this.drawArgs, 0, new Uint32Array(4 * MAX_LEVELS * 4));
     this.cam = device.createBuffer({ label: 'nest camera', size: 1024 * 4, usage: S });
     this.ubuf = device.createBuffer({ label: 'nest uniforms', size: UB * USLOTS, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     // the table starts empty (key1 = EMPTY)
@@ -270,7 +275,7 @@ export class GpuNest {
     // the draw's list of face pages: up to the pool's pages a level (rebuilt by every op, so a grow needs no copy)
     this.dir?.destroy();
     // (round 14: a second list per level, the smooth draw's cache pages)
-    this.dir = this.device.createBuffer({ label: 'nest face directory', size: (16 + 2 * MAX_LEVELS * cap * 2) * 4, usage: U });
+    this.dir = this.device.createBuffer({ label: 'nest face directory', size: dirWords(cap) * 4, usage: U });
     this.cap = cap;
     Object.assign(this.stats, { cap, held: this.physical, segs: this.segCap.filter((c) => c > 0).length, mb: Math.round((this.physical * PW * 4) / 2 ** 20), free: cap - this.stats.used });
     if (old.cap > 0) this.stats.grows++;
@@ -579,7 +584,7 @@ export class GpuNest {
     this.device.queue.submit([enc.finish()]);
     for (const b of drop) b.destroy();
     this.dir.destroy();
-    this.dir = this.device.createBuffer({ label: 'nest face directory', size: (16 + 2 * MAX_LEVELS * cap * 2) * 4, usage: U });
+    this.dir = this.device.createBuffer({ label: 'nest face directory', size: dirWords(cap) * 4, usage: U });
     Object.assign(this.stats, { held: this.physical, segs: this.segCap.filter((c) => c > 0).length, mb: Math.round((this.physical * PW * 4) / 2 ** 20) });
     this.rebind();
     this.directory();
@@ -705,6 +710,20 @@ export class GpuNest {
   /** (round 14, NS-107) the smooth draw on or off: every live level's whole window baked again (on: its cache pages and
    *  placed exceptions; off: the cache pages let go, boxes). An op like any other: refused (false) while the pool cannot
    *  hold it yet. */
+  /** (measurement only, round 15, NS-116) each chunk row's GPU time of a whole-window bake (setSmooth), when set: the
+   *  time from its submit (or the previous row's end) to its end */
+  rowTimes: { L: number; y: number; ms: number }[] | null = null;
+  private lastDone = 0;
+  private timeRow(L: number, y: number): void {
+    const rt = this.rowTimes;
+    if (!rt) return;
+    const ts = performance.now();
+    void this.device.queue.onSubmittedWorkDone().then(() => {
+      const now = performance.now();
+      rt.push({ L, y, ms: now - Math.max(ts, this.lastDone) });
+      this.lastDone = now;
+    });
+  }
   setSmooth(on: boolean): boolean {
     if (on === this.smooth) return true;
     const live = this.live;
@@ -726,6 +745,7 @@ export class GpuNest {
         this.bakeRects(m, [{ x0: w.gx / 16, y0: y, x1: (w.gx + w.n) / 16, y1: y + 1 }], 0);
         this.mergeFrees();
         this.submit(false);
+        this.timeRow(m, y);
       }
     }
     this.directory();
