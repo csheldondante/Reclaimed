@@ -432,6 +432,20 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   the arithmetic. Discriminator ready: scripts/nested-dug.mjs `--rebake 1` (fault count at three eyes before and after
   every window is rebaked). Blocks the smooth toggle's gate (the full selftest's smooth section runs its watertight
   suite in this world).
+  Round 16 step 0 (one run, `nested-dug.mjs --modes 0 --box 1 --screen 0 --rebake 1`, boxes): 386 faults over 5,376
+  rim lines in the suite. They are transient: in each pose the check runs at "3 frames after the move" and again
+  "settled"; faults showed in 4 of the ~20 checks, never in both checks of one pose (tunnel inside: 0 then 40 on L0;
+  tunnel mouth: 0 then 266 on L1 at line 3344,7688, L2's vertices 64 / 399.1 / 428.5 / 446.7 not split into L1's
+  edge; stroke across the rim: 40 on L0 settled, still 40 at the map's first check, gone once the map settled). Every
+  other level and check: 0. So the mesh goes wrong for a while after a window op and is right again after the next
+  one: a stale bake (an op that changes one level's columns or bottoms near a rim without re-baking the other level's
+  rim chunks), not the arithmetic. The `--rebake` eyes were badly chosen (none of the three showed a fault: 0 before,
+  0 after), so the run does not prove it. Likely miss: a child's bottoms zb next to its window edge read the parent's
+  depth outside it (depthElsewhere) and the parent's rim faces split at the child's bottoms (the faulting vertices are
+  child bottoms, 384 and 64, and tops); a slide or promote that changes one side's depth at the rim must re-bake the
+  other side's rim chunks. Not fixed (not small: needs the op that missed it found). Next: rebake at the pose that
+  shows the fault (set __rebakeViews to the faulting check's eye) and log which op ran last. The sheet draw (round 16)
+  does not split rim edges at bottoms, so this fault does not carry over to it.
 - NS-120 (test, round 15) The full selftest's smooth section runs the 40-pose watertight suite in the dug world the box
   pit section leaves; its screen check counts sky seen down the shafts as hole pixels (boxes there: 907,794; smooth
   937,190). Either run that suite on a fresh sandbox (as the box section does) after switching on in the dug world (the
