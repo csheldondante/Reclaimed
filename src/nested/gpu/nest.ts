@@ -174,6 +174,10 @@ export class GpuNest {
   /** (round 22, ?rimtop=1) the sheet pass gives a corner an edge crosses the height of its members outside the edge
    *  (set before the first bake: it changes baked heights) */
   rimTop = false;
+  /** (round 23, ?rimsnap=1, the owner's snap; default off) a crossed corner goes to the least-squares point of its edge
+   *  lines inside its own box at its outside members' height; each quad's diagonal from its slid corners; a slid vertex
+   *  shades with its quad's own normal (set before the first bake) */
+  rimSnap = false;
   private pipes: Record<string, GPUComputePipeline> = {};
   /** the smooth draw (setSmooth): every bake runs the sheet pass instead of the box faces (round 16) */
   smooth = false;
@@ -694,8 +698,8 @@ export class GpuNest {
         // draws between the bands (the draw is submitted after the op). nrows: the slot's rows when the CPU knows them,
         // else the level's window rows (a GPU region lies inside it).
         for (let b = 0; b < nrows; b++) {
-          // (e.w bit 1, round 22: ?rimtop=1)
-          const off = this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = s), (e[0] = mode), (e[1] = per | (last << 16)), (e[2] = nrows > 1 ? b + 1 : 0), (e[3] = +this.rimOff | (this.rimTop ? 2 : 0))));
+          // (e.w bit 1, round 22: ?rimtop=1; bit 2, round 23: ?rimsnap=1)
+          const off = this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = s), (e[0] = mode), (e[1] = per | (last << 16)), (e[2] = nrows > 1 ? b + 1 : 0), (e[3] = +this.rimOff | (this.rimTop ? 2 : 0) | (this.rimSnap ? 4 : 0))));
           // (measurement only: skip 'sheet' leaves the sheet pass out, the result then wrong)
           if (!this.skip.has('sheet')) this.runIndirect('sheetBake', off, s);
           if (nrows > 1) this.submit(false);

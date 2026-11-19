@@ -3,6 +3,18 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-19 — nested scales round 23: the snap (`nested-scales`)
+
+The user, verbatim (through the coordinator): "is it not sufficient to just snap them to stay within some epsilon of
+the column in the x,y plane? Then to shift them to a surface intersection within that cell and to give them the normal
+of the surfaces at either side of the cut?" and "I want to see screens before any changes".
+
+Consequence (round 23, docs/design/NESTED_SCALES.md "As built (round 23)"): behind `?rimsnap=1`, default off until the
+user has seen the stills (local/nested/r23a-before-* against r23a-*): a crossed corner goes to its lines' least-squares
+point inside its own box (+-0.49 columns) at the original surface's height; each quad's diagonal is chosen from its
+slid corners (no folds); a slid vertex shades with its quad's own normal (a hard crease at the rim). The coordinator's
+first brief (walls collapsed onto the line, low-side corners snapping too) is kept only as a possible flagged experiment.
+
 ## 2026-11-19 — nested scales round 22: round edges, the look of dual contouring on the sheets (`nested-scales`)
 
 The user, verbatim: "If you can fix the rim artifacts first as they are distracting. I really want the look of

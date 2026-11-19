@@ -27669,3 +27669,51 @@ gate passed (reload: first frame 6.93 s, every boot pipeline 14.45 s, first shee
 only` 12 of 12 (one more: the slid-vertex count); full selftest smooth on 47 of 47 (with the new edge check), smooth off
 37 of 37. The coverage check now rounds a cap's corner to its column (a slid corner is up to 0.35 off): before that fix
 the smooth coverage checks counted 1,368-1,789 faults that were the check, not the draw.
+
+## 2026-11-19 — Nested scales lab, round 23, deliverable 1: the owner's snap, behind `?rimsnap=1` (default off)
+
+Why: the owner's rule (DECISIONS 2026-11-19 round 23): a corner stays inside its own cell, goes to the surface
+intersection there, and each side of the cut keeps its own normal. Replaces the coordinator's first brief (collapse the
+wall onto the line); defaults stay as at f3f17d9f until the owner has seen the stills ("I want to see screens before any
+changes"). Design: NESTED_SCALES.md "As built (round 23)".
+
+**Reference first** (edge.ts slideOf box, boxmesh.ts rimSnap / snapDiag; test/unit/nested-snap.test.ts, 26 scenes: 6
+random carve / add sequences on two levels as round 22's, 12 of tight circles R 1.5-3, 8 of crossing rims, 79,926
+triangles). Folded triangles (horizontal orientation reversed against the lattice's): round 22 (disc 0.35) 0; the box
+with the fixed diagonal 230 at 0.49, 188 at 0.45, 125 at 0.40, 73 at 0.35 (random 125 / tight 65 / crossing 40 at
+0.49); with the diagonal chosen per surface 0 at every box, per column 0 at every box. Built: box 0.49, per surface.
+Degenerate (zero-area) triangles: 0 in every setting. Closure identical to the slide off in every scene; with a chosen
+diagonal the pair rule cancels other triangles in thin pockets (2-4 more triangles in 4 scenes per surface, 2-8 in 5
+per column; NS-174). A carve of R 7.2: 58 crossed corners, farthest 0.075 columns off the circle (the tangent lines'
+curvature bias, NS-172), all at the uncarved height; steep triangles 300 in carved columns, 0 in uncarved ones: the
+soil / stone alternation at the brush's own level goes by construction. An add of R 7.2: foot corners at the ground's
+height, steep triangles 274 in the mound's columns, 0 outside (the "low" side is the ground outside the foot).
+
+**GPU** (nest.wgsl sWalk e.w bit 2: the box and the outside members' height; sheetBake step 4: the diagonal as sheet
+flag bit 3 and the quad's own normal from its slid corners in bits 16-30, bit 4; draw.wgsl sheetVert: the corner table
+per diagonal, a slid vertex's normal from the flags). First run of `?selftest=1&smooth=only&rimsnap=1`: levels 1 and 2
+had 2 triangles each on the other diagonal than the reference's, on unslid quads: step 4 read the slides step 3 had not
+yet moved to word 1 (no barrier between the steps; round 22's step 4 read no cluster words). A storage and workgroup
+barrier between steps 3 and 4: 12 of 12 (L0 8,064, L1 8,390, L2 3,014 triangles equal the reference; union closed).
+`smooth=only` with the defaults: 12 of 12.
+
+**The look** (scripts/nested-r23-stills.mjs, round 22's poses: local/nested/r23a-before-<pose>-slide-<tex|flat>.png on
+the f3f17d9f runtime (defaults), r23a-<pose>-slide-<tex|flat>.png with ?rimsnap=1). At the brush's own level (crater
+from above, overlap, level edge: level 1) the outline now reads round and the ground runs flat to a crisp rim; the
+brown teeth round the rim are mostly gone. Still wrong there: the wall's foot is the lattice staircase one column in
+(a saw edge along the near wall's foot in crater-above), a few spikes up the wall where two carves' lines cross
+(overlap), and the kink where the rim meets the level edge (NS-161). At derived levels (crater low and the mound at
+level 2, the closeup at level 3) little changes: the parent's staircase of 8 child columns a stair is still there
+(NS-170, deliverable 2), and corners whose inherited samples are one-sided rise as rimtop's spikes did. Tunnel mouth:
+unchanged (ceilings carry no samples, NS-162).
+
+**Boot time** (the brief's question: the r22 stills show "first sheet frame 19,091 ms"): the boot gate on the f3f17d9f
+runtime, cold, desktop: first frame 1,125 ms, every boot pipeline 8,054 ms, first sheet frame 2,491 ms (pass). The
+stills script switches the sheets on only after 60 frames, the boot's pipelines and a 1.5 s pause, so its overlay counts
+that wait (11,108 ms in this round's before run, 14,385 ms in the after run on a dev server that had just recompiled
+the changed WGSL): the stills script, not a regression.
+
+**Quick checks** (the owner's ask: no end gate yet): typecheck; nested unit tests 68 of 68 (65 + 3 new); compile gate
+passed (sheetBake 632 ms one quiet run; one run during another session's load measured 1,217 and two reruns passed;
+no budget raised); `smooth=only` 12 of 12 with the defaults (run before the barrier was added; with rimsnap off step 4 reads no cluster
+word, so the barrier changes nothing it checks) and with rimsnap=1 (after). Perf not measured this step.

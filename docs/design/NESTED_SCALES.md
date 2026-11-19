@@ -1286,6 +1286,37 @@ staircase of cells, each corner between a carved and an uncarved cell collapsing
   edge-aware enhance (a child takes the side of its parent's line it lies on, so finer levels round the rim instead of
   the parent's staircase), the material at a rim from the edge line (NS-150), then rimtop on by default.
 
+**As built (round 23; behind `?rimsnap=1`, default off until the owner has seen the stills): the snap.** The owner:
+"is it not sufficient to just snap them to stay within some epsilon of the column in the x,y plane? Then to shift them
+to a surface intersection within that cell and to give them the normal of the surfaces at either side of the cut?"
+- *Reach: the corner's own box.* A crossed corner (its members' samples on both sides of the edge: the edge line crosses
+  the square its four columns' centres span) goes to the least-squares point of its members' lines (edge.ts slideOf,
+  regulariser unchanged), clamped per component to +-SNAP_BOX = 0.49 columns (0.5 less SNAP_EPS 0.01) instead of round
+  22's disc of 0.35. One straight line's point is always inside the box, so the rim vertex reaches the line (on a
+  circle it lies outside by the cell's sagitta: 0.075 columns at R 7.2, NS-172). Corners the line does not cross do not
+  move and keep their heights.
+- *Height: where the brush's surface meets the original one.* A crossed corner takes the mean height of its members
+  outside the edge (d <= 0: the uncarved ground at a carve's rim, the ground round an add's foot), as `?rimtop=1` did:
+  the ground runs flat to a carve's rim, the mound rises from the ground at its foot. (The mean, not the original
+  surface evaluated at the slid point: NS-171.) So the "low" side of a mound is the ground outside its foot, the high
+  side of a crater the ground outside its rim; in both the steep triangles are the brush's own columns'.
+- *Folds: the diagonal per quad.* With every corner in its own box a lattice quad stays a simple polygon but may be
+  non-convex, and the fixed diagonal (corners 0-3) then folds one triangle. Measured over 26 scenes (6 random carve / add
+  sequences on two levels, 12 of tight circles R 1.5-3, 8 of crossing rims; test/unit/nested-snap.test.ts): fixed
+  diagonal folds 230 triangles at box 0.49, 188 at 0.45, 125 at 0.40, 73 at 0.35; the diagonal chosen per surface (the
+  fixed one unless one of its triangles folds and the other diagonal's (1-2) do not) 0 at every box; per column 0 too.
+  Built: per surface, box 0.49 (sheetBake step 4 writes the choice as sheet flag bit 3; the draw's corner table follows
+  it; the reference does the same). The choice is from the quad's own four corners, all in the column's chunk, so every
+  bake of it agrees. Zippers (the 16 fan slots along a level edge) are not affected: their vertices are on level-edge
+  lines, which never slide.
+- *Normals per side.* A slid vertex shades with its own quad's normal (from the quad's slid corners; packed in the sheet
+  flags' spare bits 16-30 as an 8 + 7-bit octahedral normal, bit 4 on): a ground triangle at the rim is lit as ground, a
+  wall triangle as wall, a hard crease at the rim by construction, smooth elsewhere. Cost: no word more in the baked
+  vertex or cluster; one more read of the flags word a vertex is already read. Flat per quad rather than smooth per side
+  (NS-173). A collapsed (zero-area) quad gets no normal (bit 4 off: the cluster's), so no NaN.
+- *Closure* is by vertex identity and unchanged; where a thin pocket's two surfaces choose different diagonals, the pair
+  rule cancels other triangles (2-4 more in 4 of 26 scenes; NS-174).
+
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

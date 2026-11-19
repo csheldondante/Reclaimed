@@ -109,7 +109,16 @@ export const SLIDE_MAX = 0.35;
 /** the slide of one corner (2D dual contouring): samples given as (field, the column centre minus the corner); the
  *  offset minimising sum (dot(n_i, p - (c_i + d_i n_i)))^2 + SLIDE_REG |p|^2, clamped to a disc of SLIDE_MAX. Only where
  *  the edge crosses the corner's cell: some sample's centre inside (d > 0) and some outside (d <= 0); else 0. */
-export function slideOf(samples: { e: number; cx: number; cy: number }[]): { x: number; y: number; crossed: boolean } {
+/** (round 23, ?rimsnap=1: the owner's rule "snap them to stay within some epsilon of the column in the x,y plane") the
+ *  snap's box: a crossed corner's vertex stays in the square of +-SNAP_BOX columns round its lattice corner (the square
+ *  its four columns' centres span, less SNAP_EPS). A corner is crossed exactly when the edge line crosses that square, so
+ *  the least-squares point of one straight line is always inside the reach. SNAP_EPS: the unit test's fold count at each
+ *  setting is in docs/DEVLOG.md (round 23). */
+export const SNAP_EPS = 0.01;
+export const SNAP_BOX = 0.5 - SNAP_EPS;
+
+/** box > 0 (round 23, the snap): clamp each component to +-box instead of the disc of SLIDE_MAX */
+export function slideOf(samples: { e: number; cx: number; cy: number }[], box = 0): { x: number; y: number; crossed: boolean } {
   let axx = 0;
   let axy = 0;
   let ayy = 0;
@@ -135,6 +144,7 @@ export function slideOf(samples: { e: number; cx: number; cy: number }[]): { x: 
   const det = a * c - axy * axy;
   let x = (c * bx - axy * by) / det;
   let y = (a * by - axy * bx) / det;
+  if (box > 0) return { x: Math.min(box, Math.max(-box, x)), y: Math.min(box, Math.max(-box, y)), crossed: true };
   const l = Math.hypot(x, y);
   if (l > SLIDE_MAX) {
     x *= SLIDE_MAX / l;

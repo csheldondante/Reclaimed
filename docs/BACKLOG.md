@@ -577,6 +577,8 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   not the brief's 0.45: a corner farther than that from the edge stops short, so a rim keeps a waviness of up to 0.35
   columns (0.70 unslid). A larger reach needs a fold-aware bound (per direction, or a shared constraint between
   neighbouring corners: each line would need its neighbours' slides) or a diagonal chosen per quad (topology change).
+  (Round 23: lifted behind `?rimsnap=1`: a box of 0.49 with the diagonal chosen per surface, 0 folds over 26 scenes;
+  closes when the owner makes it the default.)
 - NS-161 (limit, round 22) Level edges slide nothing (every line with a parent-owned or absent quadrant, so the zipper
   and both levels' shared vertices): a round rim crossing a child's window edge kinks back to the grid there.
 - NS-162 (limit, round 22) Only up surfaces carry edge samples (an interval's top; a down surface's record is air): a
@@ -609,6 +611,31 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   enhance's heights inherit the parent's staircase of cells (8 child columns a stair), which a 0.35-column slide cannot
   touch. Next: edge-aware enhance (a child near its parent's edge line takes the height of the side it lies on, block
   mean kept), then rimtop=1 by default (it spikes today where a derived corner's samples are one-sided).
+- NS-171 (hack, round 23, ?rimsnap=1) The snapped corner's height is the mean of its members outside the edge (the
+  original surface's samples), not that surface evaluated at the slid point: on sloped ground the rim sits up to half
+  the slope across a cell off. A plane through the outside members (or the gradient the bake already has) would place it.
+- NS-172 (limit, round 23) The least-squares point of a corner's members' tangent lines lies outside a circle by about
+  the cell's sagitta (0.075 columns at R 7.2, more on tight circles): the dual-contouring curvature bias. A sample that
+  kept the curvature (or the circle's centre) would remove it.
+- NS-173 (hack, round 23, ?rimsnap=1) The per-side normal at a slid corner is the quad's own flat normal from its slid
+  corners, packed in the sheet flags' spare bits (octahedral 8 + 7 bits, bits 16-30; bit 4 on), not a smooth normal of
+  that side (the same-side quads round the corner): faceting next to the rim. The smooth version needs a second normal
+  word per slid cluster (the cluster record has four words, all used) or a fifth word.
+- NS-174 (limit, round 23, ?rimsnap=1) The diagonal is chosen per surface of a column (flag bit 3): where a thin pocket's
+  two surfaces choose differently the pair rule cancels other triangles than with the fixed diagonal (2-4 more
+  triangles in 4 of 26 test scenes); closure, coincident faces and repeated vertices are unchanged. Per column (one bit
+  for every surface) does the same and needs a second pass over the column in the bake.
+- NS-175 (limit, round 23) The diagonal's sign test runs on the GPU's 16-bit slide and in the reference on f64: a quad
+  whose fold test is a near tie can choose differently in the two (a parity fault in smooth=only if it ever happens; none
+  seen). The reference could quantise its slide as the GPU stores it.
+- NS-176 (limit, round 23) With ?rimsnap=1 the "Round edges" toggle (?slide=0) only moves vertices back: the chosen
+  diagonals and the per-quad normals are baked and stay.
+- NS-177 (look, round 23) With the snap the wall's foot is still the lattice staircase one column in (uncrossed corners
+  do not move): a saw edge along a crater's near wall at the brush's level (r23a-crater-above). Not tried: the flagged
+  experiment `?wallsnap=1` (low-side corners within a column of the line snap too), because at derived levels the
+  parent's staircase (NS-170) is the larger defect in the stills; for the owner to choose after seeing them.
+- NS-178 (perf, round 23) The snap's carve and sheet-pass cost not measured (quick checks only, the owner's ask); step
+  4 now has a barrier after step 3 and reads four cluster words a surface with rimsnap on.
 - NS-146 (limit, round 20) The detail bands (detail.wgsl DPt) need k a power of two: a level's s is L x round(log2 k),
   so the integer window origin can be shifted into each band's lattice exactly. Another k shades with wrong band
   scales (no error). Assert it at the page's start, or carry the scale as a float for other k.

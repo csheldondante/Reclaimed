@@ -284,15 +284,21 @@ fn sheetVert(inst: u32, t: u32, v0: u32) -> SV {
   var idx = 0u;
   var byZ = false;
   var zz = 0.0;
+  // (round 23) the column's sheet flags (0 for a zipper triangle)
+  var qn = 0u;
   if (t < 512u) {
     let col = t / 2u;
     let tt = t % 2u;
     let f = pgLoad(sb + col * 3u + 2u);
     if ((f >> 31u) == 0u || ((f >> (1u + tt)) & 1u) == 0u) { return o; }
     if ((f & 1u) == 0u && v != 0u) { v = 3u - v; }
-    // triangle 0: corners (0, 1, 3), 1: (0, 3, 2)
+    // triangle 0: corners (0, 1, 3), 1: (0, 3, 2); (round 23, flag bit 3, ?rimsnap=1) the other diagonal: (0, 1, 2),
+    // (1, 3, 2)
     var cc = 0u;
-    if (v == 1u) { cc = select(3u, 1u, tt == 0u); } else if (v == 2u) { cc = select(2u, 3u, tt == 0u); }
+    if ((f & 8u) != 0u) {
+      if (v == 0u) { cc = select(1u, 0u, tt == 0u); } else if (v == 1u) { cc = select(3u, 1u, tt == 0u); } else { cc = 2u; }
+    } else if (v == 1u) { cc = select(3u, 1u, tt == 0u); } else if (v == 2u) { cc = select(2u, 3u, tt == 0u); }
+    qn = f;
     lx = (col & 15u) + (cc & 1u);
     ly = (col >> 4u) + (cc >> 1u);
     idx = (pgLoad(sb + col * 3u + cc / 2u) >> (16u * (cc & 1u))) & 0xffffu;
@@ -361,9 +367,16 @@ fn sheetVert(inst: u32, t: u32, v0: u32) -> SV {
   // (round 22) the slide (the cluster's word 1 after the bake; a rim vertex's word 1 is its top: not a slide), on with
   // misc2.y (?slide=1, the "Round edges" button); 0 leaves the draw exactly as before
   var off = vec2<f32>(0.0);
-  if (d.misc2.y != 0u && !o.kid) { off = unpack2x16snorm(pgLoad(cw + 1u)) * 0.5; }
+  var sl = 0u;
+  if (d.misc2.y != 0u && !o.kid) {
+    sl = pgLoad(cw + 1u);
+    off = unpack2x16snorm(sl) * 0.5;
+  }
   o.lp = vec3<f32>(f32(CX - d.lvl.x) + off.x, f32(CY - d.lvl.y) + off.y, bitcast<f32>(pgLoad(cw + 2u)));
   o.nrm = pgLoad(cw + 3u);
+  // (round 23, ?rimsnap=1) a slid vertex takes its quad's own normal (sheet flags bit 4, bits 16-30: octahedral 8 + 7
+  // bits), so each side of the rim shades with its own surface: a hard crease there by construction
+  if (sl != 0u && (qn & 16u) != 0u) { o.nrm = (((qn >> 16u) & 255u) << 8u) | (((qn >> 24u) & 127u) << 25u); }
   o.ok = true;
   return o;
 }

@@ -2245,7 +2245,7 @@ override BAKE_RIM: bool = false;
 override BAKE_SPLIT: bool = true;
 /** whether any corner line of chunk (cx, cy) of level L (lines cx * 16 .. cx * 16 + 16) is a rim line (rimP or rimC) */
 fn chunkRim(L: u32, cx: i32, cy: i32) -> bool {
-  // (u.e.w bit 0: rimOff; bit 1, round 22: ?rimtop=1 in the sheet pass)
+  // (u.e.w bit 0: rimOff; bit 1, round 22: ?rimtop=1 in the sheet pass; bit 2, round 23: ?rimsnap=1)
   if ((u.e.w & 1) != 0) { return false; }
   let a0 = cx * 16;
   let b0 = cy * 16;
@@ -2794,6 +2794,8 @@ const SFIX: f32 = 256.0;
 /** (round 22) the slide's regulariser and bound (edge.ts SLIDE_REG, SLIDE_MAX: why 0.35) */
 const SLIDE_REG: f32 = 0.05;
 const SLIDE_MAX: f32 = 0.35;
+/** (round 23, ?rimsnap=1) the snap's box (edge.ts SNAP_BOX) */
+const SNAP_BOX: f32 = 0.49;
 var<private> wkOn: array<bool, 4>;
 var<workgroup> wShP: array<u32, 16>;
 var<workgroup> wSA: u32;
@@ -2949,10 +2951,15 @@ fn sWalk(first: u32) -> u32 {
           let mc = ayy + SLIDE_REG;
           let det = ma * mc - axy * axy;
           var p = vec2<f32>(mc * bv.x - axy * bv.y, ma * bv.y - axy * bv.x) / det;
-          let pl = length(p);
-          if (pl > SLIDE_MAX) { p *= SLIDE_MAX / pl; }
+          if ((u.e.w & 4) != 0) {
+            // (round 23, ?rimsnap=1: the owner's snap) inside the corner's own box, at the outside members' height
+            p = clamp(p, vec2<f32>(-SNAP_BOX), vec2<f32>(SNAP_BOX));
+          } else {
+            let pl = length(p);
+            if (pl > SLIDE_MAX) { p *= SLIDE_MAX / pl; }
+          }
           ow = pack2x16snorm(p / 0.5);
-          if ((u.e.w & 2) != 0 && oN > 0u) { zc = f32(oSum) / f32(oN * 256u); }
+          if ((u.e.w & 6) != 0 && oN > 0u) { zc = f32(oSum) / f32(oN * 256u); }
         }
         pgStore(o, bitcast<u32>(a));
         pgStore(o + 1u, bitcast<u32>(b));
@@ -3051,6 +3058,8 @@ fn sheetW(j: u32) -> u32 {
   if (pz < 16u) { p = wShP[pz]; } else { p = pageOf(CACHE_ID + u.a.w, bChunk.x, bChunk.y, 1u + wSA + pz); }
   return p * PW + (j % SPP) * SPW;
 }
+/** (round 23) twice the signed area of a triangle in plan (> 0 counter-clockwise from above) */
+fn sArea(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) -> f32 { return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x); }
 /** a quad's area normal from its four placed corners (zero where a corner is a rim line: those are the child's units) */
 fn sQuadN(L: u32, X: i32, Y: i32, t: f32, up: bool) -> vec3<f32> {
   var z = vec4<f32>(0.0);
@@ -3336,6 +3345,9 @@ fn sheetBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
       pgStore(cb + 3u, wd);
     }
   }
+  // (round 23: step 4 reads the slides step 3 moved to word 1, ?rimsnap=1's diagonal and normal)
+  storageBarrier();
+  workgroupBarrier();
   // 4. each column's surfaces: its corners' cluster indices, and the pair rule per triangle (a run of consecutive
   // surfaces on the same three vertices keeps its top one when odd, none when even)
   {
@@ -3375,10 +3387,48 @@ fn sheetBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
       pgStore(sw, ix.x | (ix.y << 16u));
       pgStore(sw + 1u, ix.z | (ix.w << 16u));
       let mat = select(m1, r0.y, a) & 255u;
-      pgStore(sw + 2u, 0x80000000u | select(0u, 1u, a) | (mat << 8u));
-      // triangle 0 (corners 0, 1, 3) and 1 (0, 3, 2): same three vertices as the surface below?
-      let same0 = j > 0u && ix.x == prev.x && ix.y == prev.y && ix.w == prev.w;
-      let same1 = j > 0u && ix.x == prev.x && ix.w == prev.w && ix.z == prev.z;
+      // (round 23, ?rimsnap=1: boxmesh.ts sheetMesh snapDiag 'surface') the quad's diagonal from its slid corners: the
+      // fixed one (0-3) unless one of its triangles folds and the other diagonal's (1-2) do not (flag bit 3); and where a
+      // corner slid, the quad's own normal from its slid corners in bits 16-30 (octahedral, 8 + 7 bits; bit 4 on): a
+      // triangle at a slid corner shades with its own side's surface (a hard crease at the rim; draw.wgsl sheetVert)
+      var fx = 0u;
+      if ((u.e.w & 4) != 0) {
+        var p = array<vec3<f32>, 4>(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0));
+        var slid = false;
+        for (var c = 0u; c < 4u; c++) {
+          let CX = X + i32(c & 1u);
+          let CY = Y + i32(c >> 1u);
+          var off = vec2<f32>(0.0);
+          if (!kid[c]) {
+            let cw = sClW(CX, CY, ix[c]);
+            let sl = pgLoad(cw + 1u);
+            off = unpack2x16snorm(sl) * 0.5;
+            slid = slid || sl != 0u;
+            p[c] = vec3<f32>(f32(c & 1u) + off.x, f32(c >> 1u) + off.y, bitcast<f32>(pgLoad(cw + 2u)));
+          } else {
+            p[c] = vec3<f32>(f32(c & 1u), f32(c >> 1u), 0.0);
+          }
+        }
+        let a013 = sArea(p[0].xy, p[1].xy, p[3].xy);
+        let a032 = sArea(p[0].xy, p[3].xy, p[2].xy);
+        let a012 = sArea(p[0].xy, p[1].xy, p[2].xy);
+        let a132 = sArea(p[1].xy, p[3].xy, p[2].xy);
+        if (min(a013, a032) < 0.0 && min(a012, a132) >= 0.0) { fx = 8u; }
+        if (slid && !any(kid)) {
+          let nq = cross(p[3] - p[0], p[2] - p[1]);
+          if (dot(nq, nq) > 0.0) {
+            let w = octEnc(normalize(select(-nq, nq, a)));
+            fx |= 16u | (((w >> 8u) & 255u) << 16u) | ((w >> 25u) << 24u);
+          }
+        }
+      }
+      pgStore(sw + 2u, 0x80000000u | select(0u, 1u, a) | (mat << 8u) | fx);
+      // triangle 0 (corners 0, 1, 3) and 1 (0, 3, 2), flipped (0, 1, 2) and (1, 3, 2): same three vertices as the surface
+      // below (the same diagonal and the same clusters)?
+      let fl = (fx & 8u) != 0u;
+      let sameD = j > 0u && fl == ((pgLoad(pf) & 8u) != 0u);
+      let same0 = sameD && ix.x == prev.x && ix.y == prev.y && select(ix.w == prev.w, ix.z == prev.z, fl);
+      let same1 = sameD && ix.w == prev.w && ix.z == prev.z && select(ix.x == prev.x, ix.y == prev.y, fl);
       if (j > 0u && !same0 && run.x % 2u == 1u) { pgStore(pf, pgLoad(pf) | 2u); }
       if (j > 0u && !same1 && run.y % 2u == 1u) { pgStore(pf, pgLoad(pf) | 4u); }
       run.x = select(1u, run.x + 1u, same0);

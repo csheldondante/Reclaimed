@@ -21,6 +21,8 @@ const K = 8;
 
 export async function smoothAgainstReference(device: GPUDevice, log: (s: string) => void = () => {}): Promise<RefResult[]> {
   const g = new GpuNest(device, K, 7, 256, { syncGrow: true });
+  // (round 23) ?rimsnap=1 checks the snap against the reference too
+  g.rimSnap = new URLSearchParams(location.search).get('rimsnap') === '1';
   const canvas = document.createElement('canvas');
   canvas.width = 16;
   canvas.height = 16;
@@ -63,6 +65,7 @@ export async function smoothAgainstReference(device: GPUDevice, log: (s: string)
   const scene: MeshScene = {
     k: K,
     rimTop: g.rimTop,
+    rimSnap: g.rimSnap,
     levels: [0, 1, 2].map((L) => {
       const w = g.wins[L]!;
       const parts = [];

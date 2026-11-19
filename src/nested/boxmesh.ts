@@ -20,7 +20,7 @@
 // surface (every edge used an even number of times; oriented: every directed edge cancelled) to a closed surface, so the
 // smooth mesh is closed by construction whatever the placement.
 import { AIR, type Part } from './oracle';
-import { edgeDec, slideOf } from './edge';
+import { SNAP_BOX, edgeDec, slideOf } from './edge';
 
 export type Vec3 = [number, number, number];
 
@@ -43,6 +43,16 @@ export interface MeshScene {
   solid?: (m: number) => boolean;
   /** (round 22, ?rimtop=1) a corner whose cell an edge crosses takes the height of its members outside the edge */
   rimTop?: boolean;
+  /** (round 23, ?rimsnap=1, the owner's rule) a crossed corner (the edge line crosses its cell) goes to the least-squares
+   *  point of its members' lines inside its own box (edge.ts SNAP_BOX), at the height of its members outside the edge
+   *  (the original surface: where the brush's surface meets it); other corners do not move. Implies rimTop. */
+  rimSnap?: boolean;
+  /** (tests) the snap's box half-width instead of SNAP_BOX */
+  snapBox?: number;
+  /** (round 23) with rimSnap, each quad's diagonal: 'surface' (the default with rimSnap; nest.wgsl sheetBake step 4) the
+   *  fixed one (corners 0-3) unless one of its triangles folds horizontally and the other diagonal's (1-2) do not, per
+   *  surface of a column; (tests) 'fixed' always 0-3, 'column' all of a column's surfaces flipped where any folds */
+  snapDiag?: 'fixed' | 'surface' | 'column';
 }
 
 /** a vertex identity: level, corner line (global columns of the level's depth: the line at the low corner of column
@@ -785,10 +795,13 @@ export function sheetMesh(scene: MeshScene): SheetMesh {
       for (const c of clusters) {
         const mine = smp.filter((s) => c.bps.includes(s.z));
         if (!mine.length) continue;
-        const sl = slideOf(mine.map((s) => ({ e: s.e, cx: -0.5 + (s.q & 1), cy: -0.5 + (s.q >> 1) })));
+        const sl = slideOf(
+          mine.map((s) => ({ e: s.e, cx: -0.5 + (s.q & 1), cy: -0.5 + (s.q >> 1) })),
+          scene.rimSnap ? (scene.snapBox ?? SNAP_BOX) : 0,
+        );
         c.ox = sl.x;
         c.oy = sl.y;
-        if (scene.rimTop && sl.crossed) {
+        if ((scene.rimTop || scene.rimSnap) && sl.crossed) {
           // (?rimtop=1) the members outside the edge (d <= 0: the side the normal points to) give the height
           let sum = 0;
           let n = 0;
@@ -892,17 +905,40 @@ export function sheetMesh(scene: MeshScene): SheetMesh {
         if (split >= 0) for (let t = 1; t < k; t++) tri.push([cornerAt[split], (cornerAt[split] + t) % poly.length, (cornerAt[split] + t + 1) % poly.length]);
         // per surface: each polygon vertex's cluster
         const keys: (string[] | null)[][] = [];
-        ss.forEach((s, j) => {
+        // (round 23 experiment, snapDiag) the other diagonal: (c0, c1, c2), (c1, c3, c2)
+        const triAlt: [number, number, number][] = [[cornerAt[0], cornerAt[1], cornerAt[3]], [cornerAt[1], cornerAt[2], cornerAt[3]], ...tri.slice(2)];
+        const vks: string[][] = [];
+        const flats: [number, number][][] = [];
+        ss.forEach((s) => {
           st.surfaces++;
-          const vk = poly.map(([cl, cx, cy]) => {
-            const l = getLine(cl, cx, cy);
-            const z = cl === L ? s.h : toKid(L, s.h);
-            const ci = clusterIndex(l, z);
-            const key = vkey(l, ci);
-            if (!pos.has(key)) pos.set(key, toWorld(scene, cl, cx + l.clusters[ci].ox, cy + l.clusters[ci].oy, l.clusters[ci].z));
-            return key;
+          const flat: [number, number][] = [];
+          vks.push(
+            poly.map(([cl, cx, cy]) => {
+              const l = getLine(cl, cx, cy);
+              const z = cl === L ? s.h : toKid(L, s.h);
+              const ci = clusterIndex(l, z);
+              const key = vkey(l, ci);
+              if (!pos.has(key)) pos.set(key, toWorld(scene, cl, cx + l.clusters[ci].ox, cy + l.clusters[ci].oy, l.clusters[ci].z));
+              flat.push(cl === L ? [cx + l.clusters[ci].ox, cy + l.clusters[ci].oy] : [cx / k, cy / k]);
+              return key;
+            }),
+          );
+          flats.push(flat);
+        });
+        // (round 23 experiment) which surfaces' quads take the other diagonal: 'surface' each on its own (the fixed one
+        // unless it folds and the other does not); 'column' all of a column's together, where some surface's fixed one folds
+        const folds = (flat: [number, number][], tl: [number, number, number][]) =>
+          tl.slice(0, 2).some((t) => {
+            const [a, b, c] = t.map((i) => flat[i]);
+            return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) < 0;
           });
-          keys.push(tri.map((t) => {
+        const diag = scene.rimSnap ? (scene.snapDiag ?? 'surface') : 'fixed';
+        const flip = flats.map((f) => diag === 'surface' && folds(f, tri) && !folds(f, triAlt));
+        if (diag === 'column' && flats.some((f) => folds(f, tri))) flip.fill(true);
+        ss.forEach((_s, j) => {
+          const vk = vks[j];
+          const tl = flip[j] ? triAlt : tri;
+          keys.push(tl.map((t) => {
             const a = vk[t[0]];
             const b = vk[t[1]];
             const c = vk[t[2]];

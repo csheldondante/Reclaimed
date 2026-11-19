@@ -149,6 +149,8 @@ export class App {
     // the uncarved side's height (a bake option: set before the first bake)
     this.render.slide = q.get('slide') !== '0';
     this.nest.rimTop = q.get('rimtop') === '1';
+    // (round 23) ?rimsnap=1 the owner's snap (default off until the owner has seen the stills)
+    this.nest.rimSnap = q.get('rimsnap') === '1';
     this.render.bandsSplit = q.get('bands') === 'split';
     if (q.has('texbands')) this.render.texBands = Number(q.get('texbands'));
     // (round 21) the forest canopy from afar: ?canopy=0 off; ?canopyfade= its crossover footprint (world units a pixel)
