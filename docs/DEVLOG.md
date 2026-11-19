@@ -27353,3 +27353,20 @@ edge lines put the top and the floor in one cluster at their mean (about -7, 13 
 sheet until the finer level is promoted. The accepted collapse; no skirt. One sheetdug run before the diagnosis held the
 levels still showed the orphaned child: L1 slid away from L2 (one level op a frame), L2's zippers stale (64 chunks the
 forced bake changed) and its edge without parent columns, which is NS-128's whole open edge.
+
+## 2026-11-19 — Nested scales lab, round 17 step 2: carve cost split; the sheet carve now under the box carve
+
+**Why.** NS-129: a carve at level 1 cost 81.6 ms with sheets (the sheet pass 72.7) against boxes' 27.7.
+
+**Split** (nested-perf.mjs `--sab 1 --draws 0`, one page, carves at level 1 radius 0.5 alternating modes; per carve the
+submits / dispatches and the sheet-pass chunks seen / baked, ctl 12 / 13). Round 16's cost was the partner bakes'
+regions (chunk rects grown by a chunk, x k: four child chunks each way) with every rim chunk baking whatever its hash,
+and one submit per window row for every bake (16 a region). After step 1's rule: sheet chunks baked 8-49 a carve (the
+hash skips the rest), 44 submits. Then the bands: an edit's own bake takes as many region rows a band as fit in a window
+row (from the CPU's brush bound), the last band taking every row after it (so the bound never decides what is baked).
+
+**Measured** (same page, medians of 8): boxes 22.6 ms (bakes' share 16.5); sheets 11.9 ms (sheet pass 6.8; 36 submits);
+sheets without partner bakes 13.1 / 6.6 (noise: the partners cost under 1 ms); sheets with round 16's one row a band
+16.7 / 9.5 (66 submits); no sheet pass 6.8 / 0.9. So the sheet carve is half the box carve (target met); the sheet pass
+is 6.8 ms, not under 3 (target NOT met): about 17 submits more than without it (~0.1 ms each) and 15-49 chunks baked.
+Next if wanted: per corner line (write only the lines in the region), and the bound's bands fewer.

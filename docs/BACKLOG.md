@@ -470,7 +470,10 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   the child's edge chunks (the regions are planned per level on the GPU). Fix at the root: the plan grows each level's
   region by the other level's dependency (a parent region touching a child's window edge adds the child's edge chunks,
   and the reverse), for boxes too (NS-119 is likely the same miss).
-- NS-129 (perf, round 16) A carve with the sheet draw costs 81.6 ms median against boxes' 27.7 (the sheet pass 72.7 of
+- NS-129 (round 17 step 2: PART DONE. Sheet carve 11.9 ms median against boxes' 22.6 in the same page; the sheet pass
+  6.8 ms, NOT under the 3 ms target: ~17 band submits and 15-49 chunks baked a carve. Next: bake per corner line in the
+  region only; fewer bands)
+  (perf, round 16) A carve with the sheet draw costs 81.6 ms median against boxes' 27.7 (the sheet pass 72.7 of
   it, disturbed run). Split first (nested-perf `--skips`): the partner bakes of NS-126 (rim chunks always bake), the
   walk (sBound runs twice a line plus sWalk; the bound could come from the walk's own count), the normals' merge walk.
   Then the r16 stills: fix the poses (scripts/nested-r16-stills.mjs puts the camera inside the 3 m tunnel; aim at the

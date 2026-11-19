@@ -3648,8 +3648,15 @@ fn sheetBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
   let cx = o.x + i32(wid.x);
   let cy = o.y + i32(wid.y);
   if (!inWin(L, cx * 16, cy * 16)) { return; }
-  // (round 17) a band is u.e.y region rows (0: one)
-  if (u.e.z != 0 && i32(wid.y) / max(u.e.y, 1) != u.e.z - 1) { return; }
+  // (round 17) a band is (u.e.y & 0xffff) region rows (0: one); the last of (u.e.y >> 16) bands (0: no last) takes every
+  // row after it too, so the bands cover the region whatever its size (the CPU's bound sets only how long a submit runs)
+  if (u.e.z != 0) {
+    let per = max(u.e.y & 0xffff, 1);
+    var bi = i32(wid.y) / per;
+    let nb = u.e.y >> 16u;
+    if (nb > 0) { bi = min(bi, nb - 1); }
+    if (bi != u.e.z - 1) { return; }
+  }
   // (round 17, the region rule) mode u.e.x: 0 an edit's own region (skip when the chunk's own columns hash the same: a
   // change of the other level's columns comes as a mode 2 bake), 1 forced (window ops), 2 another level's change: the
   // chunks with a rim line only, forced

@@ -990,6 +990,10 @@ the solid below the next air gap down." "Why make those [skirts, outer ring] if 
   rects grown by a whole chunk (x k: four child chunks each way), for the sheet draw only, without the restrict box, and
   let every rim chunk bake whatever the hash said; the slide's special child-ring re-bake is gone (part 2 covers it).
   Partner bakes go in one submit band (rim chunks only: at most a window's ring).
+- *Bands (step 2, NS-129).* An edit's own bake on a level takes floor(window rows / side) region rows a submit, side =
+  sqrt(the CPU's brush bound) + 2, ceil(side / that) bands, the last band taking every row after it (sheetBake: u.e.y =
+  rows a band | bands << 16). Window ops keep a row a submit. Carve at level 1: sheets 11.9 ms, boxes 22.6, the sheet
+  pass 6.8 (36 submits).
 - *A child never sits outside its parent (NS-128).* The app runs one level op a frame, so a slide of L that left L + 1
   outside it (a teleport: the selftest's setView to a shaft) left the child orphaned for a frame or more: its window-edge
   lines saw no parent columns (its whole edge open: the 1,024 open edges of NS-128) and its zippers kept the parent's old

@@ -55,7 +55,21 @@ await run({ name: 'r17-stills', kind: 'behaviour', size: '960x640', dpr: 1, echo
     await ed('raise', P.lip[0], P.lip[1], tl0, 0.8, 1.5);
     const tl = await top(...P.lip);
     for (let i = 0; i < 5; i++) await ed('add', P.lip[0], P.lip[1] - 0.5 - i * 0.22, tl - 0.15, 0.2);
-    return { P, tb, tt, tl, tl0, cx, cy, w1, lowAfter: { bowl: await top(...P.bowl), tunnel: await top(P.tunnel[0] + 4, P.tunnel[1]) } };
+    // (the sawtooth's cause) level 1's columns along the bowl's rim: a quarter circle of cells at the rim radius, each
+    // cell's surfaces (bottom up, solid / air changes); a cell with three surfaces has the bowl undercutting a lip
+    const rim = [];
+    {
+      const s = await a.nest.readAll();
+      const zo1 = s.zOrigin(1);
+      for (let i = 0; i <= 12; i++) {
+        const ang = (i / 12) * (Math.PI / 2);
+        const X = Math.floor((P.bowl[0] + 0.97 * Math.cos(ang)) * k);
+        const Y = Math.floor((P.bowl[1] + 0.97 * Math.sin(ang)) * k);
+        const c = s.column(1, X, Y);
+        rim.push(`${X},${Y}: ${c.z1.map((z, j) => `${(zo1 + z / k).toFixed(2)}m${c.mat[j]}`).join(' ')}`);
+      }
+    }
+    return { rim, P, tb, tt, tl, tl0, cx, cy, w1, lowAfter: { bowl: await top(...P.bowl), tunnel: await top(P.tunnel[0] + 4, P.tunnel[1]) } };
   });
   console.log('features', JSON.stringify(feat));
   const { P } = feat;

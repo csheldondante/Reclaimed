@@ -615,7 +615,7 @@ export class GpuNest {
    *  only when its own columns' hash changed (any change of the other level's columns reaches it through (2) or (3)),
    *  'window' always (a window op changes what the hash does not hold: rims, owners outside, z origins). Box draw and
    *  sheet draw alike. */
-  private bakeChanged(M: number, slots: number[], how: 'edit' | 'window', grow = true, rows?: number[], rowsPer?: number): void {
+  private bakeChanged(M: number, slots: number[], how: 'edit' | 'window', grow = true, rows?: number[], rowsPer?: { per: number; n: number }): void {
     this.bake(M, slots, grow, rows, 0, how === 'window', rowsPer);
     // (measurement only: skip 'partner' leaves parts 2 and 3 out, the result then wrong)
     if (this.skip.has('partner')) return;
@@ -625,7 +625,7 @@ export class GpuNest {
   /** bake level L's faces over region slots, their chunks grown by one (a column's walls depend on its neighbours).
    *  partner (round 16/17): the slots are another level's (1: the parent's, 2: the child's), carried into L's chunks by
    *  dilate and baked on rim chunks only. force: no hash skip (window ops). Callers go through bakeChanged. */
-  private bake(L: number, slots: number[], grow = true, rows?: number[], partner = 0, force = false, rowsPer?: number): void {
+  private bake(L: number, slots: number[], grow = true, rows?: number[], partner = 0, force = false, rowsPer?: { per: number; n: number }): void {
     if (this.bakeOff || (this.bakeSkip >> L) & 1) return;
     // (round 17) the sheet pass's mode: 0 hash skip, 1 forced, 2 rim chunks only, forced
     const mode = partner ? 2 : force ? 1 : 0;
@@ -633,8 +633,10 @@ export class GpuNest {
     const both = (s: number, nrows0: number) => {
       this.bakeLog.push({ L, slot: s });
       // (round 17) `per` region rows a band: nrows bands
-      const per = Math.max(1, Math.min(nrows0, rowsPer ?? 1));
-      const nrows = Math.ceil(nrows0 / per);
+      const per = Math.max(1, Math.min(nrows0, rowsPer?.per ?? 1));
+      // (an edit: the bound's bands, the last taking every row after it; else the window's rows, a band each)
+      const last = rowsPer ? Math.min(rowsPer.n, Math.ceil(nrows0 / per)) : 0;
+      const nrows = last || Math.ceil(nrows0 / per);
       if (this.smooth) {
         // (round 14, NS-107) the cache pass over the same chunks first (the vertex cache and the template mask), then
         // the exceptions placed by the same cluster function; the next dispatch sees the cache (WebGPU: a usage scope
@@ -645,7 +647,7 @@ export class GpuNest {
         // no frame draws between the rows (the draw is submitted after the op). nrows: the slot's rows when the CPU
         // knows them, else the level's window rows (a GPU region lies inside it).
         for (let b = 0; b < nrows; b++) {
-          const off = this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = s), (e[0] = mode), (e[1] = per), (e[2] = nrows > 1 ? b + 1 : 0), (e[3] = this.rimOff)));
+          const off = this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = s), (e[0] = mode), (e[1] = per | (last << 16)), (e[2] = nrows > 1 ? b + 1 : 0), (e[3] = this.rimOff)));
           // (round 16: the sheet pass alone, the owner's sheets; measurement only: skip 'cache', the result then wrong)
           if (!this.skip.has('cache')) this.runIndirect('sheetBake', off, s);
           if (nrows > 1) this.submit(false);
@@ -1050,7 +1052,10 @@ export class GpuNest {
     // 15 banded every bake one row a submit: 16 submits a region whatever its size). The bands still cover every row of
     // the window (correctness never rests on the bound; only the time a submit takes does). Measurement: skip 'bands'.
     for (let m = 0; m < live; m++) {
-      const rowsPer = this.skip.has('bands') ? 1 : Math.max(1, Math.floor(this.wins[m]!.n / 16 / Math.ceil(Math.sqrt(per[m]))));
+      // (the region's side at most the bound's, plus the dilate's chunk each way)
+      const side = Math.ceil(Math.sqrt(per[m])) + 2;
+      const rp = Math.max(1, Math.floor(this.wins[m]!.n / 16 / side));
+      const rowsPer = this.skip.has('bands') ? undefined : { per: rp, n: Math.ceil(side / rp) };
       this.bakeChanged(m, [m * 4 + 3, m * 4 + 2, ...(m + 1 < live ? [(m + 1) * 4] : [])], 'edit', true, undefined, rowsPer);
     }
     this.directory();
