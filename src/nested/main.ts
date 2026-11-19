@@ -69,7 +69,12 @@ async function main(): Promise<void> {
       await api.smooth(true);
       await new Promise((r) => setTimeout(r, 1500));
       const { watertightSuite, pitAndCave } = await import('./suite');
-      const wt = await watertightSuite(api, { screen: q.get('wtscreen') !== '0', log: (s) => console.log(`[suite] smooth ${s}`) });
+      // (round 16, NS-120, decided by the orchestrator) the 40-pose screen check runs on a FRESH sandbox only: here when
+      // this section runs alone (?smooth=only); in the full run the sandbox is the dug world the box pit section leaves,
+      // whose shafts show sky by design, so there the suite runs its closure, rim and coverage checks without the screen
+      // check, and the dug world's screen is covered by the pit, cave and shaft pose sets below
+      const fresh = q.get('smooth') === 'only';
+      const wt = await watertightSuite(api, { screen: fresh && q.get('wtscreen') !== '0', log: (s) => console.log(`[suite] smooth ${s}`) });
       for (const c of wt.checks) {
         const s = { ...c, name: `smooth: ${c.name}` };
         res.push(s);

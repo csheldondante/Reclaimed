@@ -15,7 +15,8 @@ await run({ name: 'nested-stress', kind: 'behaviour', size: '960x640', dpr: 1, e
     if (m.type() === 'error' || m.type() === 'warning') errs.push(`[page ${m.type()}] ${m.text()}`);
   });
   page.on('pageerror', (e) => errs.push(`[pageerror] ${e.message}`));
-  const q = `k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140${maxbuf !== '0' ? `&maxbuf=${maxbuf}` : ''}`;
+  // (round 16: --smooth 1, the sheet draw)
+  const q = `k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140${maxbuf !== '0' ? `&maxbuf=${maxbuf}` : ''}${R.opt('smooth', '0') === '1' ? '&smooth=1' : ''}`;
   await page.goto(`https://localhost:${port}/nested.html?${q}`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.nested && nested.app.frames.length > 60, { timeout: 120000, polling: 100 });
   console.log('limits', JSON.stringify(await page.evaluate(() => window.__limits)));

@@ -952,6 +952,15 @@ the solid below the next air gap down." "Why make those [skirts, outer ring] if 
     pages: not a cap. Exception: a child edge chunk's zipper sheets follow the parent column outside (BACKLOG NS-125).
   - *Ops:* a slide of level L also re-bakes its live child's edge ring (the child's edge lines see L's columns outside
     it, and L's entering chunks were just derived): the selftest's cruise left 12 open edges on one zipper run without it.
+    An edit (round 16, NS-126) also bakes each level where its parent's and its child's edit and derive regions were
+    (dilate with u.e.z 1 / 2 carries a level's region into its child's or parent's chunks): the full selftest found 10
+    open edges at L1 line 480,944..984 after the stroke across the rim, the same line where the box draw's NS-119 faults
+    sit, so NS-119 is most likely the same miss (the box draw is not changed: its rim faces would need the same grow).
+  - *Tests:* the 40-pose screen check of the smooth section runs on a fresh sandbox only (`?smooth=only`); in the full
+    run the section switches on in the dug world and runs closure, rim and coverage at the 8 eyes without the screen
+    check, then the pit, cave and shaft poses (NS-120 as decided). The rim-line check has nothing to count in the sheet
+    draw (no rim walls); the closure check is the union over all levels (watertight.ts unionClosure), reported as level
+    0's odd edges.
 
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 

@@ -466,6 +466,18 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   the child's edge chunks (the regions are planned per level on the GPU). Fix at the root: the plan grows each level's
   region by the other level's dependency (a parent region touching a child's window edge adds the child's edge chunks,
   and the reverse), for boxes too (NS-119 is likely the same miss).
+- NS-127 (bug, round 16, found, NOT fixed; sheet draw only) In the dug world (the box pit section first, then the sheet
+  draw switched on and the pit, cave and shaft poses again: scripts/nested-sheetdug.mjs) the pit poses see hole pixels
+  below the horizon: 192,048 over 162 poses in the full selftest, 471 in a sheetdug run (boxes in the same world 0; the
+  same poses on a fresh sandbox 0). Closure and coverage are 0 at every check of that sequence, so it is not an open
+  edge the checks see; candidates: a pose whose eye is under a sheet that pinched a shaft shut (the shaft is air in
+  the data, the sheet closes over it: no skirt, nothing under the ground is drawn), or a transient between an op's bake
+  and the check. Next: log the per-pose counts with the eye and the levels' surface under it (pitAndCave diag) and say
+  which. The skirt is not restored.
+- NS-128 (bug, round 16, sheet draw) The union closure at "the map, 3 frames after the move" (the watertight suite)
+  twice found the deepest level's whole window edge open at one deep surface (1,024 edges, L3 line x = 29760, heights
+  near -126 child units), 0 once settled. A transient between ops (likely a promote or slide whose partner bake comes
+  in a later op); not found.
 - NS-124 (limit, round 16) The sheet form treats a column as continuing downward as its first record, so a column whose
   first record is air is a bottomless hole: its first (downward) surface is a ceiling whose edges stay open where it
   meets neighbours (open by design: nothing under the ground is drawn). Only the random unit scenes have such columns;

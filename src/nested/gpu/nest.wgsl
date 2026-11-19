@@ -4024,6 +4024,35 @@ fn dirFinish() {
 fn dilate() {
   let L = u.a.w;
   let t = u32(u.e.y);
+  // (round 16, NS-126: the sheet draw's level edges) u.e.z 1: the source slots are level L - 1's (a parent change seen by
+  // the child's window-edge lines), 2: level L + 1's (a child change seen by the parent's rim lines): their union is
+  // taken in the source level's chunks, grown by one, then carried into level L's chunks and clipped to its window
+  if (u.e.z != 0) {
+    let SL = select(L + 1u, L - 1u, u.e.z == 1);
+    let ws = u.lv[SL];
+    let wt = u.lv[L];
+    let k = i32(u.a.x);
+    var a = vec4<i32>(1 << 30, 1 << 30, -(1 << 30), -(1 << 30));
+    for (var i = 0u; i < 3u; i++) {
+      let s = (u32(u.e.x) >> (8u * i)) & 255u;
+      if (s == 255u) { continue; }
+      let nx = i32(args[s * 4u]);
+      let ny = i32(args[s * 4u + 1u]);
+      if (nx <= 0 || ny <= 0 || ws.z == 0 || wt.z == 0) { continue; }
+      let ox = slotW(s, 4u);
+      let oy = slotW(s, 5u);
+      a = vec4<i32>(min(a.x, ox - 1), min(a.y, oy - 1), max(a.z, ox + nx + 1), max(a.w, oy + ny + 1));
+    }
+    var b = a;
+    if (u.e.z == 1) { b = vec4<i32>(a.x * k, a.y * k, a.z * k, a.w * k); } else { b = vec4<i32>(fdiv(a.x, k), fdiv(a.y, k), fdiv(a.z + k - 1, k), fdiv(a.w + k - 1, k)); }
+    b = vec4<i32>(max(b.x, wt.x / 16), max(b.y, wt.y / 16), min(b.z, (wt.x + wt.z) / 16), min(b.w, (wt.y + wt.z) / 16));
+    if (a.z <= a.x || b.z <= b.x || b.w <= b.y) {
+      setSlot(t, vec4<i32>(0), 0, 0, 0, 0);
+      return;
+    }
+    setSlot(t, vec4<i32>(-(1 << 30), -(1 << 30), 1 << 30, 1 << 30), b.x, b.y, b.z - b.x, b.w - b.y);
+    return;
+  }
   let w = u.lv[L];
   var x0 = 1 << 30;
   var y0 = 1 << 30;

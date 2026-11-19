@@ -605,7 +605,7 @@ export class GpuNest {
 
   // ---- the baked draw ---------------------------------------------------------------------------------------------------
   /** bake level L's faces over region slots, their chunks grown by one (a column's walls depend on its neighbours) */
-  private bake(L: number, slots: number[], grow = true, rows?: number[]): void {
+  private bake(L: number, slots: number[], grow = true, rows?: number[], partner = 0): void {
     if (this.bakeOff || (this.bakeSkip >> L) & 1) return;
     // (round 12) two pipelines over the same slot: chunks that touch no rim line, and those that do (each skips the other's)
     const both = (s: number, nrows: number) => {
@@ -644,7 +644,7 @@ export class GpuNest {
       const t = this.bakeNext++;
       const g = slots.slice(i, i + 3);
       while (g.length < 3) g.push(255);
-      this.run('dilate', this.uni(({ a, e }) => ((a[3] = L), e.set([g[0] | (g[1] << 8) | (g[2] << 16), t, 0, 0]))), 1);
+      this.run('dilate', this.uni(({ a, e }) => ((a[3] = L), e.set([g[0] | (g[1] << 8) | (g[2] << 16), t, partner, 0]))), 1);
       both(t, winRows);
     }
   }
@@ -982,6 +982,14 @@ export class GpuNest {
     // the baked draw where live columns changed: the edit on m, its derive, and the restrict into it from m + 1
     // (parents first: a child's items read its parent's table for the rim morph)
     for (let m = 0; m < live; m++) this.bake(m, [m * 4 + 3, m * 4 + 2, ...(m + 1 < live ? [(m + 1) * 4] : [])]);
+    // (round 16, NS-126) the sheet draw's level edges read both levels' columns: each level also baked where its parent
+    // changed (its window-edge lines see the parent's columns outside it) and where its child changed (its rim lines are
+    // the child's lines); chunks whose inputs did not change skip by their hash, rim chunks bake
+    if (this.smooth)
+      for (let m = 0; m < live; m++) {
+        if (m > 0) this.bake(m, [(m - 1) * 4 + 3, (m - 1) * 4 + 2], true, undefined, 1);
+        if (m + 1 < live) this.bake(m, [(m + 1) * 4 + 3, (m + 1) * 4 + 2], true, undefined, 2);
+      }
     this.directory();
     this.mergeFrees();
     this.submit();

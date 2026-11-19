@@ -16,7 +16,8 @@ await run({ name: 'nested-shaft', kind: 'behaviour', size: '960x640', dpr: 1, ec
   let total = 0;
   let cov = 0;
   for (let i = 0; i < runs; i++) {
-    await page.goto(`https://localhost:${port}/nested.html?k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140`, { waitUntil: 'load' });
+    // (round 16: --smooth 1, the sheet draw)
+    await page.goto(`https://localhost:${port}/nested.html?k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140${R.opt('smooth', '0') === '1' ? '&smooth=1' : ''}`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.nested && nested.app.frameCount > 60, { timeout: 120000, polling: 100 });
     await sleep(1500);
     const res = await page.evaluate(async (o) => {
