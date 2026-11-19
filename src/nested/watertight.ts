@@ -19,6 +19,8 @@ export interface EdgeReport {
   degenerate: number;
   /** a few open edges' midpoints (local units) */
   where: [number, number, number][];
+  /** (round 11) the rim lines to this level's live child (rimJunctions) */
+  rim?: { junctions: number; unflagged: number; lines: number; where: string[] };
 }
 
 // (round 8) no edge is exempt: a level's boxes end at each column's own depth with a down cap (nest.wgsl zbOf), so the
@@ -61,6 +63,59 @@ export function manifold(cap: { depth: number; n: number; tris: Float32Array }):
   return { depth: cap.depth, tris, edges: count, open, over, degenerate, where };
 }
 
+/** (round 11, NS-97, test only) the rim lines between each level and its live child (parent corner lines on the child's
+ *  window boundary): on such a line both levels' vertices must be the same set, in the child's units (the parent's
+ *  flagged, capture w 2), so no vertex of one level lies inside a vertical edge of the other (a T-junction across the
+ *  rim) and none of the parent's is left in its own units. Returns per parent level: junctions, unflagged parent vertices
+ *  on rim lines, rim lines seen. */
+export function rimJunctions(caps: { depth: number; tris: Float32Array }[], wins: { gx: number; gy: number; n: number }[], k: number): { depth: number; junctions: number; unflagged: number; lines: number; where: string[] }[] {
+  const out = [];
+  for (const P of caps) {
+    const C = caps.find((c) => c.depth === P.depth + 1);
+    if (!C) continue;
+    const wp = wins[P.depth];
+    const wc = wins[C.depth];
+    const onRim = (x: number, y: number) => x % k === 0 && y % k === 0 && x >= wc.gx && y >= wc.gy && x <= wc.gx + wc.n && y <= wc.gy + wc.n && (x === wc.gx || y === wc.gy || x === wc.gx + wc.n || y === wc.gy + wc.n);
+    // per line, per level: vertex heights and vertical edges
+    const lines = new Map<string, { v: [Set<number>, Set<number>]; e: [[number, number][], [number, number][]] }>();
+    let unflagged = 0;
+    const add = (side: 0 | 1, t: Float32Array, toG: (x: number, y: number) => [number, number]) => {
+      for (let o = 0; o + 12 <= t.length; o += 12) {
+        if (t[o + 3] === 0) continue;
+        const g = [0, 1, 2].map((v) => toG(t[o + v * 4], t[o + v * 4 + 1]));
+        for (let v = 0; v < 3; v++) {
+          if (!onRim(g[v][0], g[v][1])) continue;
+          if (side === 0 && t[o + v * 4 + 3] !== 2) unflagged++;
+          const key = `${g[v][0]},${g[v][1]}`;
+          let l = lines.get(key);
+          if (!l) lines.set(key, (l = { v: [new Set(), new Set()], e: [[], []] }));
+          const z = t[o + v * 4 + 2];
+          l.v[side].add(z);
+          const u = (v + 1) % 3;
+          if (g[u][0] === g[v][0] && g[u][1] === g[v][1]) {
+            const z2 = t[o + u * 4 + 2];
+            l.e[side].push([Math.min(z, z2), Math.max(z, z2)]);
+          }
+        }
+      }
+    };
+    add(0, P.tris, (x, y) => [(x + wp.gx) * k, (y + wp.gy) * k]);
+    add(1, C.tris, (x, y) => [x + wc.gx, y + wc.gy]);
+    let junctions = 0;
+    const where: string[] = [];
+    for (const [key, l] of lines)
+      for (const s of [0, 1] as const)
+        for (const [a, b] of l.e[s])
+          for (const z of l.v[1 - s])
+            if (z > a && z < b) {
+              junctions++;
+              if (where.length < 4) where.push(`L${P.depth + s} edge ${a}..${b} at line ${key} holds L${P.depth + 1 - s}'s vertex ${z}`);
+            }
+    out.push({ depth: P.depth, junctions, unflagged, lines: lines.size, where });
+  }
+  return out;
+}
+
 /** (round 8, test only) every column in view drawn by exactly one level: from the captured faces, each level's caps (the
  *  horizontal triangles, which lie on their own column's square) must belong to columns that level draws now (in its
  *  window, not under its child's footprint: no stale faces after a slide, demote or shrink), and every column it draws
@@ -77,7 +132,9 @@ export function coverage(caps: { depth: number; tris: Float32Array }[], wins: { 
     const capsAt = new Uint16Array(w.n * w.n);
     const t = cap.tris;
     for (let o = 0; o + 12 <= t.length; o += 12) {
-      if (t[o + 3] === 0 || t[o + 2] !== t[o + 6] || t[o + 2] !== t[o + 10]) continue;
+      // (a cap: its corners not all on one x nor all on one y; round 11: a rim vertex's z is in the child's units, so the
+      // three z of a cap touching a rim line differ)
+      if (t[o + 3] === 0 || (t[o] === t[o + 4] && t[o] === t[o + 8]) || (t[o + 1] === t[o + 5] && t[o + 1] === t[o + 9])) continue;
       const x = Math.min(t[o], t[o + 4], t[o + 8]);
       const y = Math.min(t[o + 1], t[o + 5], t[o + 9]);
       const X = w.gx + x;
@@ -97,6 +154,63 @@ export function coverage(caps: { depth: number; tris: Float32Array }[], wins: { 
         }
   }
   return { stale, missing, where };
+}
+
+/** (round 11, NS-97, test only) what the draw places round one pixel: every captured triangle of every level projected
+ *  with that level's view-projection (cam words 32 + m * 24, as draw.wgsl vpOf) in float64, those whose screen triangle
+ *  comes within `tol` px of the pixel's centre, with the signed distance of the centre to each edge (px, positive
+ *  inside), the depth and the vertices (local units). A pinhole between faces that share an edge shows as two triangles
+ *  whose edges pass the centre on the same side within a fraction of a pixel. */
+export function rayDiag(caps: { depth: number; tris: Float32Array }[], cam: Float32Array, px: number, py: number, w: number, h: number, tol = 1.5, kidZ: (L: number, z: number) => number = (_L, z) => z): string[] {
+  // the pixel's ray, as suite.ts groundHoles builds it (50 degree vertical field of view), cast in float64 in each
+  // level's local units from that level's eye (cam words 32 + m * 24 + 16..18); the axes are the same on every level
+  const tn = Math.tan((50 * Math.PI) / 360);
+  const nx = ((px + 0.5) / w) * 2 - 1;
+  const ny = 1 - ((py + 0.5) / h) * 2;
+  const R = [cam[4], cam[5], cam[6]];
+  const U = [cam[8], cam[9], cam[10]];
+  const F = [cam[12], cam[13], cam[14]];
+  const d0 = [0, 1, 2].map((i) => F[i] + R[i] * nx * tn * (w / h) + U[i] * ny * tn);
+  const dl = Math.hypot(d0[0], d0[1], d0[2]);
+  const D = d0.map((v) => v / dl);
+  const sub = (a: number[], b: number[]) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+  const cross = (a: number[], b: number[]) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const hits: { t: number; s: string }[] = [];
+  for (const cap of caps) {
+    const b = 32 + cap.depth * 24;
+    const E = [cam[b + 16], cam[b + 17], cam[b + 18]];
+    const near = cam[b + 19];
+    const t = cap.tris;
+    for (let o = 0; o + 12 <= t.length; o += 12) {
+      if (t[o + 3] === 0) continue;
+      // (a rim vertex, w 2: z in the child's units, brought back to this level's)
+      const P = [0, 1, 2].map((v) => [t[o + v * 4], t[o + v * 4 + 1], t[o + v * 4 + 3] === 2 ? kidZ(cap.depth, t[o + v * 4 + 2]) : t[o + v * 4 + 2]]);
+      const n = cross(sub(P[1], P[0]), sub(P[2], P[0]));
+      const nl = Math.hypot(n[0], n[1], n[2]);
+      if (nl === 0) continue;
+      const dn = dot(n, D);
+      if (Math.abs(dn) < 1e-12 * nl) continue;
+      const tt = dot(n, sub(P[0], E)) / dn;
+      if (tt <= 0) continue;
+      const X = [E[0] + D[0] * tt, E[1] + D[1] * tt, E[2] + D[2] * tt];
+      // signed distance of the hit to each edge inside the triangle's plane, in pixels at that distance
+      const pxSize = (tt * 2 * tn) / h;
+      const ed: number[] = [];
+      for (let e = 0; e < 3; e++) {
+        const a = P[e];
+        const c = P[(e + 1) % 3];
+        const el = sub(c, a);
+        const inward = cross(n, el);
+        ed.push(dot(inward, sub(X, a)) / Math.hypot(inward[0], inward[1], inward[2]) / pxSize);
+      }
+      if (Math.min(...ed) < -tol) continue;
+      const kind = n[2] !== 0 && n[0] === 0 && n[1] === 0 ? 'cap' : 'wall';
+      hits.push({ t: tt / Math.pow(8, cap.depth), s: `L${cap.depth} slot ${o / 12} ${kind} t ${(tt / Math.pow(8, cap.depth)).toFixed(5)} world (near ${near.toExponential(3)} local, t ${tt.toFixed(4)} local) edges px ${ed.map((v) => v.toFixed(4)).join(' ')} lp ${JSON.stringify(P)}` });
+    }
+  }
+  hits.sort((a, b) => a.t - b.t);
+  return hits.map((x) => x.s);
 }
 
 /** the last holePixels call's frame at half resolution, holes magenta */

@@ -15,6 +15,9 @@ struct DrawU {
   // the grid's model matrix (a root grid's rigid frame; one grid with the identity today): level-local -> the frame the
   // camera's per-level view-projection expects
   model: mat4x4<f32>,
+  // (round 11, NS-97) the live child's window (gx0, gy0, n, live): the parent's vertices on its rim lines are placed in
+  // the child's units through the child's view-projection
+  kid: vec4<i32>,
 }
 
 @group(0) @binding(0) var<uniform> d: DrawU;
@@ -44,8 +47,12 @@ fn zOrigW(L: u32) -> f32 {
 }
 /** a level's local point in world units */
 fn worldOf(L: u32, lp: vec3<f32>) -> vec3<f32> {
+  return worldAt(L, d.lvl.xy, lp);
+}
+/** a local point of level L whose window starts at global column o, in world units */
+fn worldAt(L: u32, o: vec2<i32>, lp: vec3<f32>) -> vec3<f32> {
   let s = pow(d.misc.w, f32(L));
-  return vec3<f32>((f32(d.lvl.x) + lp.x) / s, (f32(d.lvl.y) + lp.y) / s, zOrigW(L) + lp.z / s);
+  return vec3<f32>((f32(o.x) + lp.x) / s, (f32(o.y) + lp.y) / s, zOrigW(L) + lp.z / s);
 }
 fn vpOf(L: u32) -> mat4x4<f32> {
   let b = 32u + L * 24u;
@@ -73,9 +80,11 @@ struct Corner {
   lp: vec3<f32>,
   kind: u32,
   mat: u32,
+  /** (round 11, NS-97) a vertex on a rim line of the child: lp.z is in the child's units (nest.wgsl toKid) */
+  kid: bool,
 }
 fn corner(inst: u32, tri: u32, v: u32) -> Corner {
-  var c = Corner(false, vec3<f32>(0.0), 0u, 0u);
+  var c = Corner(false, vec3<f32>(0.0), 0u, 0u, false);
   let w = d.lvl;
   let L = u32(w.w);
   let e = 16u + (L * d.misc2.x + inst) * 2u;
@@ -103,7 +112,31 @@ fn corner(inst: u32, tri: u32, v: u32) -> Corner {
   let X = i32(key & 0xffffu) * 16 + i32(w0 & 15u) + i32(cc & 1u);
   let Y = i32(key >> 16u) * 16 + i32((w0 >> 4u) & 15u) + i32(cc >> 1u);
   c.lp = vec3<f32>(f32(X - w.x), f32(Y - w.y), bitcast<f32>(pgLoad(b + 1u + v)));
+  c.kid = ((w0 >> (25u + v)) & 1u) == 1u;
   return c;
+}
+
+/** where a corner goes on screen. A parent's vertex on a rim line is placed as the child places its own vertex there:
+ *  child-local x, y (whole columns), the stored child-units z, the child's view-projection, by the same expression; then
+ *  scaled by 1 / k (exact: a power of two), which leaves its point on screen bit for bit (clip / w) and makes its w the
+ *  parent's, so the triangle's interpolation is not warped. */
+struct Placed {
+  pos: vec4<f32>,
+  L: u32,
+  lp: vec3<f32>,
+}
+fn placeCorner(c: Corner) -> Placed {
+  var L = u32(d.lvl.w);
+  var p = c.lp;
+  var sc = 1.0;
+  if (c.kid) {
+    let k = i32(d.misc.w);
+    p = vec3<f32>(f32((i32(c.lp.x) + d.lvl.x) * k - d.kid.x), f32((i32(c.lp.y) + d.lvl.y) * k - d.kid.y), c.lp.z);
+    L = L + 1u;
+    // (1 / k from the CPU: exact for k a power of two; a GPU's division need not be)
+    sc = d.want.w;
+  }
+  return Placed(vpOf(L) * (d.model * vec4<f32>(p, 1.0)) * sc, L, p);
 }
 
 @vertex
@@ -113,19 +146,27 @@ fn vs(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VOu
   o.lz = 3e38;
   let c = corner(inst, vv / 3u, vv % 3u);
   if (!c.ok) { return o; }
-  let L = u32(d.lvl.w);
   let n = NRM[c.kind];
-  o.pos = vpOf(L) * (d.model * vec4<f32>(c.lp, 1.0));
+  let pc = placeCorner(c);
+  let L = pc.L;
+  o.pos = pc.pos;
   o.local = c.lp.xy;
   o.nrm = n;
   o.col = matColor(c.mat, n.z);
   // (diagnostics, Renderer.diag) 1: the triangle slot's parity, 2: the face kind
   if (d.misc.x == 1.0) { o.col = select(vec3<f32>(1.0, 0.2, 0.2), vec3<f32>(0.2, 0.4, 1.0), ((vv / 3u) & 1u) == 1u); }
   if (d.misc.x == 2.0) { o.col = abs(n) * 0.8 + select(vec3<f32>(0.0), vec3<f32>(0.2), n.x + n.y + n.z < 0.0); }
-  o.wp = worldOf(L, c.lp);
   o.lz = c.lp.z;
   let eb = 32u + L * 24u;
-  o.dEye = length(c.lp - vec3<f32>(cam[eb + 16u], cam[eb + 17u], cam[eb + 18u]));
+  // (a rim vertex's world point and its distance from the child's frame; the distance back in this level's units)
+  var sk = 1.0;
+  var wo = vec2<i32>(d.lvl.xy);
+  if (c.kid) {
+    sk = d.want.w;
+    wo = d.kid.xy;
+  }
+  o.wp = worldAt(L, wo, pc.lp);
+  o.dEye = length(pc.lp - vec3<f32>(cam[eb + 16u], cam[eb + 17u], cam[eb + 18u])) * sk;
   return o;
 }
 
@@ -140,7 +181,8 @@ fn capture(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroup
   if (inst >= d.misc2.w) { return; }
   for (var v = 0u; v < 3u; v++) {
     let c = corner(inst, i % TPP, v);
-    capOut[i * 3u + v] = vec4<f32>(c.lp, select(0.0, 1.0, c.ok));
+    // (w 2: a rim vertex, z in the child's units; round 11)
+    capOut[i * 3u + v] = vec4<f32>(c.lp, select(0.0, select(1.0, 2.0, c.kid), c.ok));
   }
 }
 

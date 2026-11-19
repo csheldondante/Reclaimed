@@ -290,6 +290,8 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
 - NS-91 (bug?, seen round 9, once) One full selftest of three showed 1 hole pixel in one pit pose ("pit tap 4 level 2",
   eye 67.18, 119.13, 17.99, yaw 3.44, pitch 0.25, three levels; screen 59,378), the same pixel after the cruise: a
   pinhole at a seam or the pit check's ground guess (NS-84). Not investigated; the other two runs 0.
+  Round 11: not reproduced on its own; taken as NS-97's family (a single stable pixel at a pose with three levels) and
+  covered by the same fix; the narrow check (scripts/nested-shaft.mjs) runs the pit poses too.
 - NS-92 (limit, round 10) Thin contacts part at finer levels. A carve can leave a skin whose only hold on its neighbours
   is a z-overlap thinner than the enhance's seeded detail moves a bound (DETAIL_AMP x (2 + 4) child units = 0.06 parent
   units each side); its children can then float as a whole block (scenario i: a 0.03-thick soil skin, 64 child records).
@@ -316,6 +318,41 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   yaw 0.30, pitch 0.25, three levels), stable within the pose. Round 9: 0 there. Same family as NS-91; likely a seam or
   down-cap fan rim pinhole the new shaft-wall geometry reaches, or the pit check's ground guess (NS-84). Next: reproduce
   with scripts/nested-pit.mjs at that pose, dump the faces round the pixel's ray.
+  DONE round 11 (with NS-91, same family): a crack between levels on a rim line. Where a wall crossed a level's rim (the
+  shaft's wall), the parent's part and the child's part met along a vertical rim line whose edges each level split at its
+  own breakpoints and placed through its own view-projection; a pixel centre on the line (the float64 ray cast:
+  0.0015 px from both edges, on opposite sides) fell outside both. Now both levels split a rim line at the union of their
+  breakpoints, in the child's units, and the parent's rim vertices are placed by the child's arithmetic (NESTED_SCALES.md
+  "The box draw", round 11). Reproduced by scripts/nested-shaft.mjs (the narrow hole check, ~1 hole pixel in 1-2 of 3
+  runs before); checked by watertight.ts rimJunctions.
+- NS-98 (limit, round 11) The rim rule (NS-97) unifies the vertical rim lines at parent corner lines only. Horizontal
+  edges along a rim (a parent cap's edge spans k child columns, the child's caps meet it column by column) and the
+  child's own corner lines on its window edge between parent lines are not split by the other level; they can crack only
+  where both levels' heights there are exactly equal (collinear edges of different spans). Not seen. A full fix would
+  split the parent's rim-adjacent faces at every child line along the rim.
+- NS-99 (limit, round 11) The rim vertices' clip position is the child's scaled by 1 / k: bit-identical on screen only
+  for k a power of two (8 in the lab). Another k would need the parent's w left unscaled (perspective warp of the
+  pattern's varyings in those triangles) or a different exact rescale.
+- NS-100 (tests only, round 11) watertight.ts rayDiag (a float64 cast of one pixel's ray against every level's captured
+  triangles, the edges' distances in pixels) and `holeDiag` on the sandbox's test API; pitAndCave's `shaftsOnly`, `diag`
+  and `after` options for the narrow check (scripts/nested-shaft.mjs). The ray's field of view is the suite's 50 degrees,
+  hard-coded as in groundHoles; the world distances assume k = 8.
+- NS-101 (step 1 built, round 11) The smooth draw, step 1 (NESTED_SCALES.md "The smooth draw (agreed 2026-11-19)"): the
+  reference box mesher with vertex identities and the placements identity / collapse / random in src/nested/boxmesh.ts,
+  unit tests in test/unit/nested-boxmesh.test.ts. CPU and tests only. Differences from the GPU bake, none topological:
+  per-column down caps (the GPU's fans of NS-83 have the same rim edges), oriented triangles. Next steps (not started):
+  the DC plane fit from one stored word a record, crease shading, the GPU bake behind a switch, Phong enhancement.
+- NS-103 (perf, round 11) The rim-line rule (NS-97) adds +3.6 to +8 ms of bake to a level-1 carve near a rim (in-page
+  A/B, `nested-perf.mjs --ab 1`; GpuNest.rimOff is the measurement switch, u.e.w in faceBake). The round 10 gate (12 ms
+  carve) was not re-measured on a quiet GPU this round. Next if it matters: bake rim lines in a pass of their own (one
+  thread a rim line computing its breakpoint list once into a scratch page) instead of each wall side walking them.
+- NS-102 (limit, round 11, for the owner) Collapse (T = 2 columns) closes thin features by merging their bounds: a
+  one-column tunnel or bubble under T high is filled (the unit test's 0.6 tunnel and 0.5 bubble: 13 units of air gone),
+  a thin floating layer or a stack of thin layers becomes a zero-volume double sheet (two coincident faces of opposite
+  orientation: closed, but they would z-fight if drawn; 84 triangles in the one-column tunnel scene, 6,946 in the deep
+  thin stack), a pillar under T high spreads into a bump over its 3 x 3 corners (volume kept within 0.5). Tall one-column
+  pillars, pits and tunnels over T keep their boxes. Whether to drop coincident pairs (they cancel as a chain, so dropping
+  both keeps the mesh closed) is a step-2 question; the DC plane fit replaces collapse anyway.
 - NS-95 (hack, round 10, tests only) GpuNest.oldTop (derive's u.e.x) brings back round 9's top rule, and `skip`
   'resClear' the round 9 residuals, for the before stills and counts (scripts/nested-carves.mjs, `?skip=` on
   `?selftest=1&carves=only`, nested-perf.mjs `--old 1`).

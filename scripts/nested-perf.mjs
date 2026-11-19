@@ -62,6 +62,7 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
   await page.evaluate((v) => nested.setView(v), views['tunnel mouth']);
   await sleep(2500);
   if (R.opt('profile', '0') === '1') await page.evaluate(() => (window.__profile = true));
+  if (R.opt('ab', '0') === '1') await page.evaluate(() => (window.__ab = true));
   // (--old 1, round 10: the carves with round 9's rules, derive's top from every neighbour and no residual cleared, to
   // measure what the round 10 rules add to an edit)
   if (R.opt('old', '0') === '1')
@@ -82,6 +83,19 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
       // (an edit that applied a pool grow first copies the pool: not the edit's own cost)
       if (a.nest.stats.grows === g0) out.push(r);
     }
+    // (--ab 1, round 11) the rim-line rule's cost: 16 more carves alternating GpuNest.rimOff 1 / 0 in the same page, the
+    // bake's share (with - without) of each
+    const ab = { off: [], on: [] };
+    if (window.__ab) {
+      for (let i = 0; i < 16; i++) {
+        a.nest.rimOff = i % 2 === 0 ? 1 : 0;
+        const at = { level: 1, x: (h[0] - 1 + i * 0.25) * 8 - w1.gx, y: (h[1] + 0.5) * 8 - w1.gy, z: (h[2] + 0.8 - zo) * 8 };
+        const g0 = a.nest.stats.grows;
+        const r = await nested.benchEdit({ op: 'carve', radius: 0.5, amount: 0, at });
+        if (a.nest.stats.grows === g0) (i % 2 === 0 ? ab.off : ab.on).push(r.withBake - r.without);
+      }
+      a.nest.rimOff = 0;
+    }
     // (--profile 1) where a slow carve's time goes: the same carve spot again with passes left out (results wrong)
     const prof = [];
     if (window.__profile) {
@@ -94,8 +108,12 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
       }
       a.nest.skip.clear();
     }
-    return { out, prof, live: nested.state().live, log: a.opLog.slice(-40) };
+    return { out, prof, ab, live: nested.state().live, log: a.opLog.slice(-40) };
   }, h);
+  if (carve.ab.on.length) {
+    const med = (v) => [...v].sort((x, y) => x - y)[Math.floor(v.length / 2)];
+    console.log(`rim rule A/B, the bakes' share of a carve (ms): off ${carve.ab.off.map((x) => x.toFixed(1)).join(' ')} (median ${med(carve.ab.off).toFixed(1)}); on ${carve.ab.on.map((x) => x.toFixed(1)).join(' ')} (median ${med(carve.ab.on).toFixed(1)})`);
+  }
   if (carve.prof.length) console.log(`profile (with bakes / without): ${carve.prof.join('; ')}`);
   console.log(`carve in order (with, without): ${carve.out.map((o) => `${o.withBake.toFixed(1)}/${o.without.toFixed(1)}`).join(' ')}`);
   const w = carve.out.map((o) => o.withBake).sort((a, b) => a - b);

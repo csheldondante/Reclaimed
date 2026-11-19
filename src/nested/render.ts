@@ -7,7 +7,7 @@ import drawWgsl from './gpu/draw.wgsl?raw';
 import { MAX_LEVELS, SEG_BASE, TCAP, TPP, segWgsl, type GpuNest } from './gpu/nest';
 
 const DU = 256;
-const DU_SIZE = 144;
+const DU_SIZE = 160;
 /** a grid's model matrix: one root grid at the world origin today (identity); another grid would carry its rigid frame */
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
@@ -120,10 +120,14 @@ export class Renderer {
       new Int32Array(st, lv.depth * DU, 4).set([w.gx, w.gy, w.n, lv.depth]);
       const f = new Float32Array(st, lv.depth * DU + 16, 12);
       f.set([this.diag, 0, this.tint ? 1 : 0, this.nest.k], 0);
-      f.set([lv.want, 0, 0, 0], 4);
+      // (want.w: 1 / k, exact on the CPU, for the rim vertices: round 11)
+      f.set([lv.want, 0, 0, 1 / this.nest.k], 4);
       f.set([0.45, -0.35, 0.82, 0], 8);
       new Uint32Array(st, lv.depth * DU + 64, 4).set([this.nest.cap, 0, 0, pages[lv.depth] ?? 0]);
       new Float32Array(st, lv.depth * DU + 80, 16).set(IDENTITY);
+      // (round 11, NS-97) the live child's window: the parent's rim vertices are placed in its units
+      const c = this.nest.wins[lv.depth + 1];
+      new Int32Array(st, lv.depth * DU + 144, 4).set(c ? [c.gx, c.gy, c.n, 1] : [0, 0, 0, 0]);
     }
     this.device.queue.writeBuffer(this.ubuf, 0, st);
   }

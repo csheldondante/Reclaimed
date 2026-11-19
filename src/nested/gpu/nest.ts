@@ -152,6 +152,8 @@ export class GpuNest {
   readonly skip = new Set<string>();
   /** (tests only, round 10) 1: derive's top surface interpolates every neighbour as round 9 did (the before stills) */
   oldTop = 0;
+  /** (measurement only, round 11, NS-103) 1: the bake treats no line as a rim line (round 10's rims, the cost A/B) */
+  rimOff = 0;
   private pipes: Record<string, GPUComputePipeline> = {};
   private enc: GPUCommandEncoder | null = null;
   private pass: GPUComputePassEncoder | null = null;
@@ -570,7 +572,7 @@ export class GpuNest {
   private bake(L: number, slots: number[], grow = true): void {
     if (this.bakeOff) return;
     if (!grow) {
-      for (const s of slots) this.runIndirect('faceBake', this.uni(({ a, r }) => ((a[3] = L), (r[0] = s))), s);
+      for (const s of slots) this.runIndirect('faceBake', this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = s), (e[3] = this.rimOff))), s);
       return;
     }
     const dil = slots.map((s) => {
@@ -579,7 +581,7 @@ export class GpuNest {
       this.run('dilate', this.uni(({ a, e }) => ((a[3] = L), e.set([s, t, 0, 0]))), 1);
       return t;
     });
-    for (const t of dil) this.runIndirect('faceBake', this.uni(({ a, r }) => ((a[3] = L), (r[0] = t))), t);
+    for (const t of dil) this.runIndirect('faceBake', this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = t), (e[3] = this.rimOff))), t);
   }
   /** bake level L's faces over chunk rects given by the CPU (a window's edge ring, a child's footprint grown by a
    *  column: exactly the columns whose neighbours changed between drawn and air), clipped to the window; CPU slots from

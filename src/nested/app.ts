@@ -4,7 +4,7 @@
 // camera's inputs, which levels are wanted where, the buttons and the measurements.
 import { GpuNest, type Op, type Win } from './gpu/nest';
 import { Renderer, type DrawLevel } from './render';
-import { coverage, holePixels, lastImage, manifold } from './watertight';
+import { coverage, holePixels, lastImage, manifold, rayDiag, rimJunctions } from './watertight';
 
 /** a root column, in metres (the info line) */
 const ROOT_COLUMN_M = 3.2;
@@ -743,7 +743,8 @@ export class App {
         this.frozen = true;
         try {
           const caps = await this.render.capture(this.drawList());
-          return caps.map((c) => manifold(c));
+          const rim = rimJunctions(caps, this.nest.wins.slice(0, this.nest.live) as { gx: number; gy: number; n: number }[], this.k);
+          return caps.map((c) => ({ ...manifold(c), rim: rim.find((r) => r.depth === c.depth) }));
         } finally {
           this.frozen = was;
         }
@@ -771,6 +772,19 @@ export class App {
       /** (test only) pixels with no surface in the last frame */
       holes: () => holePixels(this.device, this.render, () => this.render.draw(this.drawList())),
       holeImage: () => lastImage,
+      /** (round 11, NS-97, test only) the triangles of every level round screen pixel (px, py) (watertight.ts rayDiag) */
+      holeDiag: async (px: number, py: number, w: number, h: number, tol?: number) => {
+        const was = this.frozen;
+        this.frozen = true;
+        try {
+          const cam = await this.nest.readCam();
+          const caps = await this.render.capture(this.drawList());
+          const s = await this.nest.readAll();
+          return rayDiag(caps, cam, px, py, w, h, tol, (L, z) => s.zOrigin(L + 1) + z / this.k);
+        } finally {
+          this.frozen = was;
+        }
+      },
       tint: (on: boolean) => {
         this.render.tint = on;
         this.buttons.get('tint')!.classList.toggle('on', on);

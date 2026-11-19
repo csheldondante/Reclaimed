@@ -2000,6 +2000,11 @@ fn bFill(L: u32, cx: i32, cy: i32, li: u32) {
       let i = u32(sIdx(bx + q % 4, by + q / 4));
       if (sN[i] == 0u || !matSolid(sM[i] & 255u) || sB[i] != z) { ok = 0u; }
     }
+    // (round 11, NS-97) no fan where the block touches a rim line (those down-cap vertices go in the child's units, one by
+    // one: a fan has one z): the block's corner lines along its edge
+    for (var e = 0; e <= 4; e++) {
+      if (rimP(L, bx + e, by) || rimP(L, bx + e, by + 4) || rimP(L, bx, by + e) || rimP(L, bx + 4, by + e)) { ok = 0u; }
+    }
     sBlk[li] = ok;
   }
   workgroupBarrier();
@@ -2080,6 +2085,141 @@ fn nextBp(L: u32, CX: i32, CY: i32, z: f32) -> f32 {
   }
   return best;
 }
+// ---- (round 11, NS-97) rim lines: one vertex arithmetic for both levels ---------------------------------------------
+// A rim line is a corner line both a parent and its live child draw faces on: a parent corner line on the boundary of the
+// child's footprint (k child columns apart along the rim). Before, each level split it at its own breakpoints and placed
+// its vertices through its own view-projection, so where a wall crossed the rim (a shaft's wall, coplanar on both
+// sides) the two levels' edges along the line differed in their end points and arithmetic, and a pixel centre exactly on
+// the line could be missed by both (1 hole pixel in the shaft poses). The rule now: on a rim line every face of both
+// levels has a vertex at every breakpoint of both levels' columns round the line, each height in the CHILD's units
+// (toKid, the one conversion both bakes use), and the draw places those vertices through the child's view-projection
+// (draw.wgsl corner: face word bits 25-27 flag them on the parent's faces). So both levels' edges along the line are
+// the same segments with bit-identical end points in clip space (up to the exact factor 1 / k), as within one level.
+/** whether corner line (CX, CY) of level L lies on the boundary of its live child's footprint */
+fn rimP(L: u32, CX: i32, CY: i32) -> bool {
+  // (u.e.w: GpuNest.rimOff, the cost A/B only)
+  if (L + 1u >= 8u || u.lv[L + 1u].w == 0 || u.e.w != 0) { return false; }
+  let c = u.lv[L + 1u];
+  let k = i32(u.a.x);
+  let x = CX * k;
+  let y = CY * k;
+  if (x < c.x || y < c.y || x > c.x + c.z || y > c.y + c.z) { return false; }
+  return x == c.x || y == c.y || x == c.x + c.z || y == c.y + c.z;
+}
+/** whether corner line (cx, cy) of level L (a child) is a rim line: on its window's boundary and a parent corner line */
+fn rimC(L: u32, cx: i32, cy: i32) -> bool {
+  if (L == 0u || u.e.w != 0) { return false; }
+  let w = u.lv[L];
+  let k = i32(u.a.x);
+  if (cx < w.x || cy < w.y || cx > w.x + w.z || cy > w.y + w.z) { return false; }
+  if (cx - fdiv(cx, k) * k != 0 || cy - fdiv(cy, k) * k != 0) { return false; }
+  return cx == w.x || cy == w.y || cx == w.x + w.z || cy == w.y + w.z;
+}
+/** a height of level L in its child's units: the one conversion every rim vertex goes through */
+fn toKid(L: u32, z: f32) -> f32 { return (z - zOrigin(L + 1u)) * f32(u.a.x); }
+/** a drawn column of any level: its record count, from the pages (not the bake's workgroup copy) */
+fn oCount(lv: u32, X: i32, Y: i32) -> u32 {
+  if (!colOn(lv, X, Y)) { return 0u; }
+  var n = 0u;
+  var cz = 0u;
+  loop {
+    let p = pageOf(lv, X >> 4, Y >> 4, cz);
+    if (p >= NOT_LOADED) { break; }
+    let m = pgLoad(p * PW + colIn(X, Y)) & 0xffffu;
+    n += m;
+    if (m < KR) { break; }
+    cz++;
+  }
+  return n;
+}
+fn oTop(lv: u32, X: i32, Y: i32, j: u32) -> f32 {
+  let p = pageOf(lv, X >> 4, Y >> 4, j / KR);
+  if (p >= NOT_LOADED) { return 0.0; }
+  return bitcast<f32>(pgLoad(p * PW + 256u + (colIn(X, Y) * KR + j % KR) * 2u));
+}
+/** the lowest breakpoint above zc on a rim line, child level Lk's corner line (cx, cy), in Lk's units: a record top or a
+ *  bottom of the child's columns round it and of the parent's columns round the same line (converted by toKid). Both
+ *  levels' bakes call it with the same arguments. */
+fn nextBpRim(Lk: u32, cx: i32, cy: i32, zc: f32, ob: vec4<f32>) -> f32 {
+  var best = 3e38;
+  let k = i32(u.a.x);
+  for (var s = 0u; s < 2u; s++) {
+    let lv = Lk - s;
+    var lx = cx;
+    var ly = cy;
+    if (s == 1u) {
+      lx = fdiv(cx, k);
+      ly = fdiv(cy, k);
+    }
+    // (the baked level's own columns through the bake's workgroup copy: the same values, far cheaper)
+    let own = lv == u.a.w;
+    for (var q = 0; q < 4; q++) {
+      let X = lx - 1 + (q & 1);
+      let Y = ly - 1 + (q >> 1);
+      var n = 0u;
+      if (own) { n = bCount(lv, X, Y); } else { n = oCount(lv, X, Y); }
+      if (n == 0u) { continue; }
+      // (the bottom lies under the first top: needed only while zc is under that top; zbG reads many pages)
+      var t0 = 0.0;
+      if (own) { t0 = bitcast<f32>(bRec(lv, X, Y, 0u).x); } else { t0 = oTop(lv, X, Y, 0u); }
+      if (s == 1u) { t0 = toKid(lv, t0); }
+      if (t0 > zc) {
+        var b = ob[q];
+        if (own) {
+          b = bBot(lv, X, Y);
+          if (s == 1u) { b = toKid(lv, b); }
+        }
+        if (b > zc) { best = min(best, b); }
+      }
+      for (var j = 0u; j < n; j++) {
+        var t = 0.0;
+        if (own) { t = bitcast<f32>(bRec(lv, X, Y, j).x); } else { t = oTop(lv, X, Y, j); }
+        if (s == 1u) { t = toKid(lv, t); }
+        if (t > zc) {
+          best = min(best, t);
+          break;
+        }
+      }
+    }
+  }
+  return best;
+}
+/** the bottoms of the OTHER level's four columns round a rim line (as nextBpRim reads them, converted; 3e38 where not
+ *  drawn): zbG reads many pages, so a wall side computes them once, not at every step of its strip */
+fn rimOther(Lk: u32, cx: i32, cy: i32) -> vec4<f32> {
+  var ob = vec4<f32>(3e38);
+  let k = i32(u.a.x);
+  let s = select(1u, 0u, Lk != u.a.w);
+  let lv = Lk - s;
+  var lx = cx;
+  var ly = cy;
+  if (s == 1u) {
+    lx = fdiv(cx, k);
+    ly = fdiv(cy, k);
+  }
+  for (var q = 0; q < 4; q++) {
+    let X = lx - 1 + (q & 1);
+    let Y = ly - 1 + (q >> 1);
+    if (oCount(lv, X, Y) == 0u) { continue; }
+    var b = zbG(lv, X, Y);
+    if (s == 1u) { b = toKid(lv, b); }
+    ob[q] = b;
+  }
+  return ob;
+}
+/** a wall side's corner line: 0 an ordinary line, 1 a rim line of the parent (heights in the child's units, flagged),
+ *  2 a rim line of the child (its own units, split as the rim) */
+fn rimMode(L: u32, CX: i32, CY: i32) -> u32 {
+  if (rimP(L, CX, CY)) { return 1u; }
+  if (rimC(L, CX, CY)) { return 2u; }
+  return 0u;
+}
+/** a side's height back in the level's own units (only to order the two sides' steps) */
+fn sideOwn(L: u32, mode: u32, z: f32) -> f32 {
+  if (mode == 1u) { return zOrigin(L + 1u) + z / f32(u.a.x); }
+  return z;
+}
+
 /** one triangle written at index t of the chunk's faces */
 fn putTri(t: u32, w0: u32, z0: f32, z1: f32, z2: f32) {
   var p = NONE;
@@ -2132,6 +2272,12 @@ fn emitCol(L: u32, X: i32, Y: i32, write: bool, at: u32) -> u32 {
   let lxy = u32(X & 15) | (u32(Y & 15) << 4u);
   let zb = bBot(L, X, Y);
   var t = 0u;
+  // (round 11, NS-97) which of the column's corners lie on a rim line of its child: those vertices are written in the
+  // child's units and flagged (bits 25-27, one a vertex), so both levels place them by the same arithmetic
+  let rp = vec4<bool>(rimP(L, X, Y), rimP(L, X + 1, Y), rimP(L, X, Y + 1), rimP(L, X + 1, Y + 1));
+  let rz = vec4<u32>(select(0u, 1u, rp.x), select(0u, 1u, rp.y), select(0u, 1u, rp.z), select(0u, 1u, rp.w));
+  let f013 = (rz.x << 25u) | (rz.y << 26u) | (rz.w << 27u);
+  let f032 = (rz.x << 25u) | (rz.w << 26u) | (rz.z << 27u);
   // caps: (j, j + 1) for j < n (above the last record: air); and the down cap where the column's box ends (round 8)
   for (var j = 0u; j < n; j++) {
     let r = bRec(L, X, Y, j);
@@ -2143,8 +2289,9 @@ fn emitCol(L: u32, X: i32, Y: i32, write: bool, at: u32) -> u32 {
     let kind = select(5u, 4u, s0);
     let w = lxy | (kind << 8u) | ((select(up, r.y, s0) & 255u) << 11u);
     if (write) {
-      putTri(at + t, w | (0u << 19u) | (1u << 21u) | (3u << 23u), z, z, z);
-      putTri(at + t + 1u, w | (0u << 19u) | (3u << 21u) | (2u << 23u), z, z, z);
+      let zk = select(z, toKid(L, z), any(rp));
+      putTri(at + t, w | (0u << 19u) | (1u << 21u) | (3u << 23u) | f013, select(z, zk, rp.x), select(z, zk, rp.y), select(z, zk, rp.w));
+      putTri(at + t + 1u, w | (0u << 19u) | (3u << 21u) | (2u << 23u) | f032, select(z, zk, rp.x), select(z, zk, rp.w), select(z, zk, rp.z));
     }
     t += 2u;
   }
@@ -2165,8 +2312,9 @@ fn emitCol(L: u32, X: i32, Y: i32, write: bool, at: u32) -> u32 {
     if (s == 0u) {
       let w = lxy | (5u << 8u) | ((r0.y & 255u) << 11u);
       if (write) {
-        putTri(at + t, w | (0u << 19u) | (1u << 21u) | (3u << 23u), zb, zb, zb);
-        putTri(at + t + 1u, w | (0u << 19u) | (3u << 21u) | (2u << 23u), zb, zb, zb);
+        let zk = select(zb, toKid(L, zb), any(rp));
+        putTri(at + t, w | (0u << 19u) | (1u << 21u) | (3u << 23u) | f013, select(zb, zk, rp.x), select(zb, zk, rp.y), select(zb, zk, rp.w));
+        putTri(at + t + 1u, w | (0u << 19u) | (3u << 21u) | (2u << 23u) | f032, select(zb, zk, rp.x), select(zb, zk, rp.w), select(zb, zk, rp.z));
       }
       t += 2u;
     } else if (s != 99u) {
@@ -2207,6 +2355,20 @@ fn emitCol(L: u32, X: i32, Y: i32, write: bool, at: u32) -> u32 {
     let AY = Y + i32(cA >> 1u);
     let BX = X + i32(cB & 1u);
     let BY = Y + i32(cB >> 1u);
+    // (round 11, NS-97) a side on a rim line: split at both levels' breakpoints there, the parent's in the child's units
+    let mA = rimMode(L, AX, AY);
+    let mB = rimMode(L, BX, BY);
+    let fA = select(0u, 1u, mA == 1u);
+    let fB = select(0u, 1u, mB == 1u);
+    // (the other level's bottoms round each rim side, once a wall side; one call site: the compiler inlines it)
+    var obs = array<vec4<f32>, 2>(vec4<f32>(3e38), vec4<f32>(3e38));
+    for (var s2 = 0u; s2 < 2u; s2++) {
+      let m = select(mA, mB, s2 == 1u);
+      if (m == 0u) { continue; }
+      let up = m == 1u;
+      let kk = select(1, i32(u.a.x), up);
+      obs[s2] = rimOther(select(L, L + 1u, up), select(AX, BX, s2 == 1u) * kk, select(AY, BY, s2 == 1u) * kk);
+    }
     var lo = zb;
     for (var j = 0u; j < n; j++) {
       let r = bRec(L, X, Y, j);
@@ -2239,17 +2401,39 @@ fn emitCol(L: u32, X: i32, Y: i32, write: bool, at: u32) -> u32 {
           let p1 = min(a, hi);
           if (p1 > p0) {
             // a strip between the two corner lines from p0 to p1: advance the lower side to its next breakpoint
-            var za = p0;
-            var zc = p0;
+            // (each side in its own units: a parent's rim side in the child's)
+            let eA = select(p1, toKid(L, p1), mA == 1u);
+            let eB = select(p1, toKid(L, p1), mB == 1u);
+            var za = select(p0, toKid(L, p0), mA == 1u);
+            var zc = select(p0, toKid(L, p0), mB == 1u);
             loop {
-              if (za >= p1 && zc >= p1) { break; }
-              let na = min(nextBp(L, AX, AY, za), p1);
-              let nc = min(nextBp(L, BX, BY, zc), p1);
-              if (za < p1 && (na <= nc || zc >= p1)) {
-                if (write) { putTri(at + t, w | (cA << 19u) | (cB << 21u) | (cA << 23u), za, zc, na); }
+              if (za >= eA && zc >= eB) { break; }
+              // (both sides' next breakpoints from one call site of each finder: the D3D compiler inlines every call,
+              // and two copies of the rim finder doubled the bake's time)
+              var nx = array<f32, 2>(0.0, 0.0);
+              for (var s2 = 0u; s2 < 2u; s2++) {
+                let sb = s2 == 1u;
+                let m = select(mA, mB, sb);
+                let lx = select(AX, BX, sb);
+                let ly = select(AY, BY, sb);
+                let z = select(za, zc, sb);
+                var r = 0.0;
+                if (m == 0u) {
+                  r = nextBp(L, lx, ly, z);
+                } else {
+                  let up = m == 1u;
+                  let kk = select(1, i32(u.a.x), up);
+                  r = nextBpRim(select(L, L + 1u, up), lx * kk, ly * kk, z, obs[s2]);
+                }
+                nx[s2] = min(r, select(eA, eB, sb));
+              }
+              let na = nx[0];
+              let nc = nx[1];
+              if (za < eA && (sideOwn(L, mA, na) <= sideOwn(L, mB, nc) || zc >= eB)) {
+                if (write) { putTri(at + t, w | (cA << 19u) | (cB << 21u) | (cA << 23u) | (fA << 25u) | (fB << 26u) | (fA << 27u), za, zc, na); }
                 za = na;
               } else {
-                if (write) { putTri(at + t, w | (cA << 19u) | (cB << 21u) | (cB << 23u), za, zc, nc); }
+                if (write) { putTri(at + t, w | (cA << 19u) | (cB << 21u) | (cB << 23u) | (fA << 25u) | (fB << 26u) | (fB << 27u), za, zc, nc); }
                 zc = nc;
               }
               t++;

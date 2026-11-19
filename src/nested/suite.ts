@@ -24,6 +24,8 @@ interface Api {
   eye(): { x: number; y: number; z: number; dHit: number; dNear: number };
   setView(v: { yaw: number; pitch: number; eye?: [number, number, number]; tx?: number; ty?: number; d?: number }): void;
   manifold(): Promise<EdgeReport[]>;
+  /** (round 11) the triangles round a pixel */
+  holeDiag?(x: number, y: number, w: number, h: number): Promise<string[]>;
   holes(): Promise<{ rows: number[]; h: number; w: number; mask: Uint8Array; at: [number, number][] }>;
   state(): { live: number; stats: Record<string, unknown> };
   cruise?(on: boolean, wps?: number): void;
@@ -34,7 +36,7 @@ interface Api {
 
 /** the hole pixels (no surface) on rays at least 0.1 rad below the horizon, where ground must be, at a pitch (the
  *  screen check's rule, shared by every pose list) */
-export async function groundHoles(api: Api, pitch: number, world?: Ground): Promise<{ n: number; at: [number, number][] }> {
+export async function groundHoles(api: Api, pitch: number, world?: Ground): Promise<{ n: number; at: [number, number][]; w: number; h: number }> {
   const hl = await api.holes();
   const tn = Math.tan((50 * Math.PI) / 360);
   let n = 0;
@@ -44,7 +46,7 @@ export async function groundHoles(api: Api, pitch: number, world?: Ground): Prom
       const dz = -Math.sin(pitch) + ny * tn * Math.cos(pitch);
       if (dz / Math.hypot(1, ny * tn) < -0.1) n += hl.rows[y];
     }
-    return { n, at: hl.at };
+    return { n, at: hl.at, w: hl.w, h: hl.h };
   }
   // (round 8) a ray below the horizon from a high eye can leave the world over its edge (the root's 256 columns): ground
   // is expected only where the ray, marched over the root's tops, goes under them inside the world (or starts under
@@ -82,7 +84,7 @@ export async function groundHoles(api: Api, pitch: number, world?: Ground): Prom
       if (at.length < 8) at.push([x, y]);
     }
   }
-  return { n, at };
+  return { n, at, w, h };
 }
 /** the root's tops for groundHoles (world units = root columns) */
 export interface Ground {
@@ -107,7 +109,7 @@ type View = { yaw: number; pitch: number; eye: [number, number, number] };
  *  size (frac of the nearest distance), followed down along the aim; at each depth the view down, level all round and
  *  back up and out; then a cave carved sideways from the pit's floor and the view back out of its mouth; then the same
  *  poses again after a cruise away and back, and after a zoom out (demotes) and back. Hole pixels below the horizon. */
-export async function pitAndCave(api: Api, opt: { frac?: number; taps?: number; d0?: number; tx?: number; ty?: number; images?: boolean; log?: (s: string) => void } = {}): Promise<{ total: number; lines: string[]; poses: number; worstViews: { name: string; n: number; view: View; img?: unknown }[]; coverage: number }> {
+export async function pitAndCave(api: Api, opt: { frac?: number; taps?: number; d0?: number; tx?: number; ty?: number; images?: boolean; log?: (s: string) => void; shaftsOnly?: boolean; diag?: boolean; after?: boolean } = {}): Promise<{ total: number; lines: string[]; poses: number; worstViews: { name: string; n: number; view: View; img?: unknown }[]; coverage: number }> {
   const a = api.app as unknown as Api['app'] & { brushFrac: number; queue: unknown[]; opLog: { what: string }[]; nest: { live: number; stats: Record<string, number> } };
   const lines: string[] = [];
   const say = (s: string) => {
@@ -134,6 +136,11 @@ export async function pitAndCave(api: Api, opt: { frac?: number; taps?: number; 
         worst = h.n;
         at = h.at;
         img = opt.images && views.length < 6 ? (api as unknown as { holeImage(): unknown }).holeImage() : null;
+      }
+      // (round 11, NS-97) the triangles round the first hole pixel
+      if (opt.diag && h.n > 0 && h.n < 50) {
+        const dg = await (api as unknown as { holeDiag(x: number, y: number, w: number, h: number): Promise<string[]> }).holeDiag(h.at[0][0], h.at[0][1], h.w, h.h);
+        say(`${name}: diag at ${JSON.stringify(h.at[0])} eye ${JSON.stringify(api.eye())}\n  ${dg.join('\n  ')}`);
       }
     }
     poses++;
@@ -174,6 +181,11 @@ export async function pitAndCave(api: Api, opt: { frac?: number; taps?: number; 
     const c = await api.coverage();
     covBad += c.stale + c.missing;
     say(`coverage ${when}: ${api.state().live} levels, stale caps ${c.stale}, columns with no cap ${c.missing}${c.where.length ? ` (${c.where.join('; ')})` : ''}`);
+    // (round 11) the manifold check and the rim lines here too (the shafts cross level rims): counted with coverage
+    const rep = await api.manifold();
+    const bad = rep.reduce((s, r) => s + r.open + (r.rim ? r.rim.junctions + r.rim.unflagged : 0), 0);
+    covBad += bad;
+    say(`manifold ${when}: odd edges ${rep.reduce((s, r) => s + r.open, 0)}, rim ${JSON.stringify(rep.map((r) => r.rim && { lines: r.rim.lines, junctions: r.rim.junctions, unflagged: r.rim.unflagged, where: r.rim.where }))}`);
   };
   const around = async (name: string, eye: [number, number, number], yaw0: number) => {
     ground = await rootGround(api);
@@ -188,7 +200,8 @@ export async function pitAndCave(api: Api, opt: { frac?: number; taps?: number; 
   say(`pit at ${tx}, ${ty}: ${api.state().live} levels open, dNear ${api.eye().dNear.toFixed(3)}; brush ${frac} of the nearest distance`);
   a.brushFrac = frac;
   const pitEyes: [number, number, number][] = [];
-  for (let t = 0; t < taps; t++) {
+  // (round 11: shaftsOnly skips the pit and the cave, for the narrow hole check)
+  for (let t = 0; t < (opt.shaftsOnly ? 0 : taps); t++) {
     api.setView({ yaw: 0.3, pitch: 1.35 });
     await frames(api, 3);
     await tap();
@@ -199,19 +212,22 @@ export async function pitAndCave(api: Api, opt: { frac?: number; taps?: number; 
     await around(`pit tap ${t + 1}`, eye, 0.3);
   }
   // a cave: carve sideways from the pit's floor (level aim), following it in, then look back out of its mouth
-  const floor = pitEyes[pitEyes.length - 1];
-  api.setView({ yaw: 1.2, pitch: 0.05, eye: floor });
-  await frames(api, 30);
-  for (let t = 0; t < 4; t++) {
-    api.setView({ yaw: 1.2, pitch: 0.05 });
-    await frames(api, 3);
-    await tap();
-    await fwd(0.6);
+  let cave: [number, number, number] | null = null;
+  if (!opt.shaftsOnly) {
+    const floor = pitEyes[pitEyes.length - 1];
+    api.setView({ yaw: 1.2, pitch: 0.05, eye: floor });
+    await frames(api, 30);
+    for (let t = 0; t < 4; t++) {
+      api.setView({ yaw: 1.2, pitch: 0.05 });
+      await frames(api, 3);
+      await tap();
+      await fwd(0.6);
+    }
+    cave = here();
+    say(`cave: eye ${cave.map((v) => v.toFixed(3)).join(', ')}, ${api.state().live} levels`);
+    await around('cave', cave, 1.2 + Math.PI);
+    await cover('in the cave');
   }
-  const cave = here();
-  say(`cave: eye ${cave.map((v) => v.toFixed(3)).join(', ')}, ${api.state().live} levels`);
-  await around('cave', cave, 1.2 + Math.PI);
-  await cover('in the cave');
   // shafts: forced carves straight down far below any level's old bottom (the root's was -8), one inside level 1's
   // window and one across its rim; the eye at the bottom, deep in the ground, looks down, level round and out
   const shafts: { name: string; eye: [number, number, number] }[] = [];
@@ -248,6 +264,10 @@ export async function pitAndCave(api: Api, opt: { frac?: number; taps?: number; 
   }
   const shrinks = () => (api.state().stats as Record<string, number>).shrinks ?? 0;
   // after a cruise away and back
+  if (opt.after === false) {
+    say(`shafts: ${total} hole pixels below the horizon over ${poses} poses; coverage faults ${covBad}`);
+    return { total, lines, poses, worstViews: views, coverage: covBad };
+  }
   if (api.cruise) {
     api.setView({ yaw: 0.3, pitch: 1.0, tx, ty, d: 1.5 });
     await frames(api, 120);
@@ -258,7 +278,7 @@ export async function pitAndCave(api: Api, opt: { frac?: number; taps?: number; 
     await cover('after the cruise (slides)');
     say(`after a cruise: pool ${JSON.stringify(api.state().stats)}`);
     for (const [i, e] of pitEyes.entries()) if (i % 3 === 2 || i === pitEyes.length - 1) await around(`post-cruise pit ${i + 1}`, e, 0.3);
-    await around('post-cruise cave', cave, 1.2 + Math.PI);
+    if (cave) await around('post-cruise cave', cave, 1.2 + Math.PI);
     for (const s of shafts) await around(`post-cruise ${s.name}`, [s.eye[0], s.eye[1], -20], 0.3);
   }
   // after a zoom out (demotes), the pool's shrinks, and back
@@ -353,6 +373,8 @@ export async function watertightSuite(api: Api, opt: { manifold?: boolean; scree
     };
     let openAll = 0;
     let covAll = 0;
+    let rimAll = 0;
+    let rimLines = 0;
     for (const [name, v] of Object.entries(eyes)) {
       api.setView(v);
       await frames(api, 3);
@@ -361,15 +383,21 @@ export async function watertightSuite(api: Api, opt: { manifold?: boolean; scree
         const rep = await api.manifold();
         const open = rep.reduce((s, r) => s + r.open, 0);
         openAll += open;
+        // (round 11, NS-97) no T-junction across a rim line, no parent vertex there in its own units
+        const rj = rep.reduce((s, r) => s + (r.rim ? r.rim.junctions + r.rim.unflagged : 0), 0);
+        rimAll += rj;
+        if (rj) say(`rim lines ${name} (${when}): ${JSON.stringify(rep.map((r) => r.rim))}`);
         if (when === 'settled' && api.coverage) {
           const c = await api.coverage();
           covAll += c.stale + c.missing;
           if (c.stale + c.missing) say(`coverage ${name}: stale caps ${c.stale}, columns with no cap ${c.missing} (${c.where.join('; ')})`);
         }
-        say(`manifold ${name} (${when}): ${rep.map((r) => `L${r.depth} ${r.tris} tris, ${r.edges} edges, odd ${r.open}, shared by 4+ ${r.over}, degenerate ${r.degenerate}${r.open ? ` at ${JSON.stringify(r.where.slice(0, 3))}` : ''}`).join('; ')}`);
+        rimLines += rep.reduce((s, r) => s + (r.rim?.lines ?? 0), 0);
+        say(`manifold ${name} (${when}): ${rep.map((r) => `L${r.depth} ${r.tris} tris, ${r.edges} edges, odd ${r.open}, shared by 4+ ${r.over}, degenerate ${r.degenerate}${r.open ? ` at ${JSON.stringify(r.where.slice(0, 3))}` : ''}${r.rim ? `, rim lines ${r.rim.lines} junctions ${r.rim.junctions} unflagged ${r.rim.unflagged}` : ''}`).join('; ')}`);
       }
     }
     checks.push({ name: 'manifold: every edge of every level\'s faces shared by an even number of triangles (no exemption: round 8 has no world bottom), 8 eyes, just after the move and settled', pass: openAll === 0, detail: `${openAll} odd edges in total` });
+    checks.push({ name: 'rim lines (round 11, NS-97): both levels split every rim line at the same heights in the child\'s units (no T-junction across a rim, no parent vertex there in its own units), 8 eyes', pass: rimAll === 0 && rimLines > 0, detail: `${rimAll} faults over ${rimLines} rim lines` });
     if (api.coverage) checks.push({ name: 'coverage: every column in view drawn by exactly one level at the 8 eyes, settled', pass: covAll === 0, detail: `${covAll} faults` });
   }
   let worst = { n: 0, pose: -1, view: null as unknown };

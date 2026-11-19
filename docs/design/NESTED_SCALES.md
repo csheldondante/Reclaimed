@@ -526,6 +526,62 @@ History (rounds 1-4; superseded where the above differs):
   list (an instance a page, 3 x 3,135 vertices; slots past the page's count dropped).
 - **Shading.** Flat face normals; colour by material (soil tops green, soil walls brown), the triplanar pattern in world
   units, the level tint toggle. No smoothed normals (the optional toggle was not built).
+- **Round 11 (NS-97): rim lines, one vertex arithmetic for both levels.** The owner: "Water tight is the more important
+  requirement." The one hole pixel of rounds 9-10 was a pixel centre on a vertical line of a level rim where a wall
+  crossed the rim (a shaft's wall, coplanar on both sides: the parent's part ending at the footprint, the child's part
+  ending at its window edge). Each level was closed by itself, but along that line the two levels' edges had different
+  end points (each level split the line at its own breakpoints) and were placed by different arithmetic (each level's
+  local units through its own view-projection), so a centre exactly on the line could fall outside both: a crack between
+  levels, invisible to the per-level manifold check. Measured with watertight.ts rayDiag (a float64 cast of the pixel's
+  ray against every level's captured triangles): the hit sat 0.0015 px outside the parent's edge and 0.0015 px inside the
+  child's. **The rule now:** a rim line is a parent corner line on the boundary of its live child's footprint (the child
+  draws it too). On a rim line every face of both levels has a vertex at every breakpoint of both levels' columns round
+  the line (nest.wgsl nextBpRim: the child's record tops and bottoms and the parent's, converted), every height there is
+  in the CHILD's units (toKid: (z - z origin) x k, the one conversion both bakes use), and the draw places those vertices
+  through the child's view-projection by the same expression the child uses for its own (draw.wgsl placeCorner; the
+  parent's face word flags them, bits 25-27), then scales the clip position by 1 / k (exact for k a power of two, so its
+  point on screen is bit-identical and its w the parent's). So along a rim line both levels' edges are the same segments
+  with bit-identical end points, as inside one level. The parent's down-cap fans skip blocks that touch a rim line (their
+  one z cannot hold per-vertex units). Each level is still closed by itself (it walls its own window edge and its child's
+  footprint). Checked by watertight.ts rimJunctions (no vertex of one level inside a vertical edge of the other on a rim
+  line, no parent vertex there in its own units) in the suite's manifold eyes and the shaft poses.
+- **Not covered by the rule (BACKLOG NS-98):** horizontal edges along the rim (a parent cap's edge spans k child columns;
+  the child's caps meet it per column) and the child's corner lines on its window edge between parent lines. These can
+  only crack where the two levels' heights there are exactly equal (collinear edges of different spans); not seen.
+
+## The smooth draw (agreed 2026-11-19)
+
+The owner: "we want some sdf based or normal based smoothing though so we can have rims and carves not look stepped but
+also preserve sharp edges." Thin features softening is accepted.
+
+- **Principle.** The smooth mesh is the box mesh with its vertices moved. Topology comes from the box rule (a face only
+  where solid touches air); moving vertices never opens a mesh, so it is closed by construction. No pairing of bounds
+  between columns, no marching cases.
+- **Vertex identity.** Every box vertex sits on a corner line (shared by four columns) at a record bound. A placement maps
+  each vertex identity to a 3D position; faces that share an identity get the identical position. Identities of one corner
+  line that a placement puts at the same point become one vertex, and the triangles left with a repeated vertex are
+  dropped (zero-area triangles from collapsing vertices). This is a simplicial map, which carries a closed surface (every
+  edge used an even number of times, every directed edge cancelled) to a closed surface: no special case can open it.
+  With vertical moves only, a triangle has zero area exactly when two of its vertices merged (caps have three corner
+  lines, wall strips two parallel lines), so "drop zero-area" and "drop repeated vertex" are the same rule.
+- **The identity, as built (round 11, src/nested/boxmesh.ts):** (level, corner line in that level's global columns,
+  bound) where the bound is the exact height value on that line. Not (column, record): two columns round a line with an
+  equal top must give one vertex, or the faces of the line would not share it. The corner line's split rule (every face
+  touching the line has a vertex at every record top and bottom of the four columns round it) makes every face at that
+  height use that one identity.
+- **At a level rim (round 11's answer).** On a rim line (a parent corner line on the child's footprint boundary) the
+  identity is the CHILD's: (child level, child corner line, height in the child's units), for the parent's faces too (the
+  rule of "The box draw", round 11). So the parent's and the child's faces share vertices there, and one placement moves
+  them for both: the two levels' smooth surfaces meet exactly on rim lines. Each level is still closed by itself (it walls
+  its own window edge and its child's footprint), so its smooth mesh is closed by itself. Between rim lines (the child's
+  corner lines on its window edge that are not parent lines, the parent's cap edges spanning k child columns) the two
+  levels do not share vertices: there the smooth rim shows a step (accepted for step 1; each level's rim walls close it).
+- **Placements of step 1** (src/nested/boxmesh.ts): identity (the boxes); collapse (vertices on a corner line joined by
+  vertical edges shorter than T, default 2 columns, merge to their mean height); random (a seeded displacement inside the
+  cell neighbourhood, only to prove the principle). Later steps, not now: placement by a dual-contouring plane fit from one
+  stored word a record (16-bit normal + 16-bit signed distance, written by the terrain function and brushes, interpolated
+  by enhance), the vertex clamped to its cell neighbourhood, crease-angle shading; the GPU bake behind a switch; Phong
+  enhancement.
 
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 

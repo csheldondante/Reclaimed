@@ -26931,3 +26931,68 @@ parent); `?selftest=1` gains three checks from the scenarios.
 | uncapped draw | 5.9-6.5 ms worst view (unchanged) |
 
 NS-91 (job 2) not started.
+
+## 2026-11-19 — Nested scales lab, round 11: the one-pixel hole was a crack between levels on a rim line (NS-97); the smooth draw step 1
+
+**Why.** The owner: "Water tight is the more important requirement." Rounds 9-10 showed 1 hole pixel in some full
+selftests (shaft pose, screen 201, 305; once a pit pose).
+
+**Reproduced narrowly.** scripts/nested-shaft.mjs: the selftest's sandbox, then only the shafts (and optionally the pit,
+cruise and demote poses) of suite.ts pitAndCave, ~1.5 min; the hole came back in about one run of three. On a hole
+pixel, watertight.ts rayDiag casts the pixel's ray in float64 against every level's captured triangles and prints each
+triangle's edge distances in pixels. Two hits: (1) pitch 0.25: the pixel lay 0.0012 px from a level-2 corner line at its
+window edge (x 0, y 24: also a level-1 corner line); (2) pitch 1.45, looking down a shaft: the hit lay on the rim line
+(level-1 117, 130 = level-2 56, 0), 0.0015 px outside level 1's wall triangle and 0.0015 px inside level 2's, the two
+walls coplanar (the shaft's wall crossing the rim), level 1's edge along the line from -352 to 0 (its units), level 2's
+split at 154.98, 221.32, ... (its units). Ruled out: within one level (0 odd edges by exact position; shared vertices
+are bit-identical there), the near plane (3e-2 local, the hits 6-12 world away), the test's ground guess (NS-84: real
+missing pixels inside the shaft).
+
+**Cause (case a and b of the brief, across levels).** Each level is closed by itself, but where a surface continues
+across a rim the two levels' edges along the rim line had different end points (each split the line at its own
+breakpoints: a T-junction the per-level check cannot see) and went through different arithmetic (each level's units and
+view-projection), so a pixel centre on the line could fall outside both.
+
+**Fix, the rule (NESTED_SCALES.md "The box draw", round 11).** A rim line is a parent corner line on the boundary of its
+live child's footprint. On it every face of both levels has a vertex at every breakpoint of both levels' columns round
+the line (nest.wgsl nextBpRim), each height in the child's units (toKid), and the parent's vertices there are flagged
+(face word bits 25-27) and placed by the child's expression and view-projection, scaled by 1 / k (draw.wgsl
+placeCorner). Down-cap fans skip blocks touching a rim line. New check: watertight.ts rimJunctions (no vertex of one level
+inside a vertical edge of the other on a rim line; no parent vertex there in its own units), in the suite's manifold
+eyes (`?selftest=1`: 0 faults over 3,328 rim lines) and in the shaft poses.
+
+**Cost.** First version: the bake's share of a level-1 carve 15 -> 45 ms (in-page A/B, `nested-perf.mjs --ab 1`:
+GpuNest.rimOff alternates the rule off and on, carve by carve). Two copies of the rim finder were inlined and every strip
+step re-derived the other level's bottoms (zbG, many page reads). Now one call site, the baked level's own columns from
+the workgroup copy, the other level's bottoms once a wall side (rimOther) and only below the first top: A/B medians off
+5.9 / on 9.5 ms (a quiet run), off 18.2 / on 26 ms (a loaded run). The desktop was shared with other agents' GPU work this
+round: identical builds measured carve medians 17-79 ms and the uncapped draw 4.3-19 ms run to run, so the round 10 gate
+(12 ms carve, 6.5 ms draw) could not be judged; the one quiet run after the fix (before the bake changes, draw code
+final) had the draw at 4.3-6.55 ms in the seven views, and the carve 23.5 ms median with 6.7 without (round 10: ~12 / 6).
+The rule's own cost is what the A/B shows: +3.6 to +8 ms of bake a carve (NS-103).
+
+**Gate (desktop, 960 x 640).**
+
+| check | result |
+|---|---|
+| narrow hole check (nested-shaft.mjs), shafts (some with cruise and demote), before the fix | 1, 0, 0, 0, 0, 3 hole pixels in six runs |
+| narrow hole check, pit + cave + shafts + cruise + demote, 5 runs, after | 0 hole pixels over 5 x 162 poses, coverage 0 |
+| `?selftest=1` | 36 of 36 twice (the new rim-line check included), and 36 of 36 once more on the final bake code |
+| manifold | 0 odd edges; rim lines 0 faults |
+| unit tests | oracle 15 of 15; box mesh 15 of 15 |
+| carve / draw | not judged (shared GPU, above); the rule's A/B +3.6 to +8 ms a carve |
+
+**Job 2: the smooth draw, step 1** (NESTED_SCALES.md "The smooth draw (agreed 2026-11-19)"; src/nested/boxmesh.ts,
+test/unit/nested-boxmesh.test.ts). The reference box mesher in TypeScript (the GPU's rule: drawn columns, caps, own-depth
+down caps across rims, walls split at every breakpoint of a corner line, the round 11 rim lines), vertices keyed by
+identity (level, corner line, exact height; on a rim line the child's), cross-checked against watertight.ts manifold in
+the capture format. Placements: identity, collapse (T = 2 and 0.5), random (3 seeds). Scenes: gentle, slope, cliff,
+tunnel, tunnel mouth, overhang, one-column pillars and pits, one-column tunnels and a bubble, 30 thin layers a column,
+diagonal saddles, water next to air, random partitions (air, four materials), a child in a parent with different
+surfaces, three levels of random columns. Every placement, every level by itself: 0 odd edges, 0 unbalanced directed
+edges, no repeated vertex, 0 rim junctions. No counter-example: merging identities is a simplicial map, so it cannot open
+the mesh; with vertical moves only, zero area is exactly a repeated vertex. Collapse T = 2: gentle terrain 2.0 top-cap
+triangles a column (4.4 with the down caps and the walls between bottoms), slope and cliff 2.0 on top, boxes 10.2. Thin
+features: a 0.5 pillar spreads into a bump (volume +0.5), a 0.6 one-column tunnel and a 0.5 bubble fill (13 units of air
+gone) and leave coincident face pairs (closed, but they would z-fight), 30 thin layers merge into 6,946 coincident
+triangles; tall pillars, deep pits and tunnels over T keep their boxes (NS-102).
