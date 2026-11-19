@@ -358,7 +358,11 @@ fn sheetVert(inst: u32, t: u32, v0: u32) -> SV {
   let CX = cx * 16 + i32(lx);
   let CY = cy * 16 + i32(ly);
   o.kid = !byZ && rimD(CX, CY);
-  o.lp = vec3<f32>(f32(CX - d.lvl.x), f32(CY - d.lvl.y), bitcast<f32>(pgLoad(cw + 2u)));
+  // (round 22) the slide (the cluster's word 1 after the bake; a rim vertex's word 1 is its top: not a slide), on with
+  // misc2.y (?slide=1, the "Round edges" button); 0 leaves the draw exactly as before
+  var off = vec2<f32>(0.0);
+  if (d.misc2.y != 0u && !o.kid) { off = unpack2x16snorm(pgLoad(cw + 1u)) * 0.5; }
+  o.lp = vec3<f32>(f32(CX - d.lvl.x) + off.x, f32(CY - d.lvl.y) + off.y, bitcast<f32>(pgLoad(cw + 2u)));
   o.nrm = pgLoad(cw + 3u);
   o.ok = true;
   return o;

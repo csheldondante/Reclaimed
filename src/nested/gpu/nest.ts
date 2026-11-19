@@ -5,7 +5,8 @@
 // self-test only, everything (readAll).
 import storeWgsl from './store.wgsl?raw';
 import nestWgsl from './nest.wgsl?raw';
-import { DETAIL_AMP } from '../oracle';
+import { DETAIL_AMP, EDGE_PAD } from '../oracle';
+import { EDGE_MASK } from '../edge';
 
 /** table entries (a power of two; NS-3) */
 export const TCAP = 1 << 15;
@@ -170,6 +171,9 @@ export class GpuNest {
   oldTop = 0;
   /** (measurement only, round 11, NS-103) 1: the bake treats no line as a rim line (round 10's rims, the cost A/B) */
   rimOff = 0;
+  /** (round 22, ?rimtop=1) the sheet pass gives a corner an edge crosses the height of its members outside the edge
+   *  (set before the first bake: it changes baked heights) */
+  rimTop = false;
   private pipes: Record<string, GPUComputePipeline> = {};
   /** the smooth draw (setSmooth): every bake runs the sheet pass instead of the box faces (round 16) */
   smooth = false;
@@ -690,7 +694,8 @@ export class GpuNest {
         // draws between the bands (the draw is submitted after the op). nrows: the slot's rows when the CPU knows them,
         // else the level's window rows (a GPU region lies inside it).
         for (let b = 0; b < nrows; b++) {
-          const off = this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = s), (e[0] = mode), (e[1] = per | (last << 16)), (e[2] = nrows > 1 ? b + 1 : 0), (e[3] = this.rimOff)));
+          // (e.w bit 1, round 22: ?rimtop=1)
+          const off = this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = s), (e[0] = mode), (e[1] = per | (last << 16)), (e[2] = nrows > 1 ? b + 1 : 0), (e[3] = +this.rimOff | (this.rimTop ? 2 : 0))));
           // (measurement only: skip 'sheet' leaves the sheet pass out, the result then wrong)
           if (!this.skip.has('sheet')) this.runIndirect('sheetBake', off, s);
           if (nrows > 1) this.submit(false);
@@ -1109,7 +1114,8 @@ export class GpuNest {
     const per: number[] = [];
     for (let m = 0; m < live; m++) {
       const r = Math.min(MAX_BRUSH, spec.radius * this.k ** m);
-      const c = Math.min(Math.ceil((2 * r + 4 * this.k + 4) / 16 + 2) ** 2, (this.wins[m]!.n / 16) ** 2);
+      // (round 22: + 2 EDGE_PAD, a ball's box grown for the edge samples round its outline)
+      const c = Math.min(Math.ceil((2 * r + 4 * this.k + 4 + 2 * EDGE_PAD) / 16 + 2) ** 2, (this.wins[m]!.n / 16) ** 2);
       per.push(c);
       bound += c;
       most = Math.max(most, c);
@@ -1393,9 +1399,9 @@ export class Snapshot {
     return out;
   }
   /** a column's records as stored (column pages: the partition bottom up, air included): top (f32) and material */
-  records(lid: number, X: number, Y: number): { top: number[]; mat: number[] } {
+  records(lid: number, X: number, Y: number): { top: number[]; mat: number[]; edge: number[] } {
     const c = (Y & 15) * 16 + (X & 15);
-    const out = { top: [] as number[], mat: [] as number[] };
+    const out = { top: [] as number[], mat: [] as number[], edge: [] as number[] };
     for (let cz = 0; ; cz++) {
       const p = this.page(lid, X >> 4, Y >> 4, cz);
       if (p < 0 || p >= 0xfffffffe) break;
@@ -1403,7 +1409,9 @@ export class Snapshot {
       for (let j = 0; j < r; j++) {
         const b = p * PW + 256 + (c * KR + j) * 2;
         out.top.push(this.f[b]);
-        out.mat.push(this.pg[b + 1]);
+        // (round 22: the material word's bits 0-7 the material, 8-29 the edge sample)
+        out.mat.push(this.pg[b + 1] & 0xff);
+        out.edge.push(this.pg[b + 1] & EDGE_MASK);
       }
       if (r < KR) break;
     }
@@ -1411,8 +1419,8 @@ export class Snapshot {
   }
   /** a column's intervals in the solid view (z0, z1 as f32, material): for column pages read from the partition (the
    *  non-air records, each from the top below it), for residual and TMP pages as stored */
-  column(lid: number, X: number, Y: number): { mat: number[]; z0: number[]; z1: number[] } {
-    const out = { mat: [] as number[], z0: [] as number[], z1: [] as number[] };
+  column(lid: number, X: number, Y: number): { mat: number[]; z0: number[]; z1: number[]; edge: number[] } {
+    const out = { mat: [] as number[], z0: [] as number[], z1: [] as number[], edge: [] as number[] };
     if (lid < 8 || (lid >= SNAP_ID && lid < SNAP_ID + 8)) {
       const r = this.records(lid, X, Y);
       for (let j = 0; j < r.mat.length; j++) {
@@ -1420,6 +1428,7 @@ export class Snapshot {
         out.mat.push(r.mat[j]);
         out.z0.push(j === 0 ? -1e30 : r.top[j - 1]);
         out.z1.push(r.top[j]);
+        out.edge.push(r.edge[j]);
       }
       return out;
     }

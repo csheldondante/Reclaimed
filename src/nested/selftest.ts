@@ -1,7 +1,8 @@
 // Nested scales lab: the page self-test (?selftest=1). The same invariants as test/unit/nested-oracle.test.ts, run on
 // the GPU passes over pages, and the GPU compared with the oracle. Readbacks here are test-only.
 import { GpuNest, RES_ID, type Snapshot, type Win } from './gpu/nest';
-import { Level, Nest, OPEN_BOTTOM, toLayers, type Col, type Frame } from './oracle';
+import { Level, Nest, OPEN_BOTTOM, edgeAt, toLayers, type Col, type Frame } from './oracle';
+import { edgeClose } from './edge';
 
 export interface Check {
   name: string;
@@ -28,7 +29,8 @@ function identical(a: Cols, b: Cols): { same: boolean; diff: number } {
   let diff = 0;
   for (const [key, c] of a) {
     const d = b.get(key);
-    if (!d || d.mat.length !== c.mat.length || c.mat.some((v, i) => v !== d.mat[i] || !Object.is(c.z0[i], d.z0[i]) || !Object.is(c.z1[i], d.z1[i]))) diff++;
+    // (round 22: the edge samples too)
+    if (!d || d.mat.length !== c.mat.length || c.mat.some((v, i) => v !== d.mat[i] || edgeAt(c, i) !== edgeAt(d, i) || !Object.is(c.z0[i], d.z0[i]) || !Object.is(c.z1[i], d.z1[i]))) diff++;
   }
   return { same: diff === 0 && a.size === b.size, diff };
 }
@@ -249,6 +251,50 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
     const blob = s.column(1, F1.gx + 50, F1.gy + 50);
     e = against(levelCols(s, 1, F1), o.levels[1]);
     check('add a blob in mid-air: its own interval above an air gap, the GPU matches the oracle', blob.mat.length === 3 && blob.z0[2] - blob.z1[1] > 5 && e >= 0 && e < TOL * 4, `${blob.mat.length} intervals, gap under the blob ${(blob.z0[2] - blob.z1[1]).toFixed(2)}, max diff ${e.toExponential(2)}`);
+    // (round 22) a crater at depth 1 and an add mound at depth 2: the edge samples the brushes write, carried by
+    // restrict to the parents and by enhance to the children, against the oracle's (within 2 quantisation steps: f32
+    // against f64)
+    {
+      const top1 = o.levels[1].at(F1.gx + 20, F1.gy + 44)!;
+      const cz1 = top1.z1[top1.z1.length - 1] + 1;
+      g.edit({ op: 'carve', radius: 6 / K, amount: 0, at: { level: 1, x: 20.3, y: 44.6, z: cz1 } });
+      o.edit(1, 'carve', F1.gx + 20.3, F1.gy + 44.6, 6, 0, cz1);
+      const top2 = o.levels[2].at(F2.gx + 44, F2.gy + 20)!;
+      const cz2 = top2.z1[top2.z1.length - 1] - 1;
+      g.edit({ op: 'add', radius: 5 / K ** 2, amount: 0, at: { level: 2, x: 44.6, y: 20.2, z: cz2 } });
+      o.edit(2, 'add', F2.gx + 44.6, F2.gy + 20.2, 5, 0, cz2);
+      s = await g.readAll();
+      const rows: string[] = [];
+      let eok = true;
+      for (const [m, w] of [
+        [0, { gx: 0, gy: 0, n: ROOT }],
+        [1, F1],
+        [2, F2],
+      ] as const) {
+        let n = 0;
+        let bad = 0;
+        let only = 0;
+        for (const [key, c] of levelCols(s, m, w)) {
+          const [x, y] = key.split(',').map(Number);
+          const r = o.levels[m].at(x, y)!;
+          if (r.mat.length !== c.mat.length) continue;
+          for (let i = 0; i < c.mat.length; i++) {
+            const a = edgeAt(c, i);
+            const b = edgeAt(r, i);
+            if (a || b) n++;
+            if (!edgeClose(a, b)) {
+              bad++;
+              if (!a !== !b) only++;
+            }
+          }
+        }
+        // (a sample at the range's end can fall either side of it in f32 and f64: allowed for 1 in 200)
+        eok &&= n > (m === 0 ? 0 : 20) && bad <= Math.max(2, n / 200);
+        rows.push(`depth ${m}: ${n} samples, ${bad} differ (${only} on one side only)`);
+      }
+      e = Math.max(against(levelCols(s, 1, F1), o.levels[1]), against(levelCols(s, 2, F2), o.levels[2]) / K);
+      check('round edges: a crater and a mound write edge samples; every level matches the oracle (edges within 2 steps)', eok && e >= 0 && e < TOL * 4, `${rows.join('; ')}; max height diff ${e.toExponential(2)}`);
+    }
     const t1 = levelCols(s, 1, F1);
     const t2 = levelCols(s, 2, F2);
     for (let i = 0; i < 20; i++) {

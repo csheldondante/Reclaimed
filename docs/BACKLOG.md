@@ -571,6 +571,37 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   edge. Round 20's textured draw does not change (c): material is still per triangle (NS-150), the fangs are geometry;
   textured, both materials are lit by one model, so the alternation reads as grey stone and tan dirt rather than
   brown and grey (local/nested/r20-root-cliff-far-tex.png against -flat).
+  (Round 22: brush rims, craters and mounds made by carve / add now slide round (NESTED_SCALES.md "As built (round
+  22)"); the generated cliff of (c) is still fangs: the generator writes no edge samples, NS-165.)
+- NS-160 (limit, round 22) The slide's disc is 0.35 columns (the largest that provably never folds a sheet triangle),
+  not the brief's 0.45: a corner farther than that from the edge stops short, so a rim keeps a waviness of up to 0.35
+  columns (0.70 unslid). A larger reach needs a fold-aware bound (per direction, or a shared constraint between
+  neighbouring corners: each line would need its neighbours' slides) or a diagonal chosen per quad (topology change).
+- NS-161 (limit, round 22) Level edges slide nothing (every line with a parent-owned or absent quadrant, so the zipper
+  and both levels' shared vertices): a round rim crossing a child's window edge kinks back to the grid there.
+- NS-162 (limit, round 22) Only up surfaces carry edge samples (an interval's top; a down surface's record is air): a
+  tunnel's ceiling, an overhang's underside and a cave mouth's lip keep their stair-stepped corners.
+- NS-163 (limit, round 22) The sheet bake's normals (sQuadN) use the corners' unslid positions: shading at a slid rim
+  follows the grid quads, not the round outline. Also the material is still per triangle (NS-150).
+- NS-164 (limit, round 22) Restrict's edge: the mean normal and mean line point of the children of the template's
+  interval count that keep one (not a least-squares line); children of another structure contribute nothing. Enhance
+  gives a child only its own parent's line (a line through a neighbouring parent column is not seen).
+- NS-165 (not built, round 22) The terrain generator writes no edge samples, so generated cliffs keep their fangs.
+  Feasibility of deriving a sample in the sheet bake from the heights (no storage): at a corner whose four columns'
+  tops split into a high and a low pair (a step much larger than the slope across the cell), n = the normalised
+  3 x 3 Sobel gradient of the tops, and the line where the height crosses the mid level between the two sides,
+  d = (h_col - h_mid) / |gradient| per member. Cheap (the bake already holds the 18 x 18 tops of the chunk round it) but
+  it needs a threshold to tell a cliff from a slope (a heuristic), and on a ramp of one-column steps it would round
+  every step. A generator that knows its cliffs (a field's iso line) writing samples is the cleaner answer.
+- NS-166 (hack, round 22) Constants without a measurement behind them: EDGE_PAD 3 columns round a ball's box, the
+  sample's range +-2 columns (a column whose line lies farther gets none), the regulariser 0.05. Revisit with stills of
+  large and tiny brushes.
+- NS-167 (limit, round 22) Picking, the camera's ground distance and the brushes still use columns: at a slid rim the
+  drawn surface and the columns differ by up to 0.35 columns horizontally (a click on the drawn rim may hit the column
+  beside it).
+- NS-168 (test, round 22) The reference's random carve test leaves 4 open edges at a child window's corner in one run
+  (oracle chain in f64 read as f32), slide or not (identical with every sample removed); the GPU's own columns and the
+  hand-made scenes close exactly. Not investigated.
 - NS-146 (limit, round 20) The detail bands (detail.wgsl DPt) need k a power of two: a level's s is L x round(log2 k),
   so the integer window origin can be shifted into each band's lattice exactly. Another k shades with wrong band
   scales (no error). Assert it at the page's start, or carry the scale as a float for other k.

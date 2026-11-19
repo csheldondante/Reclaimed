@@ -169,8 +169,10 @@ fn packCol(T: u32, L: u32, X: i32, Y: i32, write: bool) -> u32 {
     if (air) { break; }
     // (an interval reaching no higher than the record below adds nothing)
     if (have && top <= pTop) { continue; }
-    if (have && m == pMat) {
-      pTop = max(pTop, top);
+    // (round 22: one material, the edge of the interval whose top is kept: this one, since top > pTop here)
+    if (have && ((m ^ pMat) & 0xffu) == 0u) {
+      pTop = top;
+      pMat = m;
       continue;
     }
     if (have) {
@@ -213,7 +215,7 @@ fn packPut(L: u32, X: i32, Y: i32, j: u32, top: f32, m: u32, solids: ptr<functio
   pgStore(b, bitcast<u32>(top));
   pgStore(b + 1u, m);
   // (the count word's second half counts the solid view's intervals: every record that is not air)
-  if (m != MAT_AIR) { *solids += 1u; }
+  if (matSolid(m)) { *solids += 1u; }
 }
 @compute @workgroup_size(16, 16)
 fn pack(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
@@ -421,9 +423,31 @@ fn blockSum(lx: u32, ly: u32, k: u32) -> f32 {
 fn sameMats(lid: u32, a: vec2<i32>, b: vec2<i32>, n: u32) -> bool {
   if (colCount(lid, a.x, a.y) != n) { return false; }
   for (var i = 0u; i < n; i++) {
-    if (ivlAt(lid, a.x, a.y, i).m != ivlAt(lid, b.x, b.y, i).m) { return false; }
+    if (((ivlAt(lid, a.x, a.y, i).m ^ ivlAt(lid, b.x, b.y, i).m) & 0xffu) != 0u) { return false; }
   }
   return true;
+}
+
+// ---- (round 22) the edge sample (src/nested/edge.ts, the same expressions) -------------------------------------------
+const TAU: f32 = 6.2831853;
+fn edgeEncA(ang: f32, d: f32) -> u32 {
+  if (!(abs(d) <= 2.0)) { return 0u; }
+  let a = u32(i32(floor(ang / TAU * 512.0 + 0.5)) & 511);
+  let q = u32(clamp(i32(floor(d * 1024.0 + 0.5)) + 2048, 0, 4095));
+  return EDGE_ON | (a << 9u) | (q << 18u);
+}
+fn edgeAng(e: u32) -> f32 { return f32((e >> 9u) & 511u) * (TAU / 512.0); }
+fn edgeD(e: u32) -> f32 { return f32(i32((e >> 18u) & 4095u) - 2048) / 1024.0; }
+/** enhance: a parent's line seen from a child whose centre is `off` from the parent's (parent units) */
+fn edgeToChild(e: u32, off: vec2<f32>, k: f32) -> u32 {
+  if ((e & EDGE_ON) == 0u) { return 0u; }
+  let a = edgeAng(e);
+  return edgeEncA(a, (edgeD(e) - dot(vec2<f32>(cos(a), sin(a)), off)) * k);
+}
+/** derive: interval i's enhanced material word (the parent's material, its edge seen from this child: gA, gB) */
+fn edgeEnh(pm: u32, k: f32) -> u32 {
+  let off = vec2<f32>((f32(gA) + 0.5) / k - 0.5, (f32(gB) + 0.5) / k - 0.5);
+  return (pm & 0xffu) | edgeToChild(pm & EDGE_MASK, off, k);
 }
 fn resAt(L: u32, rec: u32, w: u32) -> f32 {
   let p = pageOf(RES_ID + L, gX >> 4, gY >> 4, rec / K);
@@ -483,28 +507,50 @@ fn layers(lx: u32, ly: u32, li: u32, maxN: u32, mode: u32, write: bool) {
     if (valid) {
       let e1 = z;
       let e0 = z - vals[0];
-      if (gAct && !gWhole && mode == 0u) {
-        // the residual is per bound; the order of the bounds is kept (a no-op when nothing changed under them)
-        let d1 = min(addRes(e1, L, i, 1u), dPrev);
-        let d0 = min(addRes(e0, L, i, 0u), d1);
-        if (write) { setIvl(TMP_ID + L, gX, gY, i, d0, d1, ivlAt(P, gP.x, gP.y, i).m); }
-        dPrev = d0;
-      }
-      if (gAct && !gWhole && mode == 1u) {
-        let lv = ivlAt(L, gX, gY, i);
-        putRes(lv.z0, e0, L, i, 0u, write);
-        putRes(lv.z1, e1, L, i, 1u, write);
+      if (gAct && !gWhole) {
+        // (round 22: one call site for the material word of either mode, for the compile)
+        var lv = Ivl(0.0, 0.0, 0u);
+        if (mode == 1u) { lv = ivlAt(L, gX, gY, i); }
+        let mw = matWord(L, P, i, kf, mode, lv.m);
+        if (mode == 0u) {
+          // the residual is per bound; the order of the bounds is kept (a no-op when nothing changed under them)
+          let d1 = min(addRes(e1, L, i, 1u), dPrev);
+          let d0 = min(addRes(e0, L, i, 0u), d1);
+          if (write) { setIvl(TMP_ID + L, gX, gY, i, d0, d1, mw); }
+          dPrev = d0;
+        } else {
+          putRes(lv.z0, e0, L, i, 0u, write);
+          putResW(lv.z1, e1, L, i, 1u, write, mw);
+        }
       }
       z = e0 - vals[1];
     }
   }
   if (gAct && !gWhole && gN > 0u) {
-    if (mode == 0u && write) { setIvl(TMP_ID + L, gX, gY, 0u, OPEN_BOTTOM, min(addRes(z, L, 0u, 1u), dPrev), ivlAt(P, gP.x, gP.y, 0u).m); }
+    var lv0 = Ivl(0.0, 0.0, 0u);
+    if (mode == 1u) { lv0 = ivlAt(L, gX, gY, 0u); }
+    let mw0 = matWord(L, P, 0u, kf, mode, lv0.m);
+    if (mode == 0u && write) { setIvl(TMP_ID + L, gX, gY, 0u, OPEN_BOTTOM, min(addRes(z, L, 0u, 1u), dPrev), mw0); }
     if (mode == 1u) {
       if (write) { setRes(L, 0u, 0.0, 0.0); }
-      putRes(ivlAt(L, gX, gY, 0u).z1, z, L, 0u, 1u, write);
+      putResW(lv0.z1, z, L, 0u, 1u, write, mw0);
     }
   }
+}
+/** (round 22) interval i's material word. Mode 0 (derive): the parent's material with its edge seen from this child,
+ *  or the residual's override where the residual applies. Mode 1 (residual): the override word of a top whose live edge
+ *  (`live`) differs from the enhanced one (RES_EDGE | the live edge; 0: none). */
+fn matWord(L: u32, P: u32, i: u32, kf: f32, mode: u32, live: u32) -> u32 {
+  let em = edgeEnh(ivlAt(P, gP.x, gP.y, i).m, kf);
+  if (mode == 1u) {
+    let le = live & EDGE_MASK;
+    return select(0u, RES_EDGE | le, le != (em & EDGE_MASK));
+  }
+  if (gResOk) {
+    let w = resWord(L, 2u * i + 1u, 2u);
+    if ((w & RES_EDGE) != 0u) { return (em & 0xffu) | (w & EDGE_MASK); }
+  }
+  return em;
 }
 // The residual of a bound is two floats, record 2i + (0: z0, 1: z1) of the residual column: hi = live - e and
 // lo = live - (e + hi). Then (e + hi) + lo == live exactly (lo is exact: e + hi lies within an ulp of live), so deriving
@@ -549,13 +595,14 @@ fn writeWhole(L: u32, n: u32, need: u32) {
     let z1 = (gS + bitcast<f32>(resWord(L, 2u * i + 1u, 0u))) + bitcast<f32>(resWord(L, 2u * i + 1u, 1u));
     var z0 = OPEN_BOTTOM;
     if (i > 0u) { z0 = (gS + bitcast<f32>(resWord(L, 2u * i, 0u))) + bitcast<f32>(resWord(L, 2u * i, 1u)); }
-    setIvl(TMP_ID + L, gX, gY, i, z0, z1, resWord(L, 2u * i + 1u, 2u) & 0xffffu);
+    // (round 22: the material word with its edge, bits 0-29)
+    setIvl(TMP_ID + L, gX, gY, i, z0, z1, resWord(L, 2u * i + 1u, 2u) & 0x3fffffffu);
   }
 }
 fn sameAcross(la: u32, a: vec2<i32>, lb: u32, b: vec2<i32>, n: u32) -> bool {
   if (colCount(la, a.x, a.y) != n) { return false; }
   for (var i = 0u; i < n; i++) {
-    if (ivlAt(la, a.x, a.y, i).m != ivlAt(lb, b.x, b.y, i).m) { return false; }
+    if (((ivlAt(la, a.x, a.y, i).m ^ ivlAt(lb, b.x, b.y, i).m) & 0xffu) != 0u) { return false; }
   }
   return true;
 }
@@ -755,7 +802,7 @@ fn restrictK(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
           gap += layerVal(L, X * k + a, Y * k + b, 2u * i - 1u);
         }
       }
-      setIvl(T, X, Y, i, z - th * inv, z, ivlAt(L, tpl.x, tpl.y, i).m);
+      setIvl(T, X, Y, i, z - th * inv, z, (ivlAt(L, tpl.x, tpl.y, i).m & 0xffu) | restrictEdge(L, X, Y, k, i, n));
       z = z - th * inv - gap * inv;
     }
   } else {
@@ -789,11 +836,37 @@ fn restrictK(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
       if (tm[mi] > 0.0) { th = (iv.z1 - iv.z0) * (vm[mi] / kk / tm[mi]) / kf; }
       var gap = 0.0;
       if (tair > 0.0) { gap = (iv.z0 - ivlAt(L, tpl.x, tpl.y, i - 1u).z1) * (air / kk / tair) / kf; }
-      setIvl(T, X, Y, i, z - th, z, iv.m);
+      setIvl(T, X, Y, i, z - th, z, (iv.m & 0xffu) | restrictEdge(L, X, Y, k, i, n));
       z = z - th - gap;
     }
   }
-  setIvl(T, X, Y, 0u, OPEN_BOTTOM, z, ivlAt(L, tpl.x, tpl.y, 0u).m);
+  setIvl(T, X, Y, 0u, OPEN_BOTTOM, z, (ivlAt(L, tpl.x, tpl.y, 0u).m & 0xffu) | restrictEdge(L, X, Y, k, 0u, n));
+}
+/** (round 22) restrict: a parent interval's edge from its k x k children of n intervals that keep one, in row order: the
+ *  mean normal (normalised) and the mean of the children's line points projected on it (edge.ts edgeFromChildren) */
+fn restrictEdge(L: u32, X: i32, Y: i32, k: i32, i: u32, n: u32) -> u32 {
+  let kf = f32(k);
+  var s = vec2<f32>(0.0);
+  var pt = vec2<f32>(0.0);
+  var c = 0.0;
+  for (var b = 0; b < k; b++) {
+    for (var a = 0; a < k; a++) {
+      let cX = X * k + a;
+      let cY = Y * k + b;
+      if (colCount(L, cX, cY) != n) { continue; }
+      let e = ivlAt(L, cX, cY, i).m & EDGE_MASK;
+      if ((e & EDGE_ON) == 0u) { continue; }
+      let an = edgeAng(e);
+      let nn = vec2<f32>(cos(an), sin(an));
+      s += nn;
+      pt += vec2<f32>((f32(a) + 0.5) / kf - 0.5, (f32(b) + 0.5) / kf - 0.5) + (edgeD(e) / kf) * nn;
+      c += 1.0;
+    }
+  }
+  let l = length(s);
+  if (c == 0.0 || l < 1e-6) { return 0u; }
+  let nn = s / l;
+  return edgeEncA(atan2(nn.y, nn.x), dot(nn, pt) / c);
 }
 
 // ---- the root: hills and a winding valley (the oracle's rootHeight / makeRoot) -----------------------------------------
@@ -1020,6 +1093,8 @@ fn shrinkCopy(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_i
 // units). Slots: level m role 0 restrict m -> m-1 (parent chunks), 1 residual of m, 2 derive of m, 3 the edit on m.
 const SLOTS: u32 = 32u;
 const MAX_R: f32 = 76.0;
+/** (round 22) the columns round a ball's outline whose edge sample is written (oracle.ts EDGE_PAD) */
+const EDGE_PAD: i32 = 3;
 fn slotOf(m: i32, role: i32) -> u32 { return u32(m * 4 + role); }
 fn chunksOver(c: vec4<i32>, lid: u32) -> vec4<i32> {
   let w = u.lv[lid];
@@ -1083,6 +1158,8 @@ fn plan() {
     let py = f32(w.y) + pc.y;
     box = unionR(box, vec4<i32>(i32(floor(px - r)), i32(floor(py - r)), i32(ceil(px + r)) + 1, i32(ceil(py + r)) + 1));
   }
+  // (round 22) a ball's box grows by EDGE_PAD: the columns round its outline get the edge sample too (oracle.ts edit)
+  if (u.a.z == 4u || u.a.z == 5u) { box += vec4<i32>(-EDGE_PAD, -EDGE_PAD, EDGE_PAD, EDGE_PAD); }
   box = vec4<i32>(max(box.x, w.x), max(box.y, w.y), min(box.z, w.x + w.z), min(box.w, w.y + w.z));
   if (box.x >= box.z || box.y >= box.w) {
     reg[8] = -1;
@@ -1174,7 +1251,8 @@ fn edit(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
   let a = bitcast<f32>(reg[12]) * p;
   if (u.a.z == 1u) {
     let t = ivlAt(T, X, Y, n - 1u);
-    setIvl(T, X, Y, n - 1u, t.z0, t.z1 + a, t.m);
+    // (round 22) a top this moves loses its edge sample (raise and dig make no sharp edge)
+    setIvl(T, X, Y, n - 1u, t.z0, t.z1 + a, t.m & 0xffu);
     return;
   }
   let top = ivlAt(T, X, Y, n - 1u).z1 - a;
@@ -1183,7 +1261,7 @@ fn edit(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     if (t.z1 <= top) { break; }
     var z0 = t.z0;
     if (i > 1u && z0 > top) { z0 = top; }
-    setIvl(T, X, Y, i - 1u, z0, top, t.m);
+    setIvl(T, X, Y, i - 1u, z0, top, t.m & 0xffu);
   }
 }
 
@@ -1246,9 +1324,14 @@ fn ball(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
   let sp = ballSpan(X, Y, L);
   let n = colCount(L, X, Y);
   let hit = inBox(X, Y, box) && sp.z > 0.0 && n > 0u;
+  // (round 22) the column's edge sample (from its original top): written to its topmost interval, also where the ball
+  // does not touch the column (the uncarved side of a rim)
+  var es = 0u;
+  if (inBox(X, Y, box) && n > 0u) { es = ballEdgeAt(X, Y, L, ivlAt(L, X, Y, n - 1u).z1); }
+  let act = hit || es != 0u;
   var nn = n;
   if (hit) { nn = ballCount(L, X, Y, n, sp.x, sp.y, add); }
-  let maxN = wgMax(li, select(0u, max(n, nn), hit));
+  let maxN = wgMax(li, select(0u, max(n, nn), act));
   let need = (maxN + K - 1u) / K;
   // the ball works on the column's solid view copied into TMP (in place there, as before the partition); pack then
   // writes the partition: Carve leaves air over the span, Add soil, and soil touching soil merges
@@ -1256,10 +1339,48 @@ fn ball(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
   if (li == 0u && need > 0u) { ensurePages(T, cx, cy, need, u.d.x); }
   storageBarrier();
   workgroupBarrier();
-  if (!hit) { return; }
+  if (!act) { return; }
   tmpCopy(L, X, Y, n, need);
-  let lo = sp.x;
-  let hi = sp.y;
+  if (hit) { ballCol(L, X, Y, n, nn, need, sp.x, sp.y, add); }
+  // (round 22) the topmost interval's edge: the sample where there is one, else what the ball left (none where it
+  // changed that top: ballCol clears it; the old one where it did not)
+  if (es != 0u) {
+    let t = ivlAt(T, X, Y, nn - 1u);
+    setIvl(T, X, Y, nn - 1u, t.z0, t.z1, (t.m & 0xffu) | es);
+  }
+}
+/** (round 22) the ball's edge sample for column (X, Y) at height zr (its original top): over the stroke's balls (the
+ *  centres ballSpan samples) the largest R_b(zr) - rho_b (R_b: the radius where ball b cuts height zr; rho_b: the
+ *  column's horizontal distance from its centre) with that ball's outward normal; 0 where no ball reaches zr or the line
+ *  is past the range (oracle.ts ballSample, one ball) */
+fn ballEdgeAt(X: i32, Y: i32, L: u32, zr: f32) -> u32 {
+  let w = u.lv[L];
+  let c1 = vec3<f32>(f32(w.x) + bitcast<f32>(reg[9]), f32(w.y) + bitcast<f32>(reg[10]), bitcast<f32>(reg[13]));
+  var c0 = c1;
+  if ((u.r.z & STROKE) != 0u) { c0 = vec3<f32>(f32(w.x) + cam[305], f32(w.y) + cam[306], cam[307]); }
+  let r = bitcast<f32>(reg[11]);
+  let q = vec2<f32>(f32(X) + 0.5, f32(Y) + 0.5);
+  let steps = u32(clamp(ceil(length(c1 - c0) / (0.25 * r)), 0.0, 256.0));
+  var best = -1e30;
+  var nb = vec2<f32>(1.0, 0.0);
+  for (var i = 0u; i <= steps; i++) {
+    let c = mix(c0, c1, select(1.0, f32(i) / f32(steps), steps > 0u));
+    let dz = zr - c.z;
+    if (!(abs(dz) < r)) { continue; }
+    let dv = q - c.xy;
+    let rho = length(dv);
+    let dd = sqrt(r * r - dz * dz) - rho;
+    if (dd > best) {
+      best = dd;
+      nb = select(vec2<f32>(1.0, 0.0), dv / rho, rho > 0.0);
+    }
+  }
+  if (best < -1e29) { return 0u; }
+  return edgeEncA(atan2(nb.y, nb.x), best);
+}
+/** a hit column's ball in TMP (the column copied there): carve or add over [lo, hi], nn intervals after */
+fn ballCol(L: u32, X: i32, Y: i32, n: u32, nn: u32, need: u32, lo: f32, hi: f32, add: bool) {
+  let T = TMP_ID + L;
   if (add) {
     // top down: every interval moves up by the pieces added below it
     var idx = i32(nn) - 1;
@@ -1297,12 +1418,13 @@ fn ball(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         let iv = ivlAt(T, X, Y, u32(i));
         setIvl(T, X, Y, u32(i + 1), iv.z0, iv.z1, iv.m);
       }
-      setIvl(T, X, Y, u32(iF), f.z0, lo, f.m);
+      // (round 22: a top the ball made has no edge; one it left keeps its own)
+      setIvl(T, X, Y, u32(iF), f.z0, lo, f.m & 0xffu);
       setIvl(T, X, Y, u32(iF + 1), hi, f.z1, f.m);
     } else {
       var w = iF;
       if (f.z0 < lo) {
-        setIvl(T, X, Y, u32(w), f.z0, lo, f.m);
+        setIvl(T, X, Y, u32(w), f.z0, lo, f.m & 0xffu);
         w++;
       }
       if (l.z1 > hi) {
@@ -1380,7 +1502,7 @@ fn meltSnap(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id)
   }
   let n = colCount(L, X, Y);
   var h = n;
-  for (var i = 0u; i < n; i++) { h = h * 31u + ivlAt(L, X, Y, i).m; }
+  for (var i = 0u; i < n; i++) { h = h * 31u + (ivlAt(L, X, Y, i).m & 0xffu); }
   scr[b] = topS(L, X, Y, n);
   for (var q = 0u; q < MELT_DEPTH; q++) {
     var th = 0.0;
@@ -1476,7 +1598,8 @@ fn meltApply(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
     let t = ivlAt(L, X, Y, 0u);
     prevOld = t.z1;
     base = t.z1 + dth[n - 1u];
-    setIvl(L, X, Y, 0u, t.z0, base, t.m);
+    // (round 22) a top melt moves loses its edge sample
+    setIvl(L, X, Y, 0u, t.z0, base, select(t.m & 0xffu, t.m, base == t.z1));
     first = 1u;
   } else {
     base = ivlAt(L, X, Y, lo - 1u).z1;
@@ -1488,7 +1611,7 @@ fn meltApply(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
     prevOld = t.z1;
     let th = max(0.0, (t.z1 - t.z0) + dth[n - 1u - i]);
     let z0 = base + gap;
-    setIvl(L, X, Y, i, z0, z0 + th, t.m);
+    setIvl(L, X, Y, i, z0, z0 + th, select(t.m & 0xffu, t.m, z0 + th == t.z1));
     base = z0 + th;
   }
 }
@@ -2121,7 +2244,8 @@ override BAKE_RIM: bool = false;
 override BAKE_SPLIT: bool = true;
 /** whether any corner line of chunk (cx, cy) of level L (lines cx * 16 .. cx * 16 + 16) is a rim line (rimP or rimC) */
 fn chunkRim(L: u32, cx: i32, cy: i32) -> bool {
-  if (u.e.w != 0) { return false; }
+  // (u.e.w bit 0: rimOff; bit 1, round 22: ?rimtop=1 in the sheet pass)
+  if ((u.e.w & 1) != 0) { return false; }
   let a0 = cx * 16;
   let b0 = cy * 16;
   let a1 = a0 + 16;
@@ -2144,7 +2268,7 @@ fn chunkRim(L: u32, cx: i32, cy: i32) -> bool {
 /** whether corner line (CX, CY) of level L lies on the boundary of its live child's footprint */
 fn rimP(L: u32, CX: i32, CY: i32) -> bool {
   // (u.e.w: GpuNest.rimOff, the cost A/B only)
-  if (!BAKE_RIM || L + 1u >= 8u || u.lv[L + 1u].w == 0 || u.e.w != 0) { return false; }
+  if (!BAKE_RIM || L + 1u >= 8u || u.lv[L + 1u].w == 0 || (u.e.w & 1) != 0) { return false; }
   let c = u.lv[L + 1u];
   let k = i32(u.a.x);
   let x = CX * k;
@@ -2154,7 +2278,7 @@ fn rimP(L: u32, CX: i32, CY: i32) -> bool {
 }
 /** whether corner line (cx, cy) of level L (a child) is a rim line: on its window's boundary and a parent corner line */
 fn rimC(L: u32, cx: i32, cy: i32) -> bool {
-  if (!BAKE_RIM || L == 0u || u.e.w != 0) { return false; }
+  if (!BAKE_RIM || L == 0u || (u.e.w & 1) != 0) { return false; }
   let w = u.lv[L];
   let k = i32(u.a.x);
   if (cx < w.x || cy < w.y || cx > w.x + w.z || cy > w.y + w.z) { return false; }
@@ -2540,8 +2664,23 @@ fn sCount(lv: u32, X: i32, Y: i32) -> u32 {
 /** record j: (top bits, material), through the workgroup's copy where it holds it, else the pages */
 fn sRec(lv: u32, X: i32, Y: i32, j: u32) -> vec2<u32> {
   let i = select(-1, sIdx(X, Y), lv == u.a.w);
-  if (i >= 0 && j < SC) { return vec2<u32>(bitcast<u32>(sT[u32(i) * SC + j]), (sM[i] >> (8u * j)) & 255u); }
+  // (round 22: the material word whole, its edge sample from sE)
+  if (i >= 0 && j < SC) { return vec2<u32>(bitcast<u32>(sT[u32(i) * SC + j]), ((sM[i] >> (8u * j)) & 255u) | sE[u32(i) * SC + j]); }
   return oRec(lv, X, Y, j);
+}
+/** (round 22, the sheet pass only) the edge samples (material word bits 8-29) of the records bFillRecs copied */
+var<workgroup> sE: array<u32, 1296>;
+fn sFillEdges(L: u32, li: u32) {
+  for (var q = li; q < 324u; q += 256u) {
+    let X = sOrg.x + i32(q % 18u);
+    let Y = sOrg.y + i32(q / 18u);
+    for (var j = 0u; j < SC; j++) {
+      var e = 0u;
+      if (j < sN[q]) { e = oRec(L, X, Y, j).y & EDGE_MASK; }
+      sE[q * SC + j] = e;
+    }
+  }
+  workgroupBarrier();
 }
 /** the walk's four quadrant columns (q 0-3): who owns it, whether drawn, its record count */
 var<private> wkC: array<LC, 4>;
@@ -2553,6 +2692,10 @@ var<private> wkS: array<bool, 4>;
 var<private> wkT: array<f32, 4>;
 var<private> wkX: array<f32, 4>;
 var<private> wkA: array<bool, 4>;
+/** (round 22) per walk column: the material word of the record before the next one; the edge sample of its pending
+ *  surface (wkX; an up surface's, from its solid record; 0 for a down surface) */
+var<private> wkW: array<u32, 4>;
+var<private> wkE: array<u32, 4>;
 /** the chunk's cache page 0 (the sheet pass; bChunk is the chunk) */
 var<private> sCp: u32;
 /** (round 15, NS-116) the chunk's cluster table pages cz 1..16, looked up once a workgroup (civPages): a long table's
@@ -2647,6 +2790,9 @@ const SPP: u32 = 15u;
 const SPW: u32 = 800u;
 const SZIP: u32 = 768u;
 const SFIX: f32 = 256.0;
+/** (round 22) the slide's regulariser and bound (edge.ts SLIDE_REG, SLIDE_MAX: why 0.35) */
+const SLIDE_REG: f32 = 0.05;
+const SLIDE_MAX: f32 = 0.35;
 var<private> wkOn: array<bool, 4>;
 var<workgroup> wShP: array<u32, 16>;
 var<workgroup> wSA: u32;
@@ -2678,6 +2824,8 @@ fn sPrep(Lw: u32, LX: i32, LY: i32) {
     wkT[q] = 0.0;
     wkX[q] = NO_DEPTH;
     wkA[q] = false;
+    wkW[q] = MAT_AIR;
+    wkE[q] = 0u;
     wkN[q] = 0u;
     if (on) { wkN[q] = sCount(c.lv, c.X, c.Y); }
   }
@@ -2692,31 +2840,40 @@ fn sAdvance(q: u32) {
   var j = wkJ[q];
   var ps = wkS[q];
   var pt = wkT[q];
+  var pw = wkW[q];
   wkX[q] = NO_DEPTH;
+  wkE[q] = 0u;
   loop {
     if (j > n) { break; }
     var s = false;
     var t = 0.0;
+    var w = MAT_AIR;
     if (j < n) {
       let r = sRec(c.lv, c.X, c.Y, j);
-      s = matSolid(r.y);
+      w = r.y;
+      s = matSolid(w);
       t = bitcast<f32>(r.x);
       if (c.s == 1u) { t = toKid(c.lv, t); }
     }
     if (j == 0u) { wkA[q] = s; }
     let at = pt;
+    let aw = pw;
     let surf = j > 0u && s != ps;
     ps = s;
     pt = t;
+    pw = w;
     j++;
     if (surf) {
       wkX[q] = at;
+      // (round 22: an up surface's edge sample is its solid record's)
+      wkE[q] = select(0u, aw & EDGE_MASK, matSolid(aw));
       break;
     }
   }
   wkJ[q] = j;
   wkS[q] = ps;
   wkT[q] = pt;
+  wkW[q] = pw;
 }
 fn sFix(z: f32) -> i32 { return i32(floor(z * SFIX)); }
 /** cluster i of the chunk's table: its first word */
@@ -2737,6 +2894,19 @@ fn sWalk(first: u32) -> u32 {
   var b = -NO_DEPTH;
   var sum = 0;
   var n = 0u;
+  // (round 22) the slide (edge.ts slideOf; boxmesh.ts sheetMesh): only on a line whose four quadrants are the walked
+  // level's own drawn columns. Per cluster: the normal equations of its members' edge lines (height, then quadrant
+  // order), how many members lie inside / outside the edge, and (?rimtop=1) the outside members' heights
+  var slide = true;
+  for (var q = 0u; q < 4u; q++) { slide = slide && wkOn[q] && wkC[q].s == 0u; }
+  var axx = 0.0;
+  var axy = 0.0;
+  var ayy = 0.0;
+  var bv = vec2<f32>(0.0);
+  var pos = 0u;
+  var neg = 0u;
+  var oSum = 0;
+  var oN = 0u;
   // (each quadrant's first surface found first; then each one whose surface was consumed, one a turn: one call site)
   var pend = 15u;
   loop {
@@ -2768,21 +2938,63 @@ fn sWalk(first: u32) -> u32 {
     } else {
       if (n > 0u) {
         let o = scl(first + cnt);
+        var zc = f32(sum) / f32(n * 256u);
+        // (round 22) the slide: the least-squares point of the members' lines plus SLIDE_REG |p|^2, in a disc of
+        // SLIDE_MAX, where the edge crosses the corner's cell (members inside and outside); kept in word 3 until step 3
+        // moves it to word 1 (pack2x16snorm of p / 0.5)
+        var ow = 0u;
+        if (pos > 0u && neg > 0u) {
+          let ma = axx + SLIDE_REG;
+          let mc = ayy + SLIDE_REG;
+          let det = ma * mc - axy * axy;
+          var p = vec2<f32>(mc * bv.x - axy * bv.y, ma * bv.y - axy * bv.x) / det;
+          let pl = length(p);
+          if (pl > SLIDE_MAX) { p *= SLIDE_MAX / pl; }
+          ow = pack2x16snorm(p / 0.5);
+          if ((u.e.w & 2) != 0 && oN > 0u) { zc = f32(oSum) / f32(oN * 256u); }
+        }
         pgStore(o, bitcast<u32>(a));
         pgStore(o + 1u, bitcast<u32>(b));
-        pgStore(o + 2u, bitcast<u32>(f32(sum) / f32(n * 256u)));
-        pgStore(o + 3u, 0u);
+        pgStore(o + 2u, bitcast<u32>(zc));
+        pgStore(o + 3u, ow);
         cnt++;
       }
       if (nx >= NO_DEPTH) { break; }
       a = nx;
       sum = sFix(nx);
       n = 1u;
+      axx = 0.0;
+      axy = 0.0;
+      ayy = 0.0;
+      bv = vec2<f32>(0.0);
+      pos = 0u;
+      neg = 0u;
+      oSum = 0;
+      oN = 0u;
     }
     b = nx;
     // (the breakpoint consumed: each quadrant whose surface it is changes state there and moves on)
     for (var q = 0u; q < 4u; q++) {
       if (wkX[q] == nx) {
+        // (round 22) its edge sample joins the cluster's
+        let e = wkE[q];
+        if (slide && e != 0u) {
+          let an = edgeAng(e);
+          let nn = vec2<f32>(cos(an), sin(an));
+          let dd = edgeD(e);
+          let ev = dd + dot(nn, vec2<f32>(-0.5 + f32(q & 1u), -0.5 + f32(q >> 1u)));
+          axx += nn.x * nn.x;
+          axy += nn.x * nn.y;
+          ayy += nn.y * nn.y;
+          bv += nn * ev;
+          if (dd > 0.0) {
+            pos++;
+          } else {
+            neg++;
+            oSum += sFix(nx);
+            oN++;
+          }
+        }
         wkA[q] = !wkA[q];
         pend |= 1u << q;
       }
@@ -2915,6 +3127,7 @@ fn sheetBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
   bOrg = vec2<i32>(cx - 1, cy - 1);
   bChunk = vec2<i32>(cx, cy);
   bFillRecs(L, cx, cy, li);
+  sFillEdges(L, li);
   sCp = cp;
   let base = cp * PW;
   // (round 14's skip, the same hash: the chunk's 20 x 20 columns unchanged and off every rim: nothing to do)
@@ -2928,7 +3141,11 @@ fn sheetBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
     var a = ((q + 1u) * 0x9e3779b1u) ^ (n * 0x85ebca6bu) ^ (on * 0xc2b2ae35u);
     var b = ((q + 7u) * 0x27d4eb2du) ^ (n * 0x165667b1u) ^ (on * 0x7feb352du);
     for (var j = 0u; j < n; j++) {
-      let r = bRec(L, X, Y, j);
+      // (round 22: the material word with its edge sample, so an edge-only change bakes; bRec's copy holds the material
+      // only, sE the edges of the records it holds, the pages the rest)
+      var r = bRec(L, X, Y, j);
+      let qi = sIdx(X, Y);
+      if (qi >= 0 && j < SC) { r.y |= sE[u32(qi) * SC + j]; }
       a = (a ^ r.x ^ (r.y << 24u)) * 0x2c1b3c6du;
       a ^= a >> 15u;
       b = (b ^ (r.x * 0x9e3779b1u) ^ r.y) * 0x297a2d39u;
@@ -3112,6 +3329,9 @@ fn sheetBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
       }
       var wd = 0u;
       if (dot(nsum, nsum) > 0.0) { wd = octEnc(normalize(nsum)); }
+      // (round 22) the slide the walk kept in word 3 goes to word 1 (the cluster's top: not read after this step, and
+      // not by the draw); the normal takes word 3. Rim lines keep both as the walk wrote them (no slide there).
+      pgStore(cb + 1u, pgLoad(cb + 3u));
       pgStore(cb + 3u, wd);
     }
   }

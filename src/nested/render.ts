@@ -118,6 +118,8 @@ export class Renderer {
   /** (round 20) the textured draw wanted (?tex=1, default; the "Textured" button). Drawn once its pipelines are made;
    *  the flat draw meanwhile */
   tex = true;
+  /** (round 22) ?slide=0|1, the "Round edges" button: the sheets' vertices slide sideways onto the edge samples' lines */
+  slide = true;
   /** (round 20) ?bands=split: only the bands finer than 2 columns of the drawn level; else every band (the default) */
   bandsSplit = false;
   /** (round 20) ?texbands=N: the textured draw's band window (N + 1 band noises a pixel at most); 0 its default (6) */
@@ -253,7 +255,8 @@ export class Renderer {
       // (round 20: the textured draw's sun is lower, about 38 degrees up, so the relief reads without shadows; the flat
       // draw keeps its own)
       f.set([...(this.texDrawn ? [0.55, -0.45, 0.62] : [0.45, -0.35, 0.82]), Math.cos((this.crease * Math.PI) / 180)], 8);
-      new Uint32Array(st, lv.depth * DU + 64, 4).set([this.nest.cap, 0, 0, pages[lv.depth] ?? 0]);
+      // (misc2.y, round 22: the sheets' slide, ?slide= / "Round edges")
+      new Uint32Array(st, lv.depth * DU + 64, 4).set([this.nest.cap, this.slide ? 1 : 0, 0, pages[lv.depth] ?? 0]);
       new Float32Array(st, lv.depth * DU + 80, 16).set(IDENTITY);
       // (round 11, NS-97) the live child's window: the parent's rim vertices are placed in its units
       const c = this.nest.wins[lv.depth + 1];

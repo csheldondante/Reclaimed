@@ -145,6 +145,10 @@ export class App {
     this.wantSmooth = q.get('smooth') === '1';
     // (round 20) the textured draw, default on (?tex=0 the flat shading of rounds 6-19); ?bands=split the per-level cut-off
     this.render.tex = q.get('tex') !== '0';
+    // (round 22) ?slide=0|1 the sheets' slide onto carved edges (default per the round's gate); ?rimtop=1 a rim corner at
+    // the uncarved side's height (a bake option: set before the first bake)
+    this.render.slide = q.get('slide') !== '0';
+    this.nest.rimTop = q.get('rimtop') === '1';
     this.render.bandsSplit = q.get('bands') === 'split';
     if (q.has('texbands')) this.render.texBands = Number(q.get('texbands'));
     // (round 21) the forest canopy from afar: ?canopy=0 off; ?canopyfade= its crossover footprint (world units a pixel)
@@ -246,6 +250,12 @@ export class App {
       this.buttons.get('tex')!.classList.toggle('on', this.render.tex);
     });
     this.buttons.get('tex')!.classList.toggle('on', this.render.tex);
+    // (round 22) the sheets' vertices slid onto the carved edges (draw only: the bake keeps the slide either way)
+    add('slide', 'Round edges', () => {
+      this.render.slide = !this.render.slide;
+      this.buttons.get('slide')!.classList.toggle('on', this.render.slide);
+    });
+    this.buttons.get('slide')!.classList.toggle('on', this.render.slide);
     this.setMode(this.mode);
     const c = this.canvas;
     c.addEventListener('pointerdown', (e) => {
@@ -989,6 +999,12 @@ export class App {
       canopy: async (on: boolean, fade?: number) => {
         this.render.canopy = on;
         if (fade !== undefined) this.render.canopyFade = fade;
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      },
+      /** (round 22) the sheets' slide on or off (draw only, no rebake); resolves after two frames */
+      slide: async (on: boolean) => {
+        this.render.slide = on;
+        this.buttons.get('slide')?.classList.toggle('on', on);
         await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       },
     };

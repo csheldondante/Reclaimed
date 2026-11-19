@@ -1215,6 +1215,65 @@ materials); geometry, nest.wgsl, derive and the flat path untouched (flat check:
 - *Stills* (local/nested/r21-<pose>-canopy|grass.png, scripts/nested-r21-stills.mjs): far (332 m up), low (across
   hills to the horizon), hillside (round 20's overview), mid (the crossover on a slope), closeup (round 20's).
 
+**As built (round 22; current state): round edges, the sheets' slide** (the owner: "If you can fix the rim artifacts
+first as they are distracting. I really want the look of something like dual contouring but without the cost"; "I
+thought we were going to displace vertices horizontally within their cell too to make rims read as round?"; "I like a
+hard crease at a rim"). The rim teeth came from the sheet vertices sitting on lattice corners: a carved circle is a
+staircase of cells, each corner between a carved and an uncarved cell collapsing its step to one vertex at the mean.
+- *The edge sample (src/nested/edge.ts; store.wgsl EDGE_MASK).* A record's material word has spare bits (materials use
+  bits 0-7). Bits 8-29 hold its top's edge sample: bit 8 on, bits 9-17 the angle of the edge line's horizontal unit
+  normal n (512 steps a turn), bits 18-29 the signed distance d from the column's centre to the line along n (4096 steps
+  over [-2, 2) columns of that level). n points out of the brush, so d > 0 inside the brush's outline. 0 is "none", the
+  default everywhere: no record, page, memory or generator change. Bit 30 is RES_EDGE in a residual record, bit 31 the
+  residual's WHOLE flag. Every material comparison masks 0xff (matSolid, sameMats, sameAcross, pack's merge, melt's
+  structure hash); the draw already used `& 255`. Per record, any material (air records never carry one: pack writes
+  air as MAT_AIR). Only UP surfaces carry samples (an interval's top in the solid view): a down surface's record is air.
+  The CPU keeps the field in parallel arrays (Part.edge, Col.edge); Snapshot.records / column split the word.
+- *Brushes write it (nest.wgsl ball, ballEdgeAt; oracle.ts edit, ballSample, ballEdge).* A carve or add grows its box by
+  EDGE_PAD = 3 columns (plan; the CPU's reserve bound too). For every column of the box with records: the reference
+  height is its ORIGINAL top (before the brush), the circle is where the sphere cuts that height (for a carve's rim the
+  circle where the sphere cuts the original surface; a stroke takes the largest R_b - rho_b over its sampled balls and
+  that ball's normal), the sample its tangent line; written to the column's topmost interval when |d| <= 2, whether
+  or not the ball touched the column (the uncarved side of a rim gets it on its existing top, height unchanged). A top
+  the ball made (a carve's floor, an add's soil) has none unless that sample is written; a top it left keeps its own.
+  Raise, dig and melt clear the sample of every top they move (they make no sharp edge). The generator writes none.
+- *Enhance and restrict (nest.wgsl edgeEnh / matWord in derive, restrictEdge; oracle.ts enhanceBlock, restrictCell).*
+  An edge is a straight line. Child from parent: d_child = (d_parent - dot(n, childCentre - parentCentre)) * k, same n,
+  none past the range. Parent from children: of the children with the template's interval count that keep one (row
+  order), the mean normal (normalised) and the mean of their line points (centre + d n, parent units) projected on it
+  (not a least-squares line). The residual: derive mode 1 stores, in word 2 of a top's residual record (2i + 1), RES_EDGE
+  | the live edge where the live edge differs from enhance(parent)'s (so a column whose only difference is its edge gets
+  a residual and a page); mode 0 takes it where the residual applies (gResOk), else the enhanced edge; a whole-column
+  residual keeps the material word with its edge (word 2 & 0x3fffffff). So the edited level's own samples are exact
+  after an edit and demote/promote (bit-identical in the self-test), and resClear's rule is unchanged (a finer level
+  under a ball is enhance(parent) again, its edges included). The sheet hash includes the edges (an edge-only change
+  re-bakes).
+- *The slide (nest.wgsl sWalk; boxmesh.ts sheetMesh; edge.ts slideOf).* On a line whose four quadrants are the walked
+  level's own drawn columns, each cluster's members (the owners' surfaces it holds, in the walk's order: height, then
+  quadrant, i.e. absolute column position) bring their samples. Where some member's centre is inside the edge (d > 0)
+  and some outside (the edge crosses the corner's cell), the vertex moves to p minimising sum (dot(n_i, p - (c_i + d_i
+  n_i)))^2 + 0.05 |p|^2 (c_i the member's centre from the corner), clamped to a disc of 0.35 columns; else 0. The same
+  inputs in the same order on every chunk that walks the line, so a shared corner gets the same bits everywhere. Stored
+  in the cluster's word 1 (its `top`, read by no one after the bake's normal step: the walk keeps the slide in word 3,
+  step 3 moves it to word 1 and writes the normal to word 3), pack2x16snorm(p / 0.5). The draw (vsSheet / sheetVert)
+  adds it to the vertex's x, y when misc2.y is on and the vertex is not a rim vertex. Topology and identities are
+  unchanged, so closure is unchanged by construction; the box draw is untouched.
+- *Departure: the disc is 0.35, not 0.45.* A sheet triangle is half a unit square; its smallest altitude is 1/sqrt(2);
+  each vertex moving at most rho moves a vertex's signed distance to its opposite side by at most 2 rho, so rho < 0.354
+  never folds a triangle. At 0.45 the random carve test folded 8 triangles in its first run (diagonal edges, two
+  corners' lines in conflict). Cost: a corner more than 0.35 from the edge stops short (on a radius 7.2 carve the
+  farthest rim vertex is 0.35 columns off the circle, 0.70 unslid).
+- *Level edges.* A line with a quadrant owned by the parent (a child's window edge, so every rim line and every zipper
+  vertex) or by nobody (the root window's edge) slides nothing. The kink this leaves where a rounded rim crosses a level
+  edge is a limit (NS-161).
+- *Height at an edge corner, `?rimtop=0|1`.* 0 (default): the cluster's usual mean (a chamfer one column wide each side
+  of the round rim line). 1: where the edge crosses the corner's cell, the mean of the members outside the edge (d <=
+  0: the uncarved side of a carve; the ground round an add's foot), so the ground runs flat to a crisp round rim and the
+  wall drops inside it (the owner's hard crease). A bake option (GpuNest.rimTop, set before the first bake; e.w bit 1).
+- *Toggle.* `?slide=0|1` (default 1) and the "Round edges" button: draw only (the bake always stores the slide), so the
+  switch is instant; with it off the sheets are drawn exactly as before (the offset is +0.0). Picking, the camera's
+  ground distance and the brushes still use columns.
+
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

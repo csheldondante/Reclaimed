@@ -9,6 +9,7 @@ import { Renderer } from './render';
 // its child; the union of the levels closed except along the root window's edge.)
 import { sheetMesh, type MeshScene } from './boxmesh';
 import { manifold, unionClosure } from './watertight';
+import { edgeDec } from './edge';
 
 export interface RefResult {
   name: string;
@@ -61,6 +62,7 @@ export async function smoothAgainstReference(device: GPUDevice, log: (s: string)
   const s = await g.readAll();
   const scene: MeshScene = {
     k: K,
+    rimTop: g.rimTop,
     levels: [0, 1, 2].map((L) => {
       const w = g.wins[L]!;
       const parts = [];
@@ -70,6 +72,11 @@ export async function smoothAgainstReference(device: GPUDevice, log: (s: string)
   };
   const sm = sheetMesh(scene);
   const out: RefResult[] = [];
+  // (round 22) the reference's slid vertices (the carves and the add write edge samples; the GPU must slide the same)
+  let slid = 0;
+  for (const l of sm.lines.values()) for (const c of l.clusters) if (c.ox || c.oy) slid++;
+  log(`slid vertices in the reference: ${slid}`);
+  out.push({ name: 'smooth: the carves and the add slid some vertices (round edges; the triangles below compare them)', pass: slid > 0, detail: `${slid} slid` });
   const fx = (v: number) => Math.fround(v).toString();
   const bottom = (_z: number[]) => false;
   for (const cap of caps) {
@@ -96,8 +103,10 @@ export async function smoothAgainstReference(device: GPUDevice, log: (s: string)
       add(
         tri.v.map((vk) => {
           const [lv, cx, cy, ci] = vk.split(':').map(Number);
-          const z = sm.lines.get(`${lv}:${cx}:${cy}`)!.clusters[ci].z;
-          return lv !== L ? ([cx / K - w.gx, cy / K - w.gy, z, true] as [number, number, number, boolean]) : ([cx - w.gx, cy - w.gy, z, false] as [number, number, number, boolean]);
+          const cl = sm.lines.get(`${lv}:${cx}:${cy}`)!.clusters[ci];
+          const z = cl.z;
+          // (round 22: plus the slide; a rim vertex, in the child's units, never slides)
+          return lv !== L ? ([cx / K - w.gx, cy / K - w.gy, z, true] as [number, number, number, boolean]) : ([cx - w.gx + cl.ox, cy - w.gy + cl.oy, z, false] as [number, number, number, boolean]);
         }),
         -1,
       );
@@ -116,7 +125,10 @@ export async function smoothAgainstReference(device: GPUDevice, log: (s: string)
         .sort((a, b) => a.x - b.x || a.y - b.y || +a.k - +b.k || a.z - b.z);
     const left: [V[][], V[][]] = [[], []];
     for (const [k, c] of count) for (let i = 0; i < Math.abs(c); i++) left[c > 0 ? 0 : 1].push(parse(k));
-    const close = (a: V[], b: V[]) => a.every((v, i) => v.x === b[i].x && v.y === b[i].y && v.k === b[i].k && Math.abs(v.z - b[i].z) <= 1e-5 * Math.max(1, Math.abs(v.z)));
+    // (round 22: x and y too, within 1e-4 columns: the slide is f32 and packed as 16-bit snorm on the GPU, f64 in the
+    // reference; the vertices matched as a set, so a near tie in x cannot reorder them)
+    const near = (v: V, w: V) => Math.abs(v.x - w.x) <= 1e-4 && Math.abs(v.y - w.y) <= 1e-4 && v.k === w.k && Math.abs(v.z - w.z) <= 1e-5 * Math.max(1, Math.abs(v.z));
+    const close = (a: V[], b: V[]) => a.every((v) => b.some((w) => near(v, w))) && b.every((w) => a.some((v) => near(v, w)));
     const used = new Set<number>();
     const gpuLeft: V[][] = [];
     for (const a of left[0]) {
@@ -129,6 +141,24 @@ export async function smoothAgainstReference(device: GPUDevice, log: (s: string)
     const missing = refLeft.length;
     const fmt = (t: V[]) => t.map((v) => `${v.x},${v.y},${v.z}${v.k ? 'k' : ''}`).join('|');
     const where = [...gpuLeft.slice(0, 2).map((t) => `gpu only ${fmt(t)}`), ...refLeft.slice(0, 2).map((t) => `reference only ${fmt(t)}`)];
+    // (round 22, diagnosis) a vertex the GPU slid that the reference did not (or slid otherwise): the reference's line
+    // and its four columns' surfaces with their edge samples
+    const diag: string[] = [];
+    for (const t of gpuLeft.slice(0, 1))
+      for (const v of t) {
+        const cx = Math.round(v.x) + w.gx;
+        const cy = Math.round(v.y) + w.gy;
+        if (v.k || (v.x === Math.round(v.x) && v.y === Math.round(v.y))) continue;
+        const l = sm.lines.get(`${L}:${cx}:${cy}`);
+        diag.push(`diag L${L} line ${cx},${cy} gpu (${v.x - Math.round(v.x)}, ${v.y - Math.round(v.y)}) z ${v.z}; reference clusters ${JSON.stringify(l?.clusters.map((c) => ({ bps: c.bps, z: c.z, ox: c.ox, oy: c.oy })))}`);
+        for (let qd = 0; qd < 4; qd++) {
+          const X = cx - 1 + (qd & 1);
+          const Y = cy - 1 + (qd >> 1);
+          const r = s.records(L, X, Y);
+          diag.push(`q${qd} ${X},${Y}: ${r.top.map((h, j) => `${h}:${r.mat[j]}:${r.edge[j] ? JSON.stringify(edgeDec(r.edge[j])) : '-'}`).join(' ')}`);
+        }
+      }
+    if (diag.length) where.push(diag.join(' / '));
     const m = manifold(cap);
     log(`L${L}: gpu ${gpu} triangles (${cap.ex} sheet slots), reference ${nref}; gpu only ${extra}, reference only ${missing}; degenerate ${m.degenerate}, coincident ${m.coincident} ${where.join('; ')}`);
     out.push({

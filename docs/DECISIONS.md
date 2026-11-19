@@ -3,6 +3,18 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-19 — nested scales round 22: round edges, the look of dual contouring on the sheets (`nested-scales`)
+
+The user, verbatim: "If you can fix the rim artifacts first as they are distracting. I really want the look of
+something like dual contouring but without the cost and I feel like we are close with the column and sheet format we
+have now." Earlier: "I thought we were going to displace vertices horizontally within their cell too to make rims read
+as round? Maybe an sdf per cell?" and "I like a hard crease at a rim".
+
+Consequence (round 22, docs/design/NESTED_SCALES.md "As built (round 22)"): a surface record near a brush's edge keeps
+an edge sample (the edge line's normal and distance) in its material word's spare bits; the sheet bake slides each
+corner vertex whose cell the edge crosses onto those lines (2D dual contouring of the edge line), topology unchanged.
+`?slide=0|1` and the "Round edges" button; `?rimtop=1` the hard-crease variant (a rim corner at the uncarved height).
+
 ## 2026-11-19 — nested scales round 21: far hills read as forest (`nested-scales`)
 
 The user, verbatim: "I think we want the hills at the furthest zoom to read as trees not grass but from miles away."

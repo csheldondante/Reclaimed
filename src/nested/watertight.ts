@@ -212,8 +212,9 @@ export function coverage(caps: { depth: number; tris: Float32Array }[], wins: { 
       // (a cap: its corners not all on one x nor all on one y; round 11: a rim vertex's z is in the child's units, so the
       // three z of a cap touching a rim line differ)
       if (t[o + 3] === 0 || (t[o] === t[o + 4] && t[o] === t[o + 8]) || (t[o + 1] === t[o + 5] && t[o + 1] === t[o + 9])) continue;
-      const x = Math.min(t[o], t[o + 4], t[o + 8]);
-      const y = Math.min(t[o + 1], t[o + 5], t[o + 9]);
+      // (round 22: a slid sheet corner lies within 0.35 of its lattice corner, so the column is the rounded minimum)
+      const x = Math.round(Math.min(t[o], t[o + 4], t[o + 8]));
+      const y = Math.round(Math.min(t[o + 1], t[o + 5], t[o + 9]));
       const X = w.gx + x;
       const Y = w.gy + y;
       if (x < 0 || y < 0 || x >= w.n || y >= w.n || under(X, Y)) {

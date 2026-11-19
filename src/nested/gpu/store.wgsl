@@ -35,7 +35,13 @@ const TOUCHED: u32 = 0x80000000u;
 
 /** the material table's draw property: whether a material is drawn as an opaque solid (air and, later, water or lava
  *  as their own kinds). The mesher asks only this: a new material is a row here, not a change to the mesher. */
-fn matSolid(m: u32) -> bool { return m != MAT_AIR; }
+fn matSolid(m: u32) -> bool { return (m & 0xffu) != MAT_AIR; }
+/** (round 22) a record's material word: the material in bits 0-7, the top's EDGE SAMPLE in bits 8-29 (src/nested/edge.ts:
+ *  bit 8 on, 9-17 the normal's angle, 18-29 the signed distance; 0 = none). Material comparisons mask with 0xff. */
+const EDGE_MASK: u32 = 0x3fffff00u;
+const EDGE_ON: u32 = 0x100u;
+/** (residual records) the live edge overrides the enhanced one */
+const RES_EDGE: u32 = 0x40000000u;
 
 struct Ivl {
   z0: f32,
@@ -151,7 +157,7 @@ fn ivlAt(lid: u32, X: i32, Y: i32, i: u32) -> Ivl {
       for (var j = 0u; j < r; j++) {
         let t = recTop(p, c, j);
         let m = recMat(p, c, j);
-        if (m != MAT_AIR) {
+        if (matSolid(m)) {
           if (rem == 0u) { return Ivl(below, t, m); }
           rem--;
         }
