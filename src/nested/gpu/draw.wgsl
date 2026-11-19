@@ -400,7 +400,7 @@ fn vsS(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VO
 /** (round 15, NS-117) the exceptions in blocks of EX_B triangles (nest.wgsl exDir): an instance a block, so a face page's
  *  empty slots cost no vertex (vsS instanced a whole page, 3 x TPP vertices, whatever its count) */
 const EX_B: u32 = 128u;
-const EX_PB: u32 = 25u;
+const EX_PB: u32 = 48u;
 fn exCorner(inst: u32, tri: u32, v: u32) -> Corner {
   let L = u32(d.lvl.w);
   let cap = d.misc2.x;
@@ -436,6 +436,163 @@ fn vsTC(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> V
 @vertex
 fn vsTW(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VOutS {
   return tOut(tWall(inst, vv / 3u, vv % 3u));
+}
+// ---- (round 16) the sheet draw (nest.wgsl sheetBake; boxmesh.ts sheetMesh): an instance a sheet of a chunk, 2 triangles
+// a column (its surface of that sheet on its four corners' clusters) and 32 zipper triangles (a child's window edge: the
+// parent column's surface of that sheet closed against the child's lines between the parent's corners). Reads only the
+// cache: the sheet words and the clusters (position z, normal). A slot the bake left off is degenerate (no pixels).
+const SLN: u32 = 8u;
+const SCL: u32 = 372u;
+const SCL0: u32 = 3043u;
+const CPP: u32 = 3136u;
+const SPW: u32 = 800u;
+const SZIP: u32 = 768u;
+const CACHE_LID: u32 = 48u;
+struct SV {
+  ok: bool,
+  lp: vec3<f32>,
+  kid: bool,
+  mat: u32,
+  nrm: u32,
+}
+/** cluster i of the chunk whose cache page 0 is p0 (spill pages through the table) */
+fn sclD(p0: u32, key: u32, i: u32) -> u32 {
+  if (i < SCL0) { return p0 * PW + SCL + i * 4u; }
+  let p = pageOf(CACHE_LID + u32(d.lvl.w), i32(key & 0xffffu), i32(key >> 16u), 1u + (i - SCL0) / CPP);
+  return p * PW + ((i - SCL0) % CPP) * 4u;
+}
+fn sLineD(p0: u32, lx: u32, ly: u32) -> u32 { return pgLoad(p0 * PW + SLN + (ly + 1u) * 19u + lx + 1u); }
+/** whether global corner line (CX, CY) of the drawn level lies on its live child's footprint boundary (nest.wgsl rimP) */
+fn rimD(CX: i32, CY: i32) -> bool {
+  if (d.kid.w == 0) { return false; }
+  let k = i32(d.misc.w);
+  let x = CX * k;
+  let y = CY * k;
+  let c = d.kid;
+  if (x < c.x || y < c.y || x > c.x + c.z || y > c.y + c.z) { return false; }
+  return x == c.x || y == c.y || x == c.x + c.z || y == c.y + c.z;
+}
+fn sheetVert(inst: u32, t: u32, v0: u32) -> SV {
+  var o = SV(false, vec3<f32>(0.0), false, 0u, 0u);
+  let cap = d.misc2.x;
+  let L = u32(d.lvl.w);
+  let e = 16u + 32u * cap + 8u + 128u * cap + 8u + L * EX_PB * cap + inst * 2u;
+  let w0 = dir[e];
+  let p0 = dir[e + 1u];
+  let sb = (w0 & 0xffffffu) * PW + (w0 >> 24u) * SPW;
+  let key = pgLoad(p0 * PW + 5u);
+  let cx = i32(key & 0xffffu);
+  let cy = i32(key >> 16u);
+  var v = v0;
+  var lx = 0u;
+  var ly = 0u;
+  var idx = 0u;
+  var byZ = false;
+  var zz = 0.0;
+  if (t < 512u) {
+    let col = t / 2u;
+    let tt = t % 2u;
+    let f = pgLoad(sb + col * 3u + 2u);
+    if ((f >> 31u) == 0u || ((f >> (1u + tt)) & 1u) == 0u) { return o; }
+    if ((f & 1u) == 0u && v != 0u) { v = 3u - v; }
+    // triangle 0: corners (0, 1, 3), 1: (0, 3, 2)
+    var cc = 0u;
+    if (v == 1u) { cc = select(3u, 1u, tt == 0u); } else if (v == 2u) { cc = select(2u, 3u, tt == 0u); }
+    lx = (col & 15u) + (cc & 1u);
+    ly = (col >> 4u) + (cc >> 1u);
+    idx = (pgLoad(sb + col * 3u + cc / 2u) >> (16u * (cc & 1u))) & 0xffffu;
+    o.mat = (f >> 8u) & 255u;
+  } else {
+    let zt = t - 512u;
+    let side = zt / 16u;
+    let ts = zt % 16u;
+    let k = u32(d.misc.w);
+    let seg = ts / (k - 1u);
+    let i = ts % (k - 1u) + 1u;
+    if (seg >= 16u / k || seg >= 8u) { return o; }
+    let zw = sb + SZIP + (side * 8u + seg) * 2u;
+    let f = pgLoad(zw + 1u);
+    if ((f >> 31u) == 0u || ((f >> (15u + i)) & 1u) == 0u) { return o; }
+    if ((f & 1u) == 0u && v != 0u) { v = 3u - v; }
+    let ki = i32(k);
+    let s0 = i32(seg) * ki;
+    var l0 = vec2<i32>(0);
+    var dd = vec2<i32>(0);
+    let gx = d.lvl.x;
+    let gy = d.lvl.y;
+    let n = d.lvl.z;
+    if (side == 0u) {
+      if (cx * 16 == gx) {
+        l0 = vec2<i32>(0, s0);
+        dd = vec2<i32>(0, 1);
+      } else if (cx * 16 + 16 == gx + n) {
+        l0 = vec2<i32>(16, s0 + ki);
+        dd = vec2<i32>(0, -1);
+      } else { return o; }
+    } else {
+      if (cy * 16 == gy) {
+        l0 = vec2<i32>(s0 + ki, 0);
+        dd = vec2<i32>(-1, 0);
+      } else if (cy * 16 + 16 == gy + n) {
+        l0 = vec2<i32>(s0, 16);
+        dd = vec2<i32>(1, 0);
+      } else { return o; }
+    }
+    var st = 0;
+    if (v == 1u) { st = i32(i); } else if (v == 2u) { st = i32(i) + 1; }
+    let pl = l0 + dd * st;
+    lx = u32(pl.x);
+    ly = u32(pl.y);
+    byZ = true;
+    zz = bitcast<f32>(pgLoad(zw));
+    o.mat = (f >> 8u) & 255u;
+  }
+  let lw = sLineD(p0, lx, ly);
+  let first = lw & 0xfffffu;
+  if (byZ) {
+    var lo = 0u;
+    var hi = lw >> 20u;
+    loop {
+      if (lo >= hi) { break; }
+      let mid = (lo + hi) / 2u;
+      if (bitcast<f32>(pgLoad(sclD(p0, key, first + mid))) <= zz) { lo = mid + 1u; } else { hi = mid; }
+    }
+    idx = max(lo, 1u) - 1u;
+  }
+  let cw = sclD(p0, key, first + idx);
+  let CX = cx * 16 + i32(lx);
+  let CY = cy * 16 + i32(ly);
+  o.kid = !byZ && rimD(CX, CY);
+  o.lp = vec3<f32>(f32(CX - d.lvl.x), f32(CY - d.lvl.y), bitcast<f32>(pgLoad(cw + 2u)));
+  o.nrm = pgLoad(cw + 3u);
+  o.ok = true;
+  return o;
+}
+@vertex
+fn vsSheet(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VOutS {
+  let s = sheetVert(inst, vv / 3u, vv % 3u);
+  if (!s.ok) {
+    var o: VOutS;
+    o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+    return o;
+  }
+  var o = smoothOut(s.lp, s.kid, s.mat);
+  if (s.nrm != 0u) { o.vn = octDec(s.nrm); }
+  return o;
+}
+/** (test only) the sheets as vsSheet places them: misc2.w instances x 544 slots, three vec4 a slot (w 1, a rim vertex 2,
+ *  0 none) */
+@compute @workgroup_size(64)
+fn captureSheet(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
+  let i = gid.x + gid.y * nw.x * 64u;
+  if (i / 544u >= d.misc2.w) { return; }
+  var ok = true;
+  var s: array<SV, 3>;
+  for (var v = 0u; v < 3u; v++) {
+    s[v] = sheetVert(i / 544u, i % 544u, v);
+    ok = ok && s[v].ok;
+  }
+  for (var v = 0u; v < 3u; v++) { capOut[i * 3u + v] = vec4<f32>(s[v].lp, select(0.0, select(1.0, 2.0, s[v].kid), ok)); }
 }
 @fragment
 fn fsS(v: VOutS) -> FOut {

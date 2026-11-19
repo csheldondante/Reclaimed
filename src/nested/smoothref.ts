@@ -6,8 +6,10 @@
 // left out on both sides (the GPU bakes fans where the reference has two triangles a column; same rim edges).
 import { GpuNest } from './gpu/nest';
 import { Renderer } from './render';
-import { boxMesh, collapseCols, dropCapPairs, place, type MeshScene } from './boxmesh';
-import { manifold, rimJunctions } from './watertight';
+// (Round 16: the sheet draw against boxmesh.ts sheetMesh, triangle for triangle; a parent's zipper triangles are drawn by
+// its child; the union of the levels closed except along the root window's edge.)
+import { sheetMesh, type MeshScene } from './boxmesh';
+import { manifold, unionClosure } from './watertight';
 
 export interface RefResult {
   name: string;
@@ -16,7 +18,6 @@ export interface RefResult {
 }
 
 const K = 8;
-const T = 2;
 
 export async function smoothAgainstReference(device: GPUDevice, log: (s: string) => void = () => {}): Promise<RefResult[]> {
   const g = new GpuNest(device, K, 7, 256, { syncGrow: true });
@@ -68,11 +69,10 @@ export async function smoothAgainstReference(device: GPUDevice, log: (s: string)
       return { depth: L, gx: w.gx, gy: w.gy, n: w.n, zo: L ? s.zOrigin(L) : 0, parts };
     }),
   };
-  const mesh = boxMesh(scene);
-  const ref = dropCapPairs(mesh, place(mesh, collapseCols(mesh, T), scene));
+  const sm = sheetMesh(scene);
   const out: RefResult[] = [];
   const fx = (v: number) => Math.fround(v).toString();
-  const bottom = (z: number[]) => z[0] === z[1] && z[1] === z[2] && z[0] % 32 === 0;
+  const bottom = (_z: number[]) => false;
   for (const cap of caps) {
     const L = cap.depth;
     const w = g.wins[L]!;
@@ -90,15 +90,15 @@ export async function smoothAgainstReference(device: GPUDevice, log: (s: string)
       add([0, 1, 2].map((v) => [t[o + v * 4], t[o + v * 4 + 1], t[o + v * 4 + 2], t[o + v * 4 + 3] === 2] as [number, number, number, boolean]), 1);
     }
     let nref = 0;
-    for (const si of ref.src) {
-      const tri = mesh.tris[si];
-      if (tri.L !== L) continue;
+    for (const tri of sm.tris) {
+      // (a zipper is drawn by the child)
+      if ((tri.fan ? tri.L + 1 : tri.L) !== L) continue;
       nref++;
       add(
-        tri.v.map((vi) => {
-          const id = mesh.ids[vi];
-          const z = mesh.cluster(id, T).z;
-          return id.L !== L ? ([id.cx / K - w.gx, id.cy / K - w.gy, z, true] as [number, number, number, boolean]) : ([id.cx - w.gx, id.cy - w.gy, z, false] as [number, number, number, boolean]);
+        tri.v.map((vk) => {
+          const [lv, cx, cy, ci] = vk.split(':').map(Number);
+          const z = sm.lines.get(`${lv}:${cx}:${cy}`)!.clusters[ci].z;
+          return lv !== L ? ([cx / K - w.gx, cy / K - w.gy, z, true] as [number, number, number, boolean]) : ([cx - w.gx, cy - w.gy, z, false] as [number, number, number, boolean]);
         }),
         -1,
       );
@@ -131,16 +131,16 @@ export async function smoothAgainstReference(device: GPUDevice, log: (s: string)
     const fmt = (t: V[]) => t.map((v) => `${v.x},${v.y},${v.z}${v.k ? 'k' : ''}`).join('|');
     const where = [...gpuLeft.slice(0, 2).map((t) => `gpu only ${fmt(t)}`), ...refLeft.slice(0, 2).map((t) => `reference only ${fmt(t)}`)];
     const m = manifold(cap);
-    log(`L${L}: gpu ${gpu} triangles (${cap.ex} exception slots), reference ${nref}; gpu only ${extra}, reference only ${missing}; odd ${m.open}, degenerate ${m.degenerate}, coincident ${m.coincident} ${where.join('; ')}`);
+    log(`L${L}: gpu ${gpu} triangles (${cap.ex} sheet slots), reference ${nref}; gpu only ${extra}, reference only ${missing}; degenerate ${m.degenerate}, coincident ${m.coincident} ${where.join('; ')}`);
     out.push({
-      name: `smooth: level ${L}'s drawn triangles (template + exceptions) equal the reference collapse mesh after dropCapPairs (bottom-lattice down caps aside), closed`,
-      pass: gpu > 0 && nref > 0 && extra === 0 && missing === 0 && m.open === 0 && m.degenerate === 0 && m.coincident === 0,
-      detail: `gpu ${gpu}, reference ${nref}, gpu only ${extra}, reference only ${missing}, odd ${m.open}, degenerate ${m.degenerate}, coincident ${m.coincident}${where.length ? `: ${where.join('; ')}` : ''}`,
+      name: `smooth: level ${L}'s drawn sheet triangles equal the reference (boxmesh.ts sheetMesh)`,
+      pass: gpu > 0 && nref > 0 && extra === 0 && missing === 0 && m.degenerate === 0 && m.coincident === 0,
+      detail: `gpu ${gpu}, reference ${nref}, gpu only ${extra}, reference only ${missing}, degenerate ${m.degenerate}, coincident ${m.coincident}${where.length ? `: ${where.join('; ')}` : ''}`,
     });
   }
-  const rim = rimJunctions(caps, g.wins.slice(0, 3) as { gx: number; gy: number; n: number }[], K);
-  const j = rim.reduce((a, r) => a + r.junctions + r.unflagged, 0);
-  out.push({ name: 'smooth: rim lines of the small chain, no junctions, every parent rim vertex in the child\'s units', pass: j === 0 && rim.every((r) => r.lines > 0), detail: JSON.stringify(rim.map((r) => ({ L: r.depth, lines: r.lines, junctions: r.junctions, unflagged: r.unflagged, where: r.where }))) });
+  const u = unionClosure(caps, g.wins.slice(0, 3) as { gx: number; gy: number; n: number }[], K);
+  log(`union: ${JSON.stringify(u)}`);
+  out.push({ name: 'smooth: the levels\' sheets together closed except along the root window\'s edge (level edges included)', pass: u.open === 0 && u.degenerate === 0 && u.coincident === 0 && u.tris > 0, detail: JSON.stringify(u) });
   // (the small pool's memory given back before the sandbox's tests)
   await device.queue.onSubmittedWorkDone();
   g.destroy();

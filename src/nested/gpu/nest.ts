@@ -27,7 +27,7 @@ export const MAX_LEVELS = 8;
 /** the draw's directory (nest.wgsl dirBuild): 16 counts, the face and cache page lists (two a level, a cap each), then
  *  (round 15, NS-117, nest.wgsl wallDir) the smooth walls' block counts (8) and blocks (16 a page a level), then
  *  (nest.wgsl exDir) the face pages' blocks of 128 triangles (8 counts, 25 a page a level) */
-const dirWords = (cap: number) => 16 + 2 * MAX_LEVELS * cap * 2 + 8 + MAX_LEVELS * 16 * cap + 8 + MAX_LEVELS * 25 * cap;
+const dirWords = (cap: number) => 16 + 2 * MAX_LEVELS * cap * 2 + 8 + MAX_LEVELS * 16 * cap + 8 + MAX_LEVELS * 48 * cap;
 const UB = 256;
 const USLOTS = 256;
 /** reg: 16 header words, 64 slots of 12 (0-31 the plan's, 32-39 the CPU's, 40-63 the bakes') */
@@ -621,12 +621,8 @@ export class GpuNest {
         // knows them, else the level's window rows (a GPU region lies inside it).
         for (let b = 0; b < nrows; b++) {
           const off = this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = s), (e[2] = nrows > 1 ? b + 1 : 0), (e[3] = this.rimOff)));
-          // (measurement only: skip 'cache' or 'ex', the result then wrong)
-          if (!this.skip.has('cache')) this.runIndirect('cacheBake', off, s);
-          if (!this.skip.has('ex')) {
-            this.runIndirect('faceBakeS', off, s);
-            this.runIndirect('faceBakeRimS', off, s);
-          }
+          // (round 16: the sheet pass alone, the owner's sheets; measurement only: skip 'cache', the result then wrong)
+          if (!this.skip.has('cache')) this.runIndirect('sheetBake', off, s);
           if (nrows > 1) this.submit(false);
         }
         return;
@@ -706,16 +702,16 @@ export class GpuNest {
   /** pages a bake may take over `chunks` chunks that have no faces yet: face pages, stacked as deep as any so far (and
    *  with the smooth draw on, a cache page each) */
   private bakeBound(chunks: number): number {
-    return chunks * (this.facePages() + (this.smooth ? 1 : 0));
+    // (round 16: the sheet draw's cache and sheet pages, stacked as deep as any page so far)
+    // (page 0, at least one sheet page, and as deep as any page stack so far: maxCz)
+    return chunks * (this.facePages() + (this.smooth ? 2 + this.stats.maxCz : 0));
   }
-  /** (round 14) the smooth draw's pipelines, made the first time it is switched on */
+  /** (round 14) the smooth draw's pipelines, made the first time it is switched on (round 16: the sheet pass) */
   private smoothPipes(): void {
-    if (this.pipes.cacheBake) return;
+    if (this.pipes.sheetBake) return;
     const mk = (label: string, entryPoint: string, constants: Record<string, number>) =>
       this.device.createComputePipeline({ label, layout: this.pipeLayout, compute: { module: this.module, entryPoint, constants } });
-    this.pipes.cacheBake = mk('nest cacheBake', 'cacheBake', { BAKE_RIM: 1 });
-    this.pipes.faceBakeS = mk('nest faceBake (smooth)', 'faceBake', { SMOOTH: 1 });
-    this.pipes.faceBakeRimS = mk('nest faceBake (smooth, rim chunks)', 'faceBake', { SMOOTH: 1, BAKE_RIM: 1 });
+    this.pipes.sheetBake = mk('nest sheetBake', 'sheetBake', { BAKE_RIM: 1 });
   }
   /** (round 14, NS-107) the smooth draw on or off: every live level's whole window baked again (on: its cache pages and
    *  placed exceptions; off: the cache pages let go, boxes). An op like any other: refused (false) while the pool cannot
@@ -907,6 +903,14 @@ export class GpuNest {
     this.submit(false);
     this.bakeRects(L, this.ring(w), 0);
     if (fp && fn) this.bakeRects(L - 1, [fp, fn], 4);
+    // (round 16, the sheet draw) a child's window-edge lines see this level's columns outside it (the entering chunks
+    // were just derived): the child's edge ring baked again, else its zippers keep the parent's old surfaces (12 open
+    // edges after the selftest's cruise). BACKLOG NS-126: edits have the same dependency.
+    const kid = this.wins[L + 1];
+    if (this.smooth && kid && L + 1 < this.live) {
+      this.submit(false);
+      this.bakeRects(L + 1, this.ring(kid), 0);
+    }
     this.directory();
     this.mergeFrees();
     this.submit();

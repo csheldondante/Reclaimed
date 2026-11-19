@@ -924,6 +924,34 @@ the solid below the next air gap down." "Why make those [skirts, outer ring] if 
     triangles a column, the edge ring included. Layers pinched to nothing (information): one-column tunnels 40, spiral
     step 3, random 103, deep thin stacks 2,523, three random levels 36 / 69 / 54, parent lip over the edge 2, all others 0.
     Fan triangles: 80-120 a parent (k = 4).
+  - *The split edge, re-cut (still step 1, before the GPU):* a parent column's polygon with its split edge is cut into
+    its plain quad (the four corners, the same two triangles as every column) plus a ZIPPER (A, s_t, s_t+1), t = 1 ..
+    k - 1, from the edge's first corner A: the same polygon, so the same closure; every zipper vertex lies on the
+    child's edge lines, so the CHILD draws it (its own cache holds all of them) and the parent draws plain quads only.
+    Zipper triangles are nearly flat (they fill the sliver between the parent's straight edge and the child's vertices,
+    which the interpolation puts on it). The pair rule runs on zipper slots too (consecutive parent surfaces).
+- *Step 2, the GPU (nest.wgsl sheetBake, draw.wgsl vsSheet / captureSheet; the old cache pass, template, wall list and
+  smooth exception bake are no longer called; their code stays until the gate passes).*
+  - *sheetBake (a workgroup a chunk, a chunk row a submit as before):* the input hash skip of round 14 (rim chunks always
+    bake); sizes first (each corner line's bound = its owners' records, a scan; the sheet count S = the deepest column's
+    surfaces, on a child's window edge also the parent columns' outside), then every page at once (cache page 0, cluster
+    spill pages cz 1..A, sheet pages from cz 1 + A, SPP = 15 sheets a page); a missing page (pool full) leaves S = 0.
+    1. each of the chunk's 19 x 19 corner lines walked once (sWalk: canonical line, four quadrant owners, surface heights
+    only, joined = owners not all solid or all air; integer sum, one division); 2. on a child, window-edge lines between
+    rim lines re-placed on the parent's edge (integer interpolation); 3. each cluster's normal = the normalised sum of
+    the area normals of this level's quads on it (a merge walk; rim lines none: flat); 4. per column and surface the four
+    corners' cluster indices and the pair rule's kept bits (one thread a column); 5. per zipper slot (side, segment) per
+    parent surface: its height in the child's units and kept bits.
+  - *The draw:* one indirect draw a level; an instance a sheet of a chunk (dirBuild lists every sheet page's sheets,
+    2 words an entry: sheet page | sheet << 24, page 0); 544 triangles an instance: 2 a column, then 32 zipper slots
+    (2 sides x up to 8 segments x k - 1 triangles, < 32 for any k). A vertex reads its sheet word and one cluster (a
+    zipper vertex finds its cluster by a binary search on its height). Normals from the cache, the 50 degree crease rule
+    unchanged (fsS).
+  - *Sizes:* the sheet directory per level is 24 x cap entries (EX_PB 48 words): a chunk's sheets are at most its
+    deepest column's records, at most 24 a column page of that chunk, so the sum over a level is at most 24 x its column
+    pages: not a cap. Exception: a child edge chunk's zipper sheets follow the parent column outside (BACKLOG NS-125).
+  - *Ops:* a slide of level L also re-bakes its live child's edge ring (the child's edge lines see L's columns outside
+    it, and L's entering chunks were just derived): the selftest's cruise left 12 open edges on one zipper run without it.
 
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 

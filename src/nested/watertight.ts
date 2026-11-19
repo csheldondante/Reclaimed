@@ -72,6 +72,74 @@ export function manifold(cap: { depth: number; n: number; tris: Float32Array }):
   return { depth: cap.depth, tris, edges: count, open, over, degenerate, where, coincident };
 }
 
+/** (round 16, test only) the sheet draw's closure over every level at once (a level is no longer closed by itself: a
+ *  parent's edge along its child's footprint is closed by the child's zipper). Vertices welded by exact position in the
+ *  finest units that hold them (a rim vertex, capture w 2, is the child's); every directed edge must cancel, except
+ *  along one side of the root window (no faces outside it, open by design). */
+export function unionClosure(caps: { depth: number; tris: Float32Array }[], wins: { gx: number; gy: number; n: number }[], k: number): { tris: number; open: number; openRoot: number; odd: number; degenerate: number; coincident: number; where: string[] } {
+  const dir = new Map<string, number>();
+  const und = new Map<string, number>();
+  const faces = new Map<string, number>();
+  const side = new Map<string, number>();
+  const r = wins[0];
+  let tris = 0;
+  let degenerate = 0;
+  for (const cap of caps) {
+    const L = cap.depth;
+    const w = wins[L];
+    const t = cap.tris;
+    const vk = (o: number) => {
+      const kid = t[o + 3] === 2;
+      const lv = kid ? L + 1 : L;
+      const cx = kid ? (t[o] + w.gx) * k : t[o] + w.gx;
+      const cy = kid ? (t[o + 1] + w.gy) * k : t[o + 1] + w.gy;
+      const key = `${lv}:${cx}:${cy}:${Math.fround(t[o + 2])}`;
+      if (!side.has(key)) {
+        const s = Math.pow(k, lv);
+        const x = cx / s;
+        const y = cy / s;
+        side.set(key, (x === r.gx ? 1 : 0) | (x === r.gx + r.n ? 2 : 0) | (y === r.gy ? 4 : 0) | (y === r.gy + r.n ? 8 : 0));
+      }
+      return key;
+    };
+    for (let o = 0; o + 12 <= t.length; o += 12) {
+      if (t[o + 3] === 0) continue;
+      const v = [vk(o), vk(o + 4), vk(o + 8)];
+      if (v[0] === v[1] || v[1] === v[2] || v[0] === v[2]) {
+        degenerate++;
+        continue;
+      }
+      tris++;
+      const fk = [...v].sort().join('|');
+      faces.set(fk, (faces.get(fk) ?? 0) + 1);
+      for (let e = 0; e < 3; e++) {
+        const a = v[e];
+        const b = v[(e + 1) % 3];
+        const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+        dir.set(key, (dir.get(key) ?? 0) + (a < b ? 1 : -1));
+        und.set(key, (und.get(key) ?? 0) + 1);
+      }
+    }
+  }
+  let open = 0;
+  let openRoot = 0;
+  let odd = 0;
+  const where: string[] = [];
+  for (const [key, c] of dir) {
+    if (c === 0) continue;
+    const [a, b] = key.split('|');
+    if (side.get(a)! & side.get(b)!) openRoot++;
+    else {
+      open++;
+      if (where.length < 6) where.push(`${a} - ${b} (${c})`);
+    }
+  }
+  for (const c of und.values()) if (c % 2) odd++;
+  let coincident = 0;
+  for (const c of faces.values()) if (c > 1) coincident += c;
+  return { tris, open, openRoot, odd, degenerate, coincident, where };
+}
+
 /** (round 11, NS-97, test only) the rim lines between each level and its live child (parent corner lines on the child's
  *  window boundary): on such a line both levels' vertices must be the same set, in the child's units (the parent's
  *  flagged, capture w 2), so no vertex of one level lies inside a vertical edge of the other (a T-junction across the

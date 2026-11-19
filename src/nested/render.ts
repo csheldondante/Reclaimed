@@ -66,8 +66,8 @@ export class Renderer {
   private pl: GPUPipelineLayout;
   /** (round 14, NS-107) the smooth draw's two pipelines: the exceptions (the face pages, placed) and the template over
    *  the cache pages; made when it is first switched on */
-  private smoothPipe: { ex: GPURenderPipeline; tmpl: GPURenderPipeline; walls: GPURenderPipeline } | null = null;
-  private smoothPipes(): { ex: GPURenderPipeline; tmpl: GPURenderPipeline; walls: GPURenderPipeline } {
+  private smoothPipe: { sheet: GPURenderPipeline } | null = null;
+  private smoothPipes(): { sheet: GPURenderPipeline } {
     if (!this.smoothPipe) {
       const mk = (label: string, vs: string) =>
         this.device.createRenderPipeline({
@@ -78,9 +78,8 @@ export class Renderer {
           primitive: { topology: 'triangle-list', cullMode: 'none' },
           depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' },
         });
-      // (round 15, NS-117) the template as two draws: the caps (a fixed 2 triangles a column) and the walls with pixels
-      // (blocks of the chunks' wall lists, nest.wgsl dirBuild)
-      this.smoothPipe = { ex: mk('nest draw smooth exceptions', 'vsSB'), tmpl: mk('nest draw smooth caps', 'vsTC'), walls: mk('nest draw smooth walls', 'vsTW') };
+      // (round 16) the owner's sheets: one draw a level, an instance a sheet of a chunk (nest.wgsl dirBuild)
+      this.smoothPipe = { sheet: mk('nest draw sheets', 'vsSheet') };
     }
     return this.smoothPipe;
   }
@@ -127,15 +126,11 @@ export class Renderer {
     // finest first: the depth test then spares the coarse levels' fragments under it
     const order = [...levels].sort((a, b) => b.depth - a.depth);
     if (this.nest.smooth) {
-      // (round 14) per level the template (an instance a cache page) and the exceptions
+      // (round 16) per level the sheets
       const sp = this.smoothPipes();
+      pass.setPipeline(sp.sheet);
       for (const lv of order) {
         pass.setBindGroup(0, this.bg!, [lv.depth * DU]);
-        pass.setPipeline(sp.tmpl);
-        pass.drawIndirect(this.nest.drawArgs, (MAX_LEVELS + lv.depth) * 16);
-        pass.setPipeline(sp.walls);
-        pass.drawIndirect(this.nest.drawArgs, (2 * MAX_LEVELS + lv.depth) * 16);
-        pass.setPipeline(sp.ex);
         pass.drawIndirect(this.nest.drawArgs, (3 * MAX_LEVELS + lv.depth) * 16);
       }
     } else {
@@ -183,7 +178,7 @@ export class Renderer {
       this.capPipe = {
         p: this.device.createComputePipeline({ label: 'nest capture', layout: pl, compute: { module: this.module, entryPoint: 'capture' } }),
         t: this.device.createComputePipeline({ label: 'nest capture (template)', layout: pl, compute: { module: this.module, entryPoint: 'captureT' } }),
-        sb: this.device.createComputePipeline({ label: 'nest capture (smooth exceptions, blocks)', layout: pl, compute: { module: this.module, entryPoint: 'captureSB' } }),
+        sb: this.device.createComputePipeline({ label: 'nest capture (sheets)', layout: pl, compute: { module: this.module, entryPoint: 'captureSheet' } }),
         layout,
       };
     }
@@ -233,14 +228,9 @@ export class Renderer {
     for (const lv of levels) {
       // (a level demoted while this awaited: skipped)
       if (!this.nest.wins[lv.depth]) continue;
-      const ex = smooth ? await one(this.capPipe.sb, lv.depth, pages[lv.depth] * 128) : await one(this.capPipe.p, lv.depth, pages[lv.depth] * TPP);
-      let tris = ex;
-      if (smooth) {
-        const tm = await one(this.capPipe.t, lv.depth, tpages[lv.depth] * 512 + wblocks[lv.depth] * 32 * 6);
-        tris = new Float32Array(ex.length + tm.length);
-        tris.set(ex);
-        tris.set(tm, ex.length);
-      }
+      // (round 16) with the smooth draw on: the sheets as vsSheet places them (544 slots an instance)
+      const ex = smooth ? await one(this.capPipe.sb, lv.depth, pages[lv.depth] * 544) : await one(this.capPipe.p, lv.depth, pages[lv.depth] * TPP);
+      const tris = ex;
       if (!this.nest.wins[lv.depth]) continue;
       out.push({ depth: lv.depth, n: this.nest.wins[lv.depth]!.n, tris, ex: ex.length / 12 });
     }

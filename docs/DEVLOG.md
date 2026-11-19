@@ -27283,3 +27283,22 @@ tunnels, 2,523 in deep thin stacks. Unit tests 100 of 100 (76 before).
 
 **Found.** Columns that start with air (only the random test scenes) leave the ceiling of a bottomless hole with open
 edges (266-478 edges a random scene): by design nothing under the ground is drawn (BACKLOG NS-124).
+
+## 2026-11-19 — Nested scales lab, round 16 step 2: the sheets on the GPU, equal to the reference
+
+**Why.** The owner's spec: instanced n x n sheets, a vertex shader that reads the heights, nothing else.
+
+**Built** (NESTED_SCALES.md "As built (round 16)", step 2). nest.wgsl sheetBake: one pass a chunk (corner lines walked
+once into cluster tables with integer means, child edge lines re-placed on the parent's edge, cluster normals, per
+column and surface the corners' cluster indices with the pair rule, per parent surface the zipper slots); dirBuild lists
+every sheet of every chunk; draw.wgsl vsSheet draws an instance a sheet (2 triangles a column, 32 zipper slots). The
+reference re-cut the parent's split polygon into its plain quad plus a zipper the child draws (same polygon, same
+closure; unit tests unchanged). The smooth path no longer runs the old cache pass, wall list or exception bake.
+
+**Measured** (`?selftest=1&smooth=only`, second run): GPU = reference triangle for triangle (L0 8,064, L1 8,388, L2
+3,014; 0 extra, 0 missing, 0 degenerate, 0 coincident); the union of the levels closed except the root window's edge
+(256 open edges there, by design); 0 hole pixels over the 40 poses, 83 cruise samples and the 162 pit / cave / shaft
+poses (no skirt and no pose saw under a sheet); coverage 0. One fault: the union check at one pose ("the map, 3
+frames after the move") found 1,024 open edges, 0 once settled (being looked at). The first run also found 12 open
+edges on one zipper run after the cruise: a slide did not re-bake the child's edge ring; fixed (slide re-bakes it in
+the sheet draw; edits keep the same dependency open: NS-126).

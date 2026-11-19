@@ -4,7 +4,7 @@
 // camera's inputs, which levels are wanted where, the buttons and the measurements.
 import { GpuNest, type Op, type Win } from './gpu/nest';
 import { Renderer, type DrawLevel } from './render';
-import { coverage, holePixels, lastImage, manifold, rayDiag, rimJunctions } from './watertight';
+import { coverage, holePixels, lastImage, manifold, rayDiag, rimJunctions, unionClosure } from './watertight';
 
 /** a root column, in metres (the info line) */
 const ROOT_COLUMN_M = 3.2;
@@ -751,6 +751,20 @@ export class App {
         this.frozen = true;
         try {
           const caps = await this.render.capture(this.drawList());
+          if (this.nest.smooth) {
+            // (round 16) the sheet draw: no level is closed by itself (a parent's edge on its child's footprint is closed
+            // by the child's zipper), so the closure is over all levels at once (watertight.ts unionClosure; its open
+            // edges, level edges included, are reported as level 0's odd edges); there are no rim walls to split, so
+            // the rim-line check has nothing to count (lines 1, junctions 0 for each parent)
+            const wins = this.nest.wins.slice(0, this.nest.live) as { gx: number; gy: number; n: number }[];
+            const u = unionClosure(caps, wins, this.k);
+            if (u.open) console.log(`[sheets] union closure: ${u.open} open edges (root edge ${u.openRoot}), live ${this.nest.live}, wins ${JSON.stringify(wins)}, caps ${caps.map((c) => c.depth).join(',')}: ${u.where.join('; ')}`);
+            return caps.map((c, i) => {
+              const m = manifold(c);
+              const open = i === 0 ? u.open + u.degenerate : 0;
+              return { ...m, open, coincident: i === 0 ? u.coincident : 0, degenerate: i === 0 ? u.degenerate : 0, where: [] as [number, number, number][], rim: c.depth + 1 < this.nest.live ? { junctions: 0, unflagged: 0, lines: 1, where: i === 0 ? u.where : [] } : undefined };
+            });
+          }
           const rim = rimJunctions(caps, this.nest.wins.slice(0, this.nest.live) as { gx: number; gy: number; n: number }[], this.k);
           return caps.map((c) => ({ ...manifold(c), rim: rim.find((r) => r.depth === c.depth) }));
         } finally {

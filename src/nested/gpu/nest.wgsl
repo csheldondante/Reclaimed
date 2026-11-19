@@ -3395,6 +3395,546 @@ fn faceBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id)
 }
 
 /** the draw's list of face pages: dir[L] their count, entries (page, chunk key) from 16 + (L * cap + i) * 2 */
+// ---- (round 16) the sheet draw: the owner's spec (docs/design/NESTED_SCALES.md "As built (round 16)"; boxmesh.ts
+// sheetMesh is the reference, rule for rule). A column's j-th surface (bottom up: every solid/air change of its records)
+// is a quad on its four corner lines, drawn by sheet instance j of its chunk; a vertex is a cluster of its corner line
+// (the quadrants' owners' surface heights chained while the owners are not all solid or all air between them: every
+// wall collapses), placed at the integer mean of its heights. No walls, skirts, down caps or outer ring. Level edges: a
+// child's window-edge lines see the parent's column outside; a parent's rim line is the child's line (both bakes walk it
+// with the same function and inputs: the same bits); the child draws the zipper that closes each parent edge against its
+// k - 1 lines between (sheet instance j: parent surface j). The cache pass (sheetBake) writes per corner line its
+// clusters (bot, top, z, normal) and per column and surface the four corners' cluster indices; the draw (draw.wgsl
+// vsSheet) reads only these.
+/** cache page 0 (level id CACHE_ID + depth): words 0-1 the input hash, 2 1 when unchanged, 3 S (the chunk's sheets), 5 the
+ *  chunk key, 6 A (cluster spill pages, cz 1..A; sheet pages from cz 1 + A); from SLN a word a corner line of the chunk's
+ *  19 x 19 (first cluster | count << 20); from SCL the clusters, 4 words each (bot, top, z, octahedral normal): SCL0 in
+ *  page 0, then CPP a spill page */
+const SLN: u32 = 8u;
+const SCL: u32 = 372u;
+const SCL0: u32 = 3043u;
+const CPP: u32 = 3136u;
+/** sheet pages: SPP sheets a page, SPW words a sheet: per column 3 words (cluster indices of corners 0 | 1 << 16, 2 | 3 <<
+ *  16 on their lines; flags: bit 31 drawn, 0 up, 1 / 2 triangle 0 / 1 kept, 8-15 material), then from SZIP 16 zipper
+ *  slots (side * 8 + segment) of 2 words (z in the child's units; flags: bit 31 drawn, 0 up, 8-15 material, 16 + i - 1
+ *  triangle i kept) */
+const SPP: u32 = 15u;
+const SPW: u32 = 800u;
+const SZIP: u32 = 768u;
+const SFIX: f32 = 256.0;
+var<private> wkOn: array<bool, 4>;
+var<workgroup> wShP: array<u32, 16>;
+var<workgroup> wSA: u32;
+var<workgroup> wSS: u32;
+/** the canonical line of level L's corner line (CX, CY): on its child's footprint boundary, the child's (level, x, y) */
+fn sCanon(L: u32, CX: i32, CY: i32) -> vec3<i32> {
+  if (rimP(L, CX, CY)) {
+    let k = i32(u.a.x);
+    return vec3<i32>(i32(L) + 1, CX * k, CY * k);
+  }
+  return vec3<i32>(i32(L), CX, CY);
+}
+/** the four quadrant owners of canonical line (Lw, LX, LY): the column drawn there, outside the window the parent's */
+fn sPrep(Lw: u32, LX: i32, LY: i32) {
+  let k = i32(u.a.x);
+  for (var q = 0u; q < 4u; q++) {
+    let X = LX - 1 + i32(q & 1u);
+    let Y = LY - 1 + i32(q >> 1u);
+    var c = LC(Lw, X, Y, 0u);
+    var on = colOn(Lw, X, Y);
+    if (!on && Lw > 0u && !inWin(Lw, X, Y)) {
+      c = LC(Lw - 1u, fdiv(X, k), fdiv(Y, k), 1u);
+      on = colOn(Lw - 1u, c.X, c.Y);
+    }
+    wkC[q] = c;
+    wkOn[q] = on;
+    wkJ[q] = 0u;
+    wkN[q] = 0u;
+    wkP[q] = NONE;
+    if (on) {
+      wkN[q] = lcN(c);
+      if (c.lv != u.a.w) { wkP[q] = pageOf(c.lv, c.X >> 4, c.Y >> 4, 0u); }
+    }
+  }
+}
+/** whether record j of walk column q ends in a surface (solid below its top, air above, or the other way) */
+fn sSurf(q: u32, j: u32) -> bool {
+  let a = matSolid(u32(wkRec(q, j).y));
+  var b = false;
+  if (j + 1u < wkN[q]) { b = matSolid(u32(wkRec(q, j + 1u).y)); }
+  return a != b;
+}
+/** the lowest surface height above z on the walked line (NO_DEPTH: none); moves each cursor to its first record whose top
+ *  lies above z (z never below the last call's) */
+fn sNext(z: f32) -> f32 {
+  var best = NO_DEPTH;
+  for (var q = 0u; q < 4u; q++) {
+    let n = wkN[q];
+    var j = wkJ[q];
+    loop {
+      if (j >= n) { break; }
+      if (wkRec(q, j).x > z) { break; }
+      j++;
+    }
+    wkJ[q] = j;
+    var s = j;
+    loop {
+      if (s >= n) { break; }
+      let t = wkRec(q, s).x;
+      if (t >= best) { break; }
+      if (sSurf(q, s)) {
+        best = t;
+        break;
+      }
+      s++;
+    }
+  }
+  return best;
+}
+/** after sNext(z): whether the present owners are not all solid or all air just above z (a column continues downward as
+ *  its first record; a drawn column with no records is air) */
+fn sJoined() -> bool {
+  var have = false;
+  var s0 = false;
+  for (var q = 0u; q < 4u; q++) {
+    if (!wkOn[q]) { continue; }
+    var v = false;
+    if (wkJ[q] < wkN[q]) { v = matSolid(u32(wkRec(q, wkJ[q]).y)); }
+    if (!have) {
+      have = true;
+      s0 = v;
+    } else if (v != s0) {
+      return true;
+    }
+  }
+  return false;
+}
+fn sFix(z: f32) -> i32 { return i32(floor(z * SFIX)); }
+/** cluster i of the chunk's table: its first word */
+fn scl(i: u32) -> u32 {
+  if (i < SCL0) { return sCp * PW + SCL + i * 4u; }
+  let j = i - SCL0;
+  let pz = j / CPP;
+  var p = 0u;
+  if (pz < 16u) { p = wCivP[pz]; } else { p = pageOf(CACHE_ID + u.a.w, bChunk.x, bChunk.y, 1u + pz); }
+  return p * PW + (j % CPP) * 4u;
+}
+/** the most clusters level L's corner line (CX, CY) can have (its owners' records) */
+fn sBound(L: u32, CX: i32, CY: i32) -> u32 {
+  let c = sCanon(L, CX, CY);
+  sPrep(u32(c.x), c.y, c.z);
+  return wkN[0] + wkN[1] + wkN[2] + wkN[3];
+}
+/** corner line (CX, CY) walked bottom up; its clusters written from `first` (bot, top, z = integer mean, normal 0) */
+fn sWalk(L: u32, CX: i32, CY: i32, first: u32) -> u32 {
+  let c = sCanon(L, CX, CY);
+  sPrep(u32(c.x), c.y, c.z);
+  var cnt = 0u;
+  var a = 0.0;
+  var b = -NO_DEPTH;
+  var sum = 0;
+  var n = 0u;
+  loop {
+    let nx = sNext(b);
+    var join = false;
+    if (n > 0u && nx < NO_DEPTH) { join = sJoined(); }
+    if (join) {
+      sum += sFix(nx);
+      n++;
+    } else {
+      if (n > 0u) {
+        let o = scl(first + cnt);
+        pgStore(o, bitcast<u32>(a));
+        pgStore(o + 1u, bitcast<u32>(b));
+        pgStore(o + 2u, bitcast<u32>(f32(sum) / f32(n * 256u)));
+        pgStore(o + 3u, 0u);
+        cnt++;
+      }
+      if (nx >= NO_DEPTH) { break; }
+      a = nx;
+      sum = sFix(nx);
+      n = 1u;
+    }
+    b = nx;
+  }
+  return cnt;
+}
+/** the index (from the line's first) of the cluster holding z (the line's units) on the chunk's line (CX, CY) */
+fn sFind(CX: i32, CY: i32, z: f32) -> u32 {
+  let w = pgLoad(sCp * PW + SLN + lnIdx(CX, CY));
+  let s = w & 0xfffffu;
+  var lo = 0u;
+  var hi = w >> 20u;
+  loop {
+    if (lo >= hi) { break; }
+    let mid = (lo + hi) / 2u;
+    if (bitcast<f32>(pgLoad(scl(s + mid))) <= z) { lo = mid + 1u; } else { hi = mid; }
+  }
+  return max(lo, 1u) - 1u;
+}
+fn sClW(CX: i32, CY: i32, i: u32) -> u32 { return scl((pgLoad(sCp * PW + SLN + lnIdx(CX, CY)) & 0xfffffu) + i); }
+fn sZ(CX: i32, CY: i32, i: u32) -> f32 { return bitcast<f32>(pgLoad(sClW(CX, CY, i) + 2u)); }
+/** a column of level lv (any level, from the pages): whether record j ends in a surface */
+fn oSurf(lv: u32, X: i32, Y: i32, j: u32, n: u32) -> bool {
+  let c = LC(lv, X, Y, 0u);
+  let a = matSolid(lcMat(c, j));
+  var b = false;
+  if (j + 1u < n) { b = matSolid(lcMat(c, j + 1u)); }
+  return a != b;
+}
+fn oSurfaces(lv: u32, X: i32, Y: i32) -> u32 {
+  let n = oCount(lv, X, Y);
+  var s = 0u;
+  for (var j = 0u; j < n; j++) {
+    if (oSurf(lv, X, Y, j, n)) { s++; }
+  }
+  return s;
+}
+/** sheet j's first word in the chunk's sheet pages */
+fn sheetW(j: u32) -> u32 {
+  let pz = j / SPP;
+  var p = 0u;
+  if (pz < 16u) { p = wShP[pz]; } else { p = pageOf(CACHE_ID + u.a.w, bChunk.x, bChunk.y, 1u + wSA + pz); }
+  return p * PW + (j % SPP) * SPW;
+}
+/** a quad's area normal from its four placed corners (zero where a corner is a rim line: those are the child's units) */
+fn sQuadN(L: u32, X: i32, Y: i32, t: f32, up: bool) -> vec3<f32> {
+  var z = vec4<f32>(0.0);
+  for (var c = 0u; c < 4u; c++) {
+    let CX = X + i32(c & 1u);
+    let CY = Y + i32(c >> 1u);
+    if (rimP(L, CX, CY)) { return vec3<f32>(0.0); }
+    z[c] = sZ(CX, CY, sFind(CX, CY, t));
+  }
+  let n = vec3<f32>(z.x - z.y + z.z - z.w, z.x + z.y - z.z - z.w, 2.0);
+  return select(-n, n, up);
+}
+/** the zipper of segment `seg` on side `side` (0: the chunk's x edge on the window's west or east, 1: its y edge on the
+ *  south or north): the parent column outside, the line of chain step t (0 = the zipper's apex A), whether it exists */
+struct Zip {
+  ok: bool,
+  X: i32,
+  Y: i32,
+  l0: vec2<i32>,
+  d: vec2<i32>,
+}
+fn sZip(L: u32, cx: i32, cy: i32, side: u32, seg: u32) -> Zip {
+  var z = Zip(false, 0, 0, vec2<i32>(0), vec2<i32>(0));
+  let k = i32(u.a.x);
+  if (L == 0u || i32(seg) >= 16 / k) { return z; }
+  let w = u.lv[L];
+  let s0 = i32(seg) * k;
+  if (side == 0u) {
+    let a = cy * 16 + s0;
+    if (cx * 16 == w.x) {
+      z = Zip(true, fdiv(w.x, k) - 1, fdiv(a, k), vec2<i32>(cx * 16, a), vec2<i32>(0, 1));
+    } else if (cx * 16 + 16 == w.x + w.z) {
+      z = Zip(true, fdiv(w.x + w.z, k), fdiv(a, k), vec2<i32>(cx * 16 + 16, a + k), vec2<i32>(0, -1));
+    }
+  } else {
+    let a = cx * 16 + s0;
+    if (cy * 16 == w.y) {
+      z = Zip(true, fdiv(a, k), fdiv(w.y, k) - 1, vec2<i32>(a + k, cy * 16), vec2<i32>(-1, 0));
+    } else if (cy * 16 + 16 == w.y + w.z) {
+      z = Zip(true, fdiv(a, k), fdiv(w.y + w.z, k), vec2<i32>(a, cy * 16 + 16), vec2<i32>(1, 0));
+    }
+  }
+  if (z.ok && !colOn(L - 1u, z.X, z.Y)) { z.ok = false; }
+  return z;
+}
+@compute @workgroup_size(16, 16)
+fn sheetBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  let L = u.a.w;
+  let o = slotOrigin(u.r.x, li);
+  let cx = o.x + i32(wid.x);
+  let cy = o.y + i32(wid.y);
+  if (!inWin(L, cx * 16, cy * 16)) { return; }
+  if (u.e.z != 0 && i32(wid.y) != u.e.z - 1) { return; }
+  if (li == 0u) {
+    // (page 0 made if missing; the spill and sheet pages are sized below, after the skip)
+    if (pageOf(CACHE_ID + L, cx, cy, 0u) >= NOT_LOADED) { ensurePages(CACHE_ID + L, cx, cy, 1u, u.d.x); }
+    wCp = pageOf(CACHE_ID + L, cx, cy, 0u);
+  }
+  if (li < 9u) { wPg[li] = pageOf(L, cx - 1 + i32(li % 3u), cy - 1 + i32(li / 3u), 0u); }
+  let cp = workgroupUniformLoad(&wCp);
+  if (cp >= NOT_LOADED) { return; }
+  bOrg = vec2<i32>(cx - 1, cy - 1);
+  bChunk = vec2<i32>(cx, cy);
+  bFill(L, cx, cy, li);
+  sCp = cp;
+  let base = cp * PW;
+  // (round 14's skip, the same hash: the chunk's 20 x 20 columns unchanged and off every rim: nothing to do)
+  var ha = 0u;
+  var hb = 0u;
+  for (var q = li; q < 400u; q += 256u) {
+    let X = sOrg.x - 1 + i32(q % 20u);
+    let Y = sOrg.y - 1 + i32(q / 20u);
+    let n = bCount(L, X, Y);
+    let on = select(0u, 1u, colOn(L, X, Y));
+    var a = ((q + 1u) * 0x9e3779b1u) ^ (n * 0x85ebca6bu) ^ (on * 0xc2b2ae35u);
+    var b = ((q + 7u) * 0x27d4eb2du) ^ (n * 0x165667b1u) ^ (on * 0x7feb352du);
+    for (var j = 0u; j < n; j++) {
+      let r = bRec(L, X, Y, j);
+      a = (a ^ r.x ^ (r.y << 24u)) * 0x2c1b3c6du;
+      a ^= a >> 15u;
+      b = (b ^ (r.x * 0x9e3779b1u) ^ r.y) * 0x297a2d39u;
+      b ^= b >> 13u;
+    }
+    ha += a;
+    hb += b;
+  }
+  let hA = wgScan(li, ha).y | 1u;
+  let hB = wgScan(li, hb).y;
+  if (li == 0u) {
+    let same = !chunkRim(L, cx, cy) && pgLoad(base) == hA && pgLoad(base + 1u) == hB;
+    pgStore(base, hA);
+    pgStore(base + 1u, hB);
+    pgStore(base + 2u, select(0u, 1u, same));
+    wflag = select(0u, 1u, same);
+  }
+  if (workgroupUniformLoad(&wflag) == 1u) { return; }
+  // sizes: the cluster table (each line's place bounded by its owners' records: a scan), the sheets (the deepest column's
+  // surfaces, and on a child's window edge the parent columns' outside: the zippers), then every page made at once
+  var bound = 0u;
+  for (var q = li; q < 361u; q += 256u) { bound += sBound(L, cx * 16 - 1 + i32(q % 19u), cy * 16 - 1 + i32(q / 19u)); }
+  let sc = wgScan(li, bound);
+  let X = cx * 16 + i32(lid.x);
+  let Y = cy * 16 + i32(lid.y);
+  var ns = 0u;
+  let nOwn = bCount(L, X, Y);
+  for (var j = 0u; j < nOwn; j++) {
+    let a = matSolid(bRec(L, X, Y, j).y);
+    var b = false;
+    if (j + 1u < nOwn) { b = matSolid(bRec(L, X, Y, j + 1u).y); }
+    if (a != b) { ns++; }
+  }
+  if (li < 16u) {
+    let z = sZip(L, cx, cy, li / 8u, li % 8u);
+    if (z.ok) { ns = max(ns, oSurfaces(L - 1u, z.X, z.Y)); }
+  }
+  let S = wgMax(li, ns);
+  if (li == 0u) {
+    var A = 0u;
+    if (sc.y > SCL0) { A = 1u + (sc.y - SCL0 - 1u) / CPP; }
+    let need = 1u + A + (S + SPP - 1u) / SPP;
+    ensurePages(CACHE_ID + L, cx, cy, need, u.d.x);
+    pgStore(base + 3u, S);
+    pgStore(base + 5u, u32(cx) | (u32(cy) << 16u));
+    pgStore(base + 6u, A);
+    wSA = A;
+    // (the pool full: a page missing; the chunk is left as it was, its count 0 so nothing of it is drawn)
+    wflag = 0u;
+    for (var z = 1u; z < need; z++) {
+      if (pageOf(CACHE_ID + L, cx, cy, z) >= NOT_LOADED) { wflag = 1u; }
+    }
+    if (wflag == 1u) {
+      pgStore(base + 3u, 0u);
+      pgStore(base, 0u);
+    }
+  }
+  storageBarrier();
+  workgroupBarrier();
+  if (workgroupUniformLoad(&wflag) == 1u) { return; }
+  civPages(li);
+  let A = workgroupUniformLoad(&wSA);
+  if (li < 16u) { wShP[li] = pageOf(CACHE_ID + L, cx, cy, 1u + A + li); }
+  workgroupBarrier();
+  // 1. every corner line of the chunk and the ring round it walked once
+  var first = sc.x;
+  for (var q = li; q < 361u; q += 256u) {
+    let CX = cx * 16 - 1 + i32(q % 19u);
+    let CY = cy * 16 - 1 + i32(q / 19u);
+    let c = sWalk(L, CX, CY, first);
+    pgStore(base + SLN + q, first | (c << 20u));
+    first += sBound(L, CX, CY);
+  }
+  storageBarrier();
+  workgroupBarrier();
+  // 2. (a child) a window-edge line between two rim lines: a cluster holding surfaces of the parent's column outside is
+  // placed on the parent's edge: per such surface zP + (zQ - zP) i / k from the clusters holding it on the edge's rim
+  // lines P and Q (fixed point, integer i), averaged
+  if (L > 0u) {
+    let w = u.lv[L];
+    let k = i32(u.a.x);
+    for (var q = li; q < 289u; q += 256u) {
+      let CX = cx * 16 + i32(q % 17u);
+      let CY = cy * 16 + i32(q / 17u);
+      let onX = CX == w.x || CX == w.x + w.z;
+      let onY = CY == w.y || CY == w.y + w.z;
+      if (!(onX || onY) || CX < w.x || CY < w.y || CX > w.x + w.z || CY > w.y + w.z) { continue; }
+      if (CX - fdiv(CX, k) * k == 0 && CY - fdiv(CY, k) * k == 0) { continue; }
+      var P = vec2<i32>(CX, fdiv(CY, k) * k);
+      var Q = P + vec2<i32>(0, k);
+      var i = CY - P.y;
+      var XX = select(fdiv(CX, k), fdiv(CX, k) - 1, CX == w.x);
+      var XY = fdiv(CY, k);
+      if (!onX) {
+        P = vec2<i32>(fdiv(CX, k) * k, CY);
+        Q = P + vec2<i32>(k, 0);
+        i = CX - P.x;
+        XX = fdiv(CX, k);
+        XY = select(fdiv(CY, k), fdiv(CY, k) - 1, CY == w.y);
+      }
+      if (!colOn(L - 1u, XX, XY)) { continue; }
+      let nX = oCount(L - 1u, XX, XY);
+      let lw = pgLoad(base + SLN + lnIdx(CX, CY));
+      for (var ci = 0u; ci < (lw >> 20u); ci++) {
+        let cb = scl((lw & 0xfffffu) + ci);
+        let bot = bitcast<f32>(pgLoad(cb));
+        let top = bitcast<f32>(pgLoad(cb + 1u));
+        var sum = 0;
+        var m = 0u;
+        for (var j = 0u; j < nX; j++) {
+          if (!oSurf(L - 1u, XX, XY, j, nX)) { continue; }
+          let zk = toKid(L - 1u, oTop(L - 1u, XX, XY, j));
+          if (zk < bot || zk > top) { continue; }
+          let zp = sFix(sZ(P.x, P.y, sFind(P.x, P.y, zk)));
+          let zq = sFix(sZ(Q.x, Q.y, sFind(Q.x, Q.y, zk)));
+          sum += zp * k + (zq - zp) * i;
+          m++;
+        }
+        if (m > 0u) { pgStore(cb + 2u, bitcast<u32>(f32(sum) / f32(m * u32(k) * 256u))); }
+      }
+    }
+  }
+  storageBarrier();
+  workgroupBarrier();
+  // 3. each cluster's normal (the chunk's lines; rim lines none: flat): the sum of the area normals of this level's quads
+  // on it (a merge walk: the clusters and each quadrant column's surfaces both rise)
+  for (var q = li; q < 289u; q += 256u) {
+    let CX = cx * 16 + i32(q % 17u);
+    let CY = cy * 16 + i32(q / 17u);
+    if (rimP(L, CX, CY)) { continue; }
+    let lw = pgLoad(base + SLN + lnIdx(CX, CY));
+    var cur = array<u32, 4>(0u, 0u, 0u, 0u);
+    for (var ci = 0u; ci < (lw >> 20u); ci++) {
+      let cb = scl((lw & 0xfffffu) + ci);
+      let top = bitcast<f32>(pgLoad(cb + 1u));
+      var nsum = vec3<f32>(0.0);
+      for (var qd = 0u; qd < 4u; qd++) {
+        let QX = CX - 1 + i32(qd & 1u);
+        let QY = CY - 1 + i32(qd >> 1u);
+        let n = bCount(L, QX, QY);
+        var j = cur[qd];
+        loop {
+          if (j >= n) { break; }
+          let r = bRec(L, QX, QY, j);
+          let t = bitcast<f32>(r.x);
+          if (t > top) { break; }
+          let a = matSolid(r.y);
+          var b = false;
+          if (j + 1u < n) { b = matSolid(bRec(L, QX, QY, j + 1u).y); }
+          if (a != b) { nsum += sQuadN(L, QX, QY, t, a); }
+          j++;
+        }
+        cur[qd] = j;
+      }
+      var wd = 0u;
+      if (dot(nsum, nsum) > 0.0) { wd = octEnc(normalize(nsum)); }
+      pgStore(cb + 3u, wd);
+    }
+  }
+  // 4. each column's surfaces: its corners' cluster indices, and the pair rule per triangle (a run of consecutive
+  // surfaces on the same three vertices keeps its top one when odd, none when even)
+  {
+    let col = colIn(X, Y);
+    var kid = vec4<bool>(false);
+    for (var c = 0u; c < 4u; c++) { kid[c] = rimP(L, X + i32(c & 1u), Y + i32(c >> 1u)); }
+    var j = 0u;
+    var prev = vec4<u32>(0xffffffffu);
+    var run = vec2<u32>(0u);
+    for (var r = 0u; r < nOwn; r++) {
+      let rec = bRec(L, X, Y, r);
+      let a = matSolid(rec.y);
+      var b = false;
+      var m1 = MAT_AIR;
+      if (r + 1u < nOwn) {
+        m1 = bRec(L, X, Y, r + 1u).y;
+        b = matSolid(m1);
+      }
+      if (a == b) { continue; }
+      let h = bitcast<f32>(rec.x);
+      var ix = vec4<u32>(0u);
+      for (var c = 0u; c < 4u; c++) {
+        let CX = X + i32(c & 1u);
+        let CY = Y + i32(c >> 1u);
+        var z = h;
+        if (kid[c]) { z = toKid(L, h); }
+        ix[c] = sFind(CX, CY, z);
+      }
+      let sw = sheetW(j) + col * 3u;
+      pgStore(sw, ix.x | (ix.y << 16u));
+      pgStore(sw + 1u, ix.z | (ix.w << 16u));
+      let mat = select(m1, rec.y, a) & 255u;
+      pgStore(sw + 2u, 0x80000000u | select(0u, 1u, a) | (mat << 8u));
+      // triangle 0 (corners 0, 1, 3) and 1 (0, 3, 2): same three vertices as the surface below?
+      let same0 = j > 0u && ix.x == prev.x && ix.y == prev.y && ix.w == prev.w;
+      let same1 = j > 0u && ix.x == prev.x && ix.w == prev.w && ix.z == prev.z;
+      if (j > 0u && !same0 && run.x % 2u == 1u) { pgStore(sheetW(j - 1u) + col * 3u + 2u, pgLoad(sheetW(j - 1u) + col * 3u + 2u) | 2u); }
+      if (j > 0u && !same1 && run.y % 2u == 1u) { pgStore(sheetW(j - 1u) + col * 3u + 2u, pgLoad(sheetW(j - 1u) + col * 3u + 2u) | 4u); }
+      run.x = select(1u, run.x + 1u, same0);
+      run.y = select(1u, run.y + 1u, same1);
+      prev = ix;
+      j++;
+    }
+    if (j > 0u) {
+      var f = pgLoad(sheetW(j - 1u) + col * 3u + 2u);
+      if (run.x % 2u == 1u) { f |= 2u; }
+      if (run.y % 2u == 1u) { f |= 4u; }
+      pgStore(sheetW(j - 1u) + col * 3u + 2u, f);
+    }
+    for (var e = j; e < S; e++) { pgStore(sheetW(e) + col * 3u + 2u, 0u); }
+  }
+  // 5. (a child) the zippers: slot li cleared on every sheet, then each segment's own written (same thread)
+  if (li < 16u) {
+    for (var e = 0u; e < S; e++) { pgStore(sheetW(e) + SZIP + li * 2u + 1u, 0u); }
+    let side = li / 8u;
+    let seg = li % 8u;
+    let z = sZip(L, cx, cy, side, seg);
+    if (z.ok) {
+      let k = u32(u.a.x);
+      let n = oCount(L - 1u, z.X, z.Y);
+      var j = 0u;
+      var prev: array<vec3<u32>, 8>;
+      var run: array<u32, 8>;
+      for (var r = 0u; r < n; r++) {
+        if (!oSurf(L - 1u, z.X, z.Y, r, n)) { continue; }
+        let c = LC(L - 1u, z.X, z.Y, 0u);
+        let up = matSolid(lcMat(c, r));
+        var mat = lcMat(c, r);
+        if (!up) { mat = lcMat(c, r + 1u); }
+        let zk = toKid(L - 1u, oTop(L - 1u, z.X, z.Y, r));
+        let zw = sheetW(j) + SZIP + li * 2u;
+        pgStore(zw, bitcast<u32>(zk));
+        var flags = 0x80000000u | select(0u, 1u, up) | ((mat & 255u) << 8u);
+        let p0 = z.l0;
+        let i0 = sFind(p0.x, p0.y, zk);
+        for (var t = 1u; t < k; t++) {
+          let pa = z.l0 + z.d * i32(t);
+          let pb = z.l0 + z.d * i32(t + 1u);
+          let key = vec3<u32>(i0, sFind(pa.x, pa.y, zk), sFind(pb.x, pb.y, zk));
+          let same = j > 0u && all(key == prev[t]);
+          if (j > 0u && !same && run[t] % 2u == 1u) {
+            let pw = sheetW(j - 1u) + SZIP + li * 2u + 1u;
+            pgStore(pw, pgLoad(pw) | (1u << (15u + t)));
+          }
+          run[t] = select(1u, run[t] + 1u, same);
+          prev[t] = key;
+        }
+        pgStore(zw + 1u, flags);
+        j++;
+      }
+      if (j > 0u) {
+        let pw = sheetW(j - 1u) + SZIP + li * 2u + 1u;
+        var f = pgLoad(pw);
+        for (var t = 1u; t < k; t++) {
+          if (run[t] % 2u == 1u) { f |= 1u << (15u + t); }
+        }
+        pgStore(pw, f);
+      }
+    }
+  }
+}
+
 @compute @workgroup_size(1)
 fn dirClear() {
   for (var L = 0u; L < 16u; L++) { atomicStore(&dir[L], 0u); }
@@ -3403,11 +3943,12 @@ fn dirClear() {
     atomicStore(&dir[exDir() + L], 0u);
   }
 }
-/** (round 15, NS-117) the face pages in blocks of EX_B triangles (the smooth draw's exceptions; a page's slots past its
- *  count cost no vertex): 8 counts a level from exDir(), then per level up to EX_PB x cap entries (face list index << 5 |
- *  block) from exDir() + 8 + L * EX_PB * cap */
+/** (round 16) the sheets: 8 counts a level from exDir(), then per level up to 24 x cap entries of 2 words (EX_PB words a
+ *  page of the pool) from exDir() + 8 + L * EX_PB * cap. Not a cap: a chunk's sheets are at most its deepest column's
+ *  surfaces, at most its records, at most 24 a column page of the chunk; on a child's window edge also the parent
+ *  column's outside (BACKLOG NS-125) */
 const EX_B: u32 = 128u;
-const EX_PB: u32 = 25u;
+const EX_PB: u32 = 48u;
 fn exDir() -> u32 { return wallDir() + 8u + 8u * 16u * u.r.y; }
 /** (round 15, NS-117) the smooth draw's wall blocks: 8 counts a level from wallDir(), then per level L up to 16 x cap
  *  entries (cache list index << 4 | block) from wallDir() + 8 + L * 16 * cap (a chunk has at most 512 / WALL_B blocks) */
@@ -3419,24 +3960,28 @@ fn dirBuild(@builtin(global_invocation_id) gid: vec3<u32>) {
   let k1 = atomicLoad(&tab[s * 4u + 1u]);
   if (k1 >= BUSY) { return; }
   let lid = k1 & 0xffu;
-  // (round 14) the smooth draw's cache pages: the template's instances, a second list per level (dir[8 + L], entries
-  // from 16 + ((8 + L) * cap + i) * 2)
+  // (round 16) the sheet draw's cache pages: the sheet pages list their sheets
   if (lid >= CACHE_ID && lid < CACHE_ID + 8u) {
-    // (a chunk's first cache page only: pages cz 1, 2, ... hold the rest of a long cluster table)
-    if ((k1 >> 8u) != 0u) { return; }
     let p = atomicLoad(&tab[s * 4u + 2u]);
     if (p >= NOT_LOADED) { return; }
     let L = lid - CACHE_ID;
-    let i = atomicAdd(&dir[8u + L], 1u);
-    let e = 16u + ((8u + L) * u.r.y + i) * 2u;
-    atomicStore(&dir[e], p);
-    atomicStore(&dir[e + 1u], atomicLoad(&tab[s * 4u]));
-    // (round 15) the chunk's walls in blocks of WALL_B: an entry a block (storage atomics: the pool's kind)
-    let nb = (pgLoad(p * PW + 3u) + WALL_B - 1u) / WALL_B;
-    if (nb > 0u) {
-      let wd = wallDir();
-      let b0 = atomicAdd(&dir[wd + L], nb);
-      for (var b = 0u; b < nb; b++) { atomicStore(&dir[wd + 8u + L * 16u * u.r.y + b0 + b], (i << 4u) | b); }
+    let cz = k1 >> 8u;
+    let k0 = atomicLoad(&tab[s * 4u]);
+    // (round 16) a sheet page: an instance a sheet (2 words: the sheet page | the sheet in it << 24, the chunk's page 0)
+    let p0 = pageOf(lid, i32(k0 & 0xffffu), i32(k0 >> 16u), 0u);
+    if (p0 >= NOT_LOADED) { return; }
+    let A = pgLoad(p0 * PW + 6u);
+    if (cz < 1u + A) { return; }
+    let b = cz - 1u - A;
+    let S = pgLoad(p0 * PW + 3u);
+    if (S <= b * SPP) { return; }
+    let ns = min(SPP, S - b * SPP);
+    let xd = exDir();
+    let i0 = atomicAdd(&dir[xd + L], ns);
+    for (var jj = 0u; jj < ns; jj++) {
+      let e = xd + 8u + L * EX_PB * u.r.y + (i0 + jj) * 2u;
+      atomicStore(&dir[e], p | (jj << 24u));
+      atomicStore(&dir[e + 1u], p0);
     }
     return;
   }
@@ -3448,11 +3993,6 @@ fn dirBuild(@builtin(global_invocation_id) gid: vec3<u32>) {
   let e = 16u + (L * u.r.y + i) * 2u;
   atomicStore(&dir[e], p);
   atomicStore(&dir[e + 1u], atomicLoad(&tab[s * 4u]));
-  // (round 15) the page's triangles in blocks of EX_B
-  let nb = (pgLoad(p * PW) + EX_B - 1u) / EX_B;
-  let xd = exDir();
-  let b0 = atomicAdd(&dir[xd + L], nb);
-  for (var b = 0u; b < nb; b++) { atomicStore(&dir[xd + 8u + L * EX_PB * u.r.y + b0 + b], (i << 5u) | b); }
 }
 /** the draw's indirect arguments a level: an instance per face page, three vertices a triangle slot */
 @compute @workgroup_size(1)
@@ -3462,18 +4002,15 @@ fn dirFinish() {
     dargs[L * 4u + 1u] = atomicLoad(&dir[L]);
     dargs[L * 4u + 2u] = 0u;
     dargs[L * 4u + 3u] = 0u;
-    // (round 15, NS-117) the template's caps: an instance a cache page, 2 triangles a column
-    dargs[(8u + L) * 4u] = 256u * 2u * 3u;
-    dargs[(8u + L) * 4u + 1u] = atomicLoad(&dir[8u + L]);
-    dargs[(8u + L) * 4u + 2u] = 0u;
-    dargs[(8u + L) * 4u + 3u] = 0u;
-    // (round 15) the template's walls: an instance a block of WALL_B walls with pixels, 6 triangles a wall
-    dargs[(16u + L) * 4u] = WALL_B * 6u * 3u;
-    dargs[(16u + L) * 4u + 1u] = atomicLoad(&dir[wallDir() + L]);
-    dargs[(16u + L) * 4u + 2u] = 0u;
-    dargs[(16u + L) * 4u + 3u] = 0u;
-    // (round 15) the exceptions: an instance a block of EX_B face triangles
-    dargs[(24u + L) * 4u] = EX_B * 3u;
+    // (round 16: the template's caps and walls and the exceptions are gone; 8-23 unused)
+    for (var g = 8u; g < 24u; g += 8u) {
+      dargs[(g + L) * 4u] = 0u;
+      dargs[(g + L) * 4u + 1u] = 0u;
+      dargs[(g + L) * 4u + 2u] = 0u;
+      dargs[(g + L) * 4u + 3u] = 0u;
+    }
+    // (round 16) the sheets: an instance a sheet of a chunk, 2 triangles a column and 32 zipper triangles
+    dargs[(24u + L) * 4u] = (512u + 32u) * 3u;
     dargs[(24u + L) * 4u + 1u] = atomicLoad(&dir[exDir() + L]);
     dargs[(24u + L) * 4u + 2u] = 0u;
     dargs[(24u + L) * 4u + 3u] = 0u;

@@ -1369,10 +1369,15 @@ export function sheetMesh(scene: MeshScene): SheetMesh {
             for (let t = 1; t < k; t++) poly.push([L + 1, A[1] + ((B[1] - A[1]) / k) * t, A[2] + ((B[2] - A[2]) / k) * t]);
           }
         }
-        // fan apex: the first corner not on the split edge (the split edge runs from corner e to corner e + 1)
-        const apex = split >= 0 ? cornerAt[(split + 2) % 4] : 0;
-        const tri: [number, number, number][] = [];
-        for (let t = 1; t + 1 < poly.length; t++) tri.push([apex, (apex + t) % poly.length, (apex + t + 1) % poly.length]);
+        // the quad's two triangles on its four corners (c0, c1, c3), (c0, c3, c2); then, along a split edge from corner A
+        // to B (counter-clockwise), the zipper (A, s_t, s_t+1), t = 1 .. k - 1 (s_k = B): the same polygon cut into a
+        // plain quad and a fan that closes the sliver between the straight edge and the child's vertices (the GPU's
+        // child draws the zipper: every vertex of it is on the child's edge lines)
+        const tri: [number, number, number][] = [
+          [cornerAt[0], cornerAt[1], cornerAt[2]],
+          [cornerAt[0], cornerAt[2], cornerAt[3]],
+        ];
+        if (split >= 0) for (let t = 1; t < k; t++) tri.push([cornerAt[split], (cornerAt[split] + t) % poly.length, (cornerAt[split] + t + 1) % poly.length]);
         // per surface: each polygon vertex's cluster
         const keys: (string[] | null)[][] = [];
         ss.forEach((s, j) => {
@@ -1418,7 +1423,7 @@ export function sheetMesh(scene: MeshScene): SheetMesh {
           tri.forEach((t, ti) => {
             if (!kept[j][ti]) return;
             const [a, b, c] = keys[j][ti]!;
-            const isFan = split >= 0;
+            const isFan = ti >= 2;
             if (isFan) st.fan++;
             tris.push({ v: s.up ? [a, b, c] : [a, c, b], L, X, Y, j, up: s.up, fan: isFan });
           }),

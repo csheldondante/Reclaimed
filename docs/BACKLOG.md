@@ -456,6 +456,16 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   facing away from the sun need the box draw's ambient floor; (c) exceptions flat beside smooth template cells (give
   them the cache normals where a slot matches); the stills script's carve-rim pose misses the carve; the phone stills
   and the zoom GIF were not made this round.
+- NS-125 (limit, round 16) The sheet directory's bound (24 x cap entries a level) covers a chunk's own columns; a child
+  edge chunk's zipper sheets follow the parent column outside, which could in theory hold more surfaces than any child
+  column of that chunk. Not seen. A per-level overflow would leave sheets undrawn: make the directory one shared list
+  (entries carry their level) or count the parent's pages too.
+- NS-126 (hack, round 16) The sheet draw's level edges depend on both levels' columns: a child's window-edge lines read
+  the parent's columns outside the window, a parent's rim lines the child's. Slides now re-bake the child's edge ring
+  (sheet draw only); an edit that changes a parent column next to the child's window but outside it does not re-bake
+  the child's edge chunks (the regions are planned per level on the GPU). Fix at the root: the plan grows each level's
+  region by the other level's dependency (a parent region touching a child's window edge adds the child's edge chunks,
+  and the reverse), for boxes too (NS-119 is likely the same miss).
 - NS-124 (limit, round 16) The sheet form treats a column as continuing downward as its first record, so a column whose
   first record is air is a bottomless hole: its first (downward) surface is a ceiling whose edges stay open where it
   meets neighbours (open by design: nothing under the ground is drawn). Only the random unit scenes have such columns;
