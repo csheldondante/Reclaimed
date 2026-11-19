@@ -13,9 +13,11 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
   // (round 20: --texbands N, the textured draw's band window)
   const tb = R.opt('texbands', '');
   await page.goto(`https://localhost:${port}/nested.html?k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140${tb ? `&texbands=${tb}` : ''}`, { waitUntil: 'load' });
-  await page.waitForFunction(() => window.nested && nested.app.frameCount > 60, { timeout: 120000, polling: 100 });
+  // (round 21: and the boot's pipelines made, as the stills wait: the suite's first edit needs level 1's window, which a
+  // staged boot (round 19) opens later; without this the suite threw on a null window)
+  await page.waitForFunction(() => window.nested && nested.app.frameCount > 60 && nested.app.pipesReady, { timeout: 180000, polling: 100 });
   await sleep(1500);
-  const h = await page.evaluate(async () => {
+  const h =await page.evaluate(async () => {
     const { watertightSuite } = await import('/src/nested/suite.ts');
     const e = nested.eye();
     const f = nested.app.forward();
@@ -64,6 +66,30 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
         await nested.tex(true);
         const f = (o) => `all ${med(o.all).toFixed(2)}; ${depths.map((d) => `L${d} ${med(o[d]).toFixed(2)}`).join(', ')}`;
         return `flat: ${f(out.flat)} | textured: ${f(out.tex)}`;
+      });
+      console.log(`${name}${R.opt('smooth', '0') === '1' ? ' (sheets)' : ' (boxes)'}: draw ms ${r}`);
+    }
+    return;
+  }
+  // (round 21, --canopyab 1) the textured draw with the forest canopy against without it, same page, alternating 3 times,
+  // at the views that see far soil ('hillside', 'the map', and a far overview from high up): median ms a whole draw.
+  // Then stops.
+  if (R.opt('canopyab', '0') === '1') {
+    const cv = { hillside: views.hillside, 'the map': views['the map'], 'far overview': { yaw: 0.9, pitch: 0.75, eye: [hx + 70, hy + 110, hz + 120] } };
+    await page.evaluate(() => nested.tex(true));
+    for (const [name, v] of Object.entries(cv)) {
+      await page.evaluate((v) => nested.setView(v), v);
+      await sleep(2500);
+      const r = await page.evaluate(async () => {
+        const med = (v) => [...v].sort((x, y) => x - y)[Math.floor(v.length / 2)];
+        const out = { off: [], on: [] };
+        for (let i = 0; i < 6; i++) {
+          const on = i % 2 === 1;
+          await nested.canopy(on);
+          out[on ? 'on' : 'off'].push(await nested.benchDraw(10));
+        }
+        await nested.canopy(true);
+        return `canopy off ${med(out.off).toFixed(2)} | on ${med(out.on).toFixed(2)}`;
       });
       console.log(`${name}${R.opt('smooth', '0') === '1' ? ' (sheets)' : ' (boxes)'}: draw ms ${r}`);
     }

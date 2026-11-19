@@ -3,6 +3,15 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-19 — nested scales round 21: far hills read as forest (`nested-scales`)
+
+The user, verbatim: "I think we want the hills at the furthest zoom to read as trees not grass but from miles away."
+
+Consequence (round 21, docs/design/NESTED_SCALES.md "As built (round 21)"): the textured draw shades soil seen from
+afar as forest canopy (a world-space forest density and crown grid, driven by the world-space pixel footprint, so it is
+the same from every level), fading to the round 20 grass on approach; `?canopy=0|1`, `?canopyfade=`. A stand-in until
+trees exist as objects (BACKLOG NS-154). The haze was retuned so far wooded hills read blue-green and dark.
+
 ## 2026-11-18 — nested scales round 6: boxes, the partition record, fast and watertight (`nested-scales`)
 
 After five rounds failed to make matched sheets and SDF footprints watertight (8,215 open edges, 5,920 hole pixels,

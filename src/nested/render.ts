@@ -122,6 +122,11 @@ export class Renderer {
   bandsSplit = false;
   /** (round 20) ?texbands=N: the textured draw's band window (N + 1 band noises a pixel at most); 0 its default (6) */
   texBands = 0;
+  /** (round 21) ?canopy=0|1: soil seen from afar shaded as forest canopy (default on) */
+  canopy = true;
+  /** (round 21) ?canopyfade=: the canopy's crossover footprint, world units a pixel (canopy over twice it, grass under
+   *  half: with 2-unit crown cells, 0.1 puts the crossover at cells of 10-40 pixels) */
+  canopyFade = 0.1;
   private texPipes: { box: GPURenderPipeline; sheet: GPURenderPipeline; sky: GPURenderPipeline } | null = null;
   private texCompile: Promise<void> | null = null;
   /** (round 20) the textured pipelines' creation time, ms (asynchronous, after the first frame) */
@@ -242,7 +247,8 @@ export class Renderer {
       f.set([this.diag, this.bandsSplit ? 1 : 0, this.tint ? 1 : 0, this.nest.k], 0);
       // (want.w: 1 / k, exact on the CPU, for the rim vertices: round 11)
       // (want.z, round 20: the textured draw's band window, 0 = its default)
-      f.set([lv.want, 0, this.texBands, 1 / this.nest.k], 4);
+      // (want.y, round 21: the forest canopy's crossover footprint, world units a pixel, 0 = no canopy)
+      f.set([lv.want, this.canopy ? this.canopyFade : 0, this.texBands, 1 / this.nest.k], 4);
       // (sun.w, round 14: the smooth draw's crease angle as its cosine)
       // (round 20: the textured draw's sun is lower, about 38 degrees up, so the relief reads without shadows; the flat
       // draw keeps its own)

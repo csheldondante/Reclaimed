@@ -602,6 +602,29 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   local magnitudes, which is where it is drawn.
 - NS-153 (hack, round 20) Renderer.diag 3 (the textured draw's bands as colour: red the band value, green the bent
   normal toward the sun, blue the broad noise) has no button; scripts/nested-r20-stills.mjs --diag 3.
+- NS-154 (hack, round 21) The forest canopy is a STAND-IN: soil seen from afar is shaded as tree crowns (shade.wgsl
+  shCrowns), and on approach the forest fades to bare grass (crossover at crown cells of 10-40 pixels, `?canopyfade=`)
+  because trees do not exist as objects yet. Fix: real trees (instanced or generated) that the far canopy hands over
+  to, placed from the same density field and crown grid so the far view and the near trees agree. Until then a hill
+  that is wooded from afar is a meadow when you land on it.
+- NS-155 (limit, round 21) The canopy's density knows only soil, slope and two noises: it does not thin near bare stone
+  or sand (material is per triangle; no distance to a material edge in the fragment, NS-150) nor near carved edges
+  (no edge distance in the fragment). A carved pit in a wood shows crowns to its rim. Needs a material / edge distance
+  field (the medial-axis / JFA idea in "Recorded ideas") or a per-vertex forest weight.
+- NS-156 (look, round 21) The canopy is painted on the ground: no silhouettes on ridges, no parallax, and seen at
+  grazing angles on a facing slope at 20-40 pixel crowns it reads as stretched fish scales (r21-mid-canopy,
+  r21-low-canopy); from straight above at 330 m it reads a little like a pebbled carpet (crowns too uniform, outlines
+  too crisp: r21-far-canopy). Better: a crown height in a parallax / relief march, ridge silhouettes from a vertex
+  offset at far levels, a softer crown profile, and variety in crown size by stand.
+- NS-157 (hack, round 21) The canopy's constants (crown cell 2 world units, radius 0.5-0.8 cells, density thresholds,
+  slope gate 0.62-0.82, colours, grazing grow 1.3) and the new haze (rate 0.0011, in-scatter tint (0.56, 0.66, 0.82))
+  are hand-tuned literals in shade.wgsl; into NS-151's tuning panel. The haze change also alters `?canopy=0`'s look
+  (round 20's haze is not kept behind a toggle).
+- NS-158 (perf, round 21) Canopy cost measured on the desktop only (+0 to +1.4 ms the whole sheet draw, inside the
+  run's noise); not on the phone. Owner: toggle `?canopy=0|1` on the phone at a far view and read the frame time.
+- NS-159 (hack, round 21) scripts/nested-perf.mjs started its scene before the staged boot (round 19) had opened level
+  1 and threw on a null window; it now waits for `pipesReady` as the stills do. Other scripts that wait only on
+  frameCount may race the same way (not audited).
 - NS-137 (limit, round 18) A smooth switch holds levels, edits and shrinks still while it bakes (2 chunk rows a frame:
   16 frames, ~170 ms wall on a fresh world, longer when dug). A wish changed mid-switch abandons it; the rows it baked
   stay in the pool until the next flip lets that draw's pages go.

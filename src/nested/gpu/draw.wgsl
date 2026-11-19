@@ -520,6 +520,8 @@ fn texOut(q: vec3<f32>, zo: f32, ng: vec3<f32>, mat: u32, pxL: f32, toEye: vec3<
   si.debug = d.misc.x == 3.0;
   // (want.z: ?texbands=, the band window's size; 0 the default)
   si.nb = d.want.z;
+  // (want.y, round 21: the forest canopy's crossover footprint, world units a pixel; 0 off: ?canopy, ?canopyfade)
+  si.canopy = d.want.y;
   var col = texShade(si);
   if (d.misc.z > 0.5) { col = mix(col, TINTS[u32(d.lvl.w) % 6u] * dot(col, vec3<f32>(0.3, 0.5, 0.2)) * 1.3, 0.55); }
   var o: FOut;

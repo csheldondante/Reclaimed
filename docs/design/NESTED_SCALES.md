@@ -1130,7 +1130,7 @@ the solid below the next air gap down." "Why make those [skirts, outer ring] if 
   measured in aggregate (pipelines compile in parallel): cold first frame 6.8-7.2 s, every boot pipeline 12.8-14.3 s
   (round 18: the 28 synchronous pipelines, GPU done with the first frame at 22.3 s).
 
-**As built (round 20; current state): the textured draw** (the owner: "Please use high quality textures and lighting
+**As built (round 20; current state, with round 21's canopy and haze below): the textured draw** (the owner: "Please use high quality textures and lighting
 for the next pass. Then let's keep a toggle so we can go back to fix the artifacts."; "when you add normal maps and
 lighting the fine detail needs to match them when it loads in").
 - *The toggle.* The "Textured" button and `?tex=0|1`, default on. Off is the round 6-19 shading exactly: `fs` and `fsS`
@@ -1178,6 +1178,42 @@ lighting the fine detail needs to match them when it loads in").
   Compile (Dawn): textured boxes 136-214 ms, sheets 176-244, sky 24-34 (under the 400 ms floor).
 - *Diagnostics.* The level tint mixes over the textured colour as over the flat one; diag 1 and 2 draw the flat
   diagnostics in the textured pipeline; diag 3 shows the bands (NS-153).
+
+**As built (round 21; current state): forest canopy from afar** (the owner: "I think we want the hills at the furthest
+zoom to read as trees not grass but from miles away"). Shading only (shade.wgsl texShade, one block after the
+materials); geometry, nest.wgsl, derive and the flat path untouched (flat check: 0 channels differ, boxes and sheets).
+- *A stand-in.* Trees do not exist as objects yet, so on soil seen from far the ground is shaded as a closed canopy of
+  rounded crowns, and on approach the forest fades to the round 20 grass (NS-154).
+- *By the world-space footprint alone* (`pxW`, world units a pixel, the one the band window uses): canopy weight =
+  smoothstep(-1, 1, log2(pxW / canopy)), so full canopy at footprints over twice `canopy`, grass under half of it.
+  `canopy` = `?canopyfade=` (default 0.1 world units a pixel: the crown cell, 2 world units, is 20 pixels at half way,
+  10-40 pixels across the crossover); `?canopy=0` off (uniform want.y = 0). Never the level or the distance: the same
+  point looks the same from any level (test/gpu/nested-detail.test.ts, far footprints 0.02-2 world units a pixel:
+  colour across levels the same to 7.4e-6; canopy on vs off differs by 0.17).
+- *Where (a world-space field):* soil only (stone, sand, clay stay bare); the geometric normal's z 0.62-0.82 fades it
+  out on slopes steeper than about 40 degrees; density = smoothstep(-0.2, 0.15) of a 32 world unit noise plus 0.3 of
+  the broad 8 unit one: woods and clearings that stay put. Not lowered near carved edges (the fragment does not know
+  them; NS-155). The understorey in the gaps darkens toward (0.06, 0.10, 0.05) with the density.
+- *Crowns:* a jittered grid of 2-world-unit cells (6.4 m; the root column is 3.2 m) in world x, y (the DPt split, so
+  exact from any level), one crown a cell, radius 0.5-0.8 cells with a lobed outline (6.4-10 m across: neighbours
+  overlap into a closed canopy), kept where the cell's hash is under 1.2 x density (the forest thins to scattered trees
+  at its edge), the taller (larger) crown on top where two overlap. Each a rounded cap whose gradient (capped near the
+  rim at about 2.7) bends the shading normal through the same light; band bumps doubled on crowns; occlusion lower in
+  gaps and at crown rims. At grazing views (|view . n| 0.2-0.7) the crowns grow up to 1.3 x, so the gaps behind front
+  crowns close. Colour per crown (dark blue-green to yellow-green, by the crown's hash and the broad noise: stands) and
+  brightness per crown. Crowns under about 4 pixels (pxW over 0.35-0.7) fade to their area mean (no shimmer).
+- *Haze:* round 20's haze toward the sky colour made far hills milky. Now the in-scattered light is the sky along the
+  view times (0.56, 0.66, 0.82) (dimmer, bluer: aerial perspective darker than the sky behind) and the rate 0.0011 a
+  world unit (was 0.0018): far wooded hills read blue-green and dark. This changes the textured look everywhere, also
+  with `?canopy=0`.
+- *Cost:* no extra noise where the canopy weight is 0 (footprint under canopy / 2, not soil, or steep: a branch;
+  texShade takes no derivatives, so it is safe in non-uniform control flow); else the density noise (one 3D gradient
+  noise, 8 hashes) and where the density is above 0 the crown cells (9 hashes, 9 atan2): 2 noise-equivalents a pixel.
+  Draw ms, desktop 960 x 640, sheets, same page (nested-perf --smooth 1 --canopyab 1, medians of 3): hillside 8.25 off
+  -> 7.88 on, the map 5.43 -> 6.78, far overview 8.19 -> 8.61 (the run's noise is about 1 ms; another agent may share
+  the GPU). Compile: textured boxes 198 ms, sheets 183 (budgets 400, unchanged).
+- *Stills* (local/nested/r21-<pose>-canopy|grass.png, scripts/nested-r21-stills.mjs): far (332 m up), low (across
+  hills to the horizon), hillside (round 20's overview), mid (the crossover on a slope), closeup (round 20's).
 
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 

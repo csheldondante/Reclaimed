@@ -10,13 +10,18 @@
 //   soil (grass on the up-facing geometric normal, dirt on slopes; the boundary moved by the detail height and a broad
 //   noise: grass keeps the hollows), sand (wind ripples), clay. 3D noise in world space, so nothing stretches on cliffs.
 // - light in linear space: sun diffuse + a modest specular by roughness, a sky / ground hemisphere ambient, an occlusion
-//   term from the detail height (hollows darker), haze toward the sky colour by world distance, a filmic tone map, sRGB.
+//   term from the detail height (hollows darker), haze toward a dimmed, bluer sky colour by world distance (round 21),
+//   a filmic tone map, sRGB.
+// - (round 21) the forest canopy on soil seen from afar (below).
 // Cost: at most SH_NB + 1 band noises, one broad noise and (steep stone only) one crack noise: SH_NB + 3 = 9 3D
-// gradient noises (8 hashes each) a pixel at worst.
+// gradient noises (8 hashes each) a pixel at worst; the canopy adds 2 noise-equivalents on far soil (not on stone, so
+// the worst pixel stays at 9 + 0 for stone, 8 + 2 = 10 for far soil).
 
 const SH_NB: f32 = 6.0;
 /** haze: the fraction of light kept per world unit is exp(-SH_HAZE) */
-const SH_HAZE: f32 = 0.0018;
+const SH_HAZE: f32 = 0.0011;
+/** (round 21) the haze's in-scattered light: the sky along the view times this (round 20: 1, pale far hills) */
+const SH_HAZE_TINT: vec3<f32> = vec3<f32>(0.56, 0.66, 0.82);
 const SH_EXPOSURE: f32 = 1.0;
 
 struct ShadeIn {
@@ -38,6 +43,66 @@ struct ShadeIn {
   debug: bool,
   /** the band window's size (SH_NB by default; ?texbands= on the page: fewer bands, fewer noises a pixel) */
   nb: f32,
+  /** (round 21) the forest canopy's crossover footprint, world units a pixel (half way between grass and canopy);
+   *  0: no canopy (?canopy=0) */
+  canopy: f32,
+}
+
+// ---- (round 21) the forest canopy seen from afar (the owner: "I think we want the hills at the furthest zoom to read as
+// trees not grass but from miles away"). A stand-in for trees that do not exist as objects yet: on soil, where the pixel
+// footprint is large, the ground is shaded as a closed canopy of rounded crowns; nearer it fades to the grass.
+// - where: a forest density field in world space (a 32 world unit noise and the broad 8 unit one: woods and clearings),
+//   none on slopes steeper than about 40 degrees (geometric normal z 0.62-0.82), soil only (stone, sand, clay bare).
+// - crowns: a jittered grid of cells of 2^-SH_CROWN_M world units (2: 6.4 m, the root column being 3.2 m) in world
+//   x, y, one crown a cell (radius 0.5-0.8 cells with a lobed outline: 6.4-10 m across, so neighbours overlap into a
+//   closed canopy), kept where its hash is under the density (the forest thins to scattered trees at its edge); each a
+//   rounded cap whose gradient bends the shading normal through the same light, the gaps between them dark (occlusion);
+//   at grazing views the crowns grow (up to 1.3 x) so the gaps behind front crowns are hidden. The band bumps are
+//   doubled on the crowns (lumpy, cauliflower-like). Colour by crown hash and the broad noise (stands of darker and
+//   lighter trees).
+// - crossover: by the footprint alone (same point, same look from any level): canopy at footprints over twice
+//   `canopy`, grass under half of it (a smoothstep in log2). Crowns under ~4 pixels fade to their mean (no shimmer).
+// Cost: 0 extra noises where the footprint is under canopy / 2 or the material is not soil or the slope is steep (a
+// branch; texShade takes no derivatives, so the branch is safe); else the density noise (8 hashes) and, where the
+// density is above 0, the crown cells (9 hashes + 9 atan2): 2 noise-equivalents a pixel at most.
+const SH_CROWN_M: i32 = -1;
+
+fn shHash2(c: vec2<i32>) -> vec4<f32> {
+  var h = (bitcast<u32>(c.x) * 0x8da6b343u) ^ (bitcast<u32>(c.y) * 0xd8163841u) ^ 0x51ed270bu;
+  h = (h ^ (h >> 16u)) * 0x7feb352du;
+  h = (h ^ (h >> 15u)) * 0x846ca68bu;
+  h = h ^ (h >> 16u);
+  return vec4<f32>(f32(h & 255u), f32((h >> 8u) & 255u), f32((h >> 16u) & 255u), f32(h >> 24u)) / 255.0;
+}
+/** the crowns at p: x the crown's height over its radius (0 in a gap, 1 at a crown's top), yz the height's gradient per
+ *  world unit (a rounded cap), w the crown's hash (colour); grow scales every crown (grazing views) */
+fn shCrowns(p: DPt, dens: f32, grow: f32) -> vec4<f32> {
+  let e = SH_CROWN_M - p.s;
+  let ax = dbSplit(p.o.x, p.f.x, e);
+  let ay = dbSplit(p.o.y, p.f.y, e);
+  let t = vec2<f32>(ax.t, ay.t);
+  var best = vec4<f32>(0.0);
+  var bh = 0.0;
+  for (var j = -1; j <= 1; j++) {
+    for (var i = -1; i <= 1; i++) {
+      let hc = shHash2(vec2<i32>(ax.c + i, ay.c + j));
+      if (hc.w > dens * 1.2) { continue; }
+      let dv = t - vec2<f32>(f32(i), f32(j)) - (vec2<f32>(0.05) + 0.9 * hc.xy);
+      // (a lobed outline: a crown is a clump of a few rounded masses, not a disc; no noise, the angle and the hash)
+      let an = atan2(dv.y, dv.x) + 6.2831853 * hc.w;
+      let r = (0.5 + 0.3 * hc.z) * grow * (1.0 + 0.09 * sin(3.0 * an) + 0.06 * sin(5.0 * an + 2.0 * hc.x));
+      let q = 1.0 - dot(dv, dv) / (r * r);
+      // (the taller crown wins where two overlap: crowns of different heights, by size)
+      let hq = q * r;
+      if (q > 0.0 && hq > bh) {
+        bh = hq;
+        // (a rounded crown: about a sphere's cap, 0.45 r sqrt(q) high in cells; its gradient in cells per cell = per world
+        // unit, capped near the rim at about 2.7)
+        best = vec4<f32>(q, -0.75 * dv / (r * sqrt(max(q, 0.1))), hc.x);
+      }
+    }
+  }
+  return best;
 }
 
 fn shToLinear(c: vec3<f32>) -> vec3<f32> { return pow(c, vec3<f32>(2.2)); }
@@ -144,6 +209,41 @@ fn texShade(si: ShadeIn) -> vec3<f32> {
     }
     default: {}
   }
+  // ---- (round 21) the forest canopy from afar (see shCrowns above)
+  var cw = 0.0;
+  if (si.mat == 2u && si.canopy > 0.0) {
+    cw = smoothstep(-1.0, 1.0, log2(si.pxW / si.canopy)) * smoothstep(0.62, 0.82, ng.z);
+  }
+  if (cw > 0.0) {
+    // woods and clearings: a 32 world unit noise and the broad one (beyond 4 units a pixel the broad one is gone)
+    let dens = smoothstep(-0.2, 0.15, dbNoise(p, -5, 23u).x + 0.3 * mv);
+    // (the understorey: the grass, darker the denser the wood)
+    var cAlb = mix(alb, vec3<f32>(0.06, 0.10, 0.05), dens);
+    var cAo = ao * mix(1.0, 0.4, dens);
+    var cg = g;
+    if (dens > 0.0) {
+      // (seen at a grazing angle, the crowns in front hide the gaps behind them: the crowns grow, up to 1.3 times, as the
+      // view nears the surface)
+      let cr = shCrowns(p, dens, mix(1.3, 1.0, smoothstep(0.2, 0.7, abs(dot(si.view, ng)))));
+      let on = smoothstep(0.0, 0.2, cr.x);
+      // crowns: dark green, hue and brightness from crown to crown (dark conifer-like to yellow-green broadleaf) and
+      // with the band variation and the broad noise (stands of one kind); tops less occluded
+      let kind = clamp(cr.w + 0.5 * mv, 0.0, 1.0);
+      let leaf = mix(vec3<f32>(0.07, 0.15, 0.08), vec3<f32>(0.25, 0.30, 0.09), kind) * (0.78 + 0.4 * fract(cr.w * 7.31)) * (0.85 + 0.25 * av);
+      // (the bumps: each crown's dome, the band bumps doubled on it; under ~4 pixels a crown fades to its mean)
+      let bw = clamp(log2(2.0 / max(si.pxW, 1e-30)) - 1.5, 0.0, 1.0);
+      let ex = mix(cAlb, leaf, on);
+      let exAo = mix(cAo, ao * mix(0.72, 1.0, cr.x), on);
+      let cover = min(dens * 1.2, 1.0) * 0.85;
+      cAlb = mix(mix(cAlb, leaf, cover), ex, bw);
+      cAo = mix(mix(cAo, ao * 0.8, cover), exAo, bw);
+      cg = mix(g, 2.0 * g + vec3<f32>(cr.yz, 0.0), on * bw);
+    }
+    alb = mix(alb, cAlb, cw);
+    ao = mix(ao, cAo, cw);
+    g = mix(g, cg, cw);
+    rough = mix(rough, 0.9, cw);
+  }
   // ---- the shading normal: the geometric one bent by the bands' surface gradient
   let gs = g - ng * dot(g, ng);
   let n = normalize(ng - gs);
@@ -162,7 +262,9 @@ fn texShade(si: ShadeIn) -> vec3<f32> {
   let fr = 0.04 + 0.96 * pow(1.0 - clamp(dot(-si.view, h), 0.0, 1.0), 5.0);
   c += sunC * ndl * fr * ((sh + 8.0) / 8.0) * pow(max(dot(n, h), 0.0), sh);
   // ---- haze toward the sky colour along the view, by world distance (the same on every level)
+  // (round 21: the light scattered in is the sky's colour along the view, dimmed and bluer, so far hills go blue-green and
+  // dark rather than milky: aerial perspective, darker than the sky behind them)
   let fog = 1.0 - exp(-si.distW * SH_HAZE);
-  c = mix(c, shSky(si.view, sun), fog);
+  c = mix(c, shSky(si.view, sun) * SH_HAZE_TINT, fog);
   return shDisplay(c);
 }

@@ -27564,3 +27564,47 @@ Boot gate: reload first frame 6.5-7.3 s, every boot pipeline 11.9-13.1 s, first 
 continuity test passed; boot gate passed (cold and reload); `smooth=only` 11 of 11; full selftest smooth on 45 of 45,
 smooth off (`smooth=0`) 36 of 36. The selftests ran with the default `tex=1`: none of them compares colours (holes,
 coverage and pops read the info target, which the sky does not write), so they exercise the textured path.
+
+## 2026-11-19 — Nested scales lab, round 21: far hills read as forest (canopy from afar), haze retuned
+
+**Why.** The owner: "I think we want the hills at the furthest zoom to read as trees not grass but from miles away."
+Round 20's hills were a lawn from every distance, and its haze washed the far ones milky (r20-overview-tex).
+
+**What.** Shading only (shade.wgsl texShade; draw.wgsl passes the uniform's want.y; render.ts / app.ts read
+`?canopy=0|1` (default 1) and `?canopyfade=` (default 0.1 world units a pixel)). On soil, by the world-space pixel
+footprint alone (canopy at footprints over twice canopyfade, grass under half, a smoothstep in log2), the ground is
+shaded as a closed canopy: a world-space density (a 32-unit noise plus the broad 8-unit one; gated off on slopes over
+about 40 degrees; soil only) and a jittered grid of crowns in 2-world-unit cells (6.4 m), radius 0.5-0.8 cells with a
+lobed outline, each a rounded cap bending the normal through the same light, dark gaps (occlusion and a dark
+understorey), colour by crown and stand; crowns grow at grazing views so gaps behind front crowns close; crowns under
+~4 pixels fade to their mean. Haze: in-scatter = sky along the view x (0.56, 0.66, 0.82), rate 0.0011 a world unit
+(was the sky itself at 0.0018): far hills go blue-green and dark. Details: NESTED_SCALES.md "As built (round 21)".
+A stand-in: on approach the forest becomes bare grass until trees exist (NS-154).
+
+**Iterations on the look** (local/nested/r21-*, scripts/nested-r21-stills.mjs): (1) crowns of radius 0.42-0.62 cells,
+crossover at crowns of 20-80 pixels, old haze: far hills a pale grey carpet of separate pebbles with grey gaps, the
+crossover at mid distance showing big lentil-shaped domes. (2) New haze (blue-green, dark: the fix for milky far
+hills), crowns 0.36-0.70 with fuller jitter, darker gaps: reads as woods from high up, but gaps still grey and crowns
+like cobbles. (3) Crowns 0.5-0.8 (a closed canopy), the gap colour a dark green, a rounder profile, crossover moved to
+crowns of 10-40 pixels (canopyfade 0.05 -> 0.1). (4) Lobed outlines, crowns grow at grazing views, softer rims, more
+colour per crown and per stand. Judgement: the far hills in the closeup's and the low view's background read as wooded
+hills; from straight above at 330 m it reads as forest but a little like a pebbled carpet; the crossover on a facing
+slope at mid distance reads as stretched fish scales (NS-156).
+
+**Measured.** Continuity (test/gpu/nested-detail.test.ts, extended): far footprints 0.02-2 world units a pixel, a
+world point given as adjacent levels give it: colour the same to 7.4e-6 with the canopy on (near range 3.6e-5, under
+0.25 of an 8-bit step as before); canopy on vs off at the far footprints differs by 0.17 (not vacuous). Flat path:
+nested-r20-flatcheck against 3c1ccc33, boxes and sheets, 3 views each, 0 channels differ. Cost: 0 extra noises where the
+canopy weight is 0 (a branch; texShade takes no derivatives); else 2 noise-equivalents (the density noise, 8 hashes; the
+crown cells, 9 hashes). Draw ms, desktop 960 x 640, sheets, same page (nested-perf --smooth 1 --canopyab 1, medians of
+3, canopy off -> on): hillside 8.25 -> 7.88, the map 5.43 -> 6.78, far overview 8.19 -> 8.61 (the run's noise is about
+1 ms). Compile (Dawn): textured boxes 198 ms, sheets 183 (budget 400, unchanged); total 15.4 s of 31.5.
+nested-perf.mjs now waits for `pipesReady` before building its scene (it threw on level 1's null window under the
+staged boot: NS-159).
+
+**End gate of round 21**: typecheck; nested unit tests 59 of 59; compile gate passed; detail continuity test passed
+(with the far-footprint case); boot gate passed (reload: first frame 6.96 s, every boot pipeline 13.44 s, first sheet
+frame 9.94 s); `?selftest=1&smooth=only` 11 of 11. The full selftests were not run: the change is inside the textured
+fragment shading (shade.wgsl), one uniform word the flat path never reads, and two URL flags; no geometry, bake,
+store or camera code changed. (The repository-wide unit run has 6 failures in flags, transfers and writing lints on
+files this round did not touch: nested/main.ts, table/main.ts, archgen, atlas; pre-existing.)

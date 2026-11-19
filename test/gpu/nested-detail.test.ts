@@ -12,7 +12,7 @@ const LEVELS = 4;
 const K_LOG2 = 3;
 const WGSL = `${detailWgsl}\n${shadeWgsl}
 struct P { o: vec2<i32>, s: i32, zo: f32, f: vec4<f32> }
-struct Q { ng: vec4<f32>, view: vec4<f32>, px: f32, dist: f32, mat: u32, split: f32 }
+struct Q { ng: vec4<f32>, view: vec4<f32>, px: f32, dist: f32, mat: u32, split: f32, canopy: f32 }
 @group(0) @binding(0) var<storage, read> pts: array<P>;
 @group(0) @binding(1) var<storage, read> qs: array<Q>;
 @group(0) @binding(2) var<storage, read_write> outp: array<vec4<f32>>;
@@ -32,6 +32,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   si.distW = q.dist;
   si.sun = normalize(vec3<f32>(0.45, -0.35, 0.82));
   si.split = select(-1.0, f32(a.s), q.split > 0.5);
+  si.canopy = q.canopy;
   outp[i * 4u] = vec4<f32>(texShade(si), 0.0);
   // three bands' height and gradient: a coarse, a middle and a fine one
   outp[i * 4u + 1u] = detailHG(p, q.mat, 2);
@@ -51,9 +52,12 @@ it('nested: a world point shades the same from every level (bands=all)', async (
   let seed = 12345;
   const rnd = () => ((seed = (seed * 1103515245 + 12345) >>> 0) / 2 ** 32);
   const N = 512;
-  const run = async (split: boolean) => {
+  // (round 21) canopy: the forest canopy's crossover footprint (0 off; 0.05 the page's default); far: footprints from 0.02
+  // to 2 world units a pixel (the canopy's range: hills from afar) instead of the near range
+  const run = async (split: boolean, canopy = 0.05, far = false) => {
+    seed = 12345;
     const pb = new ArrayBuffer(N * LEVELS * 32);
-    const qb = new ArrayBuffer(N * 48);
+    const qb = new ArrayBuffer(N * 64);
     for (let j = 0; j < N; j++) {
       // (world x, y up to 300 root columns; heights -20..40; level 3 columns 1/512)
       const X = Math.floor(rnd() * 300 * 512);
@@ -81,10 +85,11 @@ it('nested: a world point shades the same from every level (bands=all)', async (
       // (pixel footprints from 0.3 world units, the overview, down to 1/200 of the coarse level's column: nearer, its
       // child is drawn)
       const pxMin = 2 ** -(Lc * K_LOG2) / 200;
-      const px = 0.3 * Math.pow(pxMin / 0.3, rnd());
-      new Float32Array(qb, j * 48, 10).set([...ng, 0, ...view, 0, px, 2000 * px]);
-      new Uint32Array(qb, j * 48 + 40, 1).set([1 + (j % 4)]);
-      new Float32Array(qb, j * 48 + 44, 1).set([split ? 1 : 0]);
+      const u = rnd();
+      const px = far ? 0.02 * Math.pow(100, u) : 0.3 * Math.pow(pxMin / 0.3, u);
+      new Float32Array(qb, j * 64, 10).set([...ng, 0, ...view, 0, px, 2000 * px]);
+      new Uint32Array(qb, j * 64 + 40, 1).set([1 + (j % 4)]);
+      new Float32Array(qb, j * 64 + 44, 2).set([split ? 1 : 0, canopy]);
     }
     const buf = (data: ArrayBuffer | null, size: number, usage: number) => {
       const b = device.createBuffer({ size, usage, mappedAtCreation: !!data });
@@ -133,8 +138,11 @@ it('nested: a world point shades the same from every level (bands=all)', async (
             }
             per[r] = Math.max(per[r], Math.abs(a - b) / (r > 0 && c === 0 ? 2 ** (1 - [2, 8, 14][r - 1]) : 1));
           }
-    console.log(`[detail] split ${split}: colour, band 2, band 8, band 14: ${per.map((x) => x.toExponential(2)).join(', ')}`);
-    return { col, band };
+    console.log(`[detail] split ${split} canopy ${canopy} far ${far}: colour, band 2, band 8, band 14: ${per.map((x) => x.toExponential(2)).join(', ')}`);
+    // (the colours of level 0's copy of each point, to compare runs)
+    const c0: number[] = [];
+    for (let j = 0; j < N; j++) for (let c = 0; c < 3; c++) c0.push(out[j * LEVELS * 16 + c]);
+    return { col, band, c0 };
   };
   const all = await run(false);
   const split = await run(true);
@@ -142,5 +150,14 @@ it('nested: a world point shades the same from every level (bands=all)', async (
   expect(all.col).toBeLessThan(0.25 / 255);
   expect(all.band).toBeLessThan(1e-3);
   expect(split.col).toBeGreaterThan(1 / 255);
+  // (round 21) far footprints, where the forest canopy is drawn: the same from every level; and the canopy changes the
+  // colour there (not vacuous; the near run's on/off difference is logged: its footprints reach 0.3, inside the canopy)
+  const far = await run(false, 0.05, true);
+  const farOff = await run(false, 0, true);
+  const nearOff = await run(false, 0);
+  const diff = (a: number[], b: number[]) => a.reduce((m, x, i) => Math.max(m, Math.abs(x - b[i])), 0);
+  console.log(`[detail] far, canopy on: colour ${far.col.toExponential(2)}; canopy on vs off: far ${diff(far.c0, farOff.c0).toExponential(2)}, near ${diff(all.c0, nearOff.c0).toExponential(2)}`);
+  expect(far.col).toBeLessThan(0.25 / 255);
+  expect(diff(far.c0, farOff.c0)).toBeGreaterThan(8 / 255);
   device.destroy();
 }, 60_000);

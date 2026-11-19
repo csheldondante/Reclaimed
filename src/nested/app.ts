@@ -147,6 +147,9 @@ export class App {
     this.render.tex = q.get('tex') !== '0';
     this.render.bandsSplit = q.get('bands') === 'split';
     if (q.has('texbands')) this.render.texBands = Number(q.get('texbands'));
+    // (round 21) the forest canopy from afar: ?canopy=0 off; ?canopyfade= its crossover footprint (world units a pixel)
+    this.render.canopy = q.get('canopy') !== '0';
+    if (q.has('canopyfade')) this.render.canopyFade = Number(q.get('canopyfade'));
     this.q = q;
   }
   private q: URLSearchParams;
@@ -980,6 +983,12 @@ export class App {
         if (split !== undefined) this.render.bandsSplit = split;
         this.buttons.get('tex')?.classList.toggle('on', on);
         while (this.render.texDrawn !== on) await new Promise((r) => setTimeout(r, 30));
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      },
+      /** (round 21) the forest canopy from afar on or off (and its crossover footprint); resolves after two frames */
+      canopy: async (on: boolean, fade?: number) => {
+        this.render.canopy = on;
+        if (fade !== undefined) this.render.canopyFade = fade;
         await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       },
     };
