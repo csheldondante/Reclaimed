@@ -837,6 +837,30 @@ wallTmpl / emitColS / faceBake (SMOOTH), draw.wgsl tCorner / vsT / vsS / fsS / c
   (a pinch, accepted by the orchestrator). So the GPU stays at T = 2 this round: the owner's later ruling (no down caps
   or skirts in the sheet draw, no outer ring at the coarsest window: the sheet just ends there) removes exactly what
   folds and must come first (NS-122).
+- *Step 3 (stills, desktop only: local/nested/r15-*-box.png / -smooth.png; the phone set and the GIF were not made).*
+  Fault (a), the slivers along the rim top, is geometry but not a hole: on a child's window edge every k-th corner
+  line is a rim line placed by the joint (child + parent) cluster, the lines between by the child's own walk, whose wall
+  faces the undrawn outside; alternate lines land at different heights, so the edge ring's walls zig-zag into teeth
+  (r15-hillside-l1-smooth, r15-cliff-smooth). The fix is the level-edge form of Step 4 below (the child's edge vertices
+  take the parent's surface), not a patch. (b) and (c) not changed this round (budget; NS-123). The toggle stays URL
+  only: the 3-run gate was not run and the 40-pose check in the dug world fails for boxes and smooth alike (NS-120).
+- *Step 4 (design, no code): level edges without the rim strip (the owner's question).* A child vertex on its
+  footprint boundary takes the parent's value for the matched surface, interpolated linearly along the parent's edge
+  between the parent's two corner vertices: at child line i of k along a parent edge from P to Q, z = zP + (zQ - zP) *
+  i / k in child units, computed by one expression (integer i and k, the parent's two stored values) on both levels, so
+  the shared vertices are bit-identical by construction and the parent needs no vertex between P and Q (no T-junction:
+  the parent's edge is one straight segment and the child's vertices lie on it exactly only if the arithmetic is exact;
+  with i / k a power-of-two fraction and the values f32, zP + (zQ - zP) * (i / k) is exact when the difference is
+  representable, otherwise the child's points lie within an ulp of the parent's line: a sub-pixel crack the screen check
+  would see as 0 holes but the closure check would flag; the strict form needs the parent to split its edge at the
+  child's k - 1 points, which the parent's rim faces already do today). Matched surface: the child's cluster on the
+  boundary line pairs with the parent's cluster on the parent edge whose height range contains it (both from their
+  tables). A child surface with no parent match pinches (its vertices take its own bottom's cluster: the wedge closes on
+  itself). A parent surface at the edge the child lacks (a parent overhang the child's enhance removed, or a thin layer
+  the child collapsed): the parent's sheet ends at the footprint with no child sheet to meet: an open edge, so the
+  parent must pinch it too (its two clusters on the boundary line merge), or the rim strip stays for that case only.
+  Closure on the rim scenes: holds for matched surfaces with the strict (split) form; unproven for the pinch cases; a
+  reference test ('child in parent', 'step across a rim', 'three random levels') is the next step before any code.
 - *The planned first form on the GPU (not switched on):* the collapse threshold unlimited (SMOOTH_T = 3e38 in the cache
   pass; no dial, the earlier `?collapse=` idea dropped as the spec says). Then every wall whose
   two tops are joined on a corner line collapses, and the template draws only the cap lattice on solid terrain (the

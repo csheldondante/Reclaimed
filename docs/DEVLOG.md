@@ -27258,3 +27258,8 @@ so the edge ring folds onto its bottom and the window corners' top caps land on 
 visible template triangles a column instead of 2.00 (the edge ring). The GPU stays at T = 2 until the owner's
 "draw nothing the camera cannot see" ruling (no skirts, no outer ring) is built: NS-122. The spiral step leaves 4
 coincident pairs at T = 2 as well (a pinch, accepted).
+
+**Stills (step 3, desktop only)** local/nested/r15-*. The teeth along the level rim (fault a) come from the child's
+window edge: rim lines are placed by the joint cluster, the lines between by the child alone. Step 4's design text
+(NESTED_SCALES.md) proposes the level-edge form that removes it. Toggle not restored (gate not met: NS-120, 3 runs not
+made).

@@ -437,6 +437,11 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   937,190). Either run that suite on a fresh sandbox (as the box section does) after switching on in the dug world (the
   bake-cost stress stays), or make the pose check pit-aware. Not changed this round (a test change to decide with the
   owner).
+- NS-123 (look, round 15) Open from the stills: (a) teeth along a child's window edge (rim lines placed jointly, the
+  lines between by the child alone: the level-edge design of NESTED_SCALES.md round 15 Step 4 replaces it); (b) walls
+  facing away from the sun need the box draw's ambient floor; (c) exceptions flat beside smooth template cells (give
+  them the cache normals where a slot matches); the stills script's carve-rim pose misses the carve; the phone stills
+  and the zoom GIF were not made this round.
 - NS-122 (next, round 15; the owner's ruling) The sheet (smooth) draw draws nothing the camera cannot see: no bottom
   skirts or down-cap fans (closed sheets and pinching leave the eye no way under a sheet: verify with the pit, shaft and
   cave pose sets and report any pose that shows sky instead of restoring them), no ring at the coarsest window's outer

@@ -77,7 +77,7 @@ await run({ name: 'r14-stills', kind: 'behaviour', size: '960x640', dpr: 1, echo
     for (const [name, v] of Object.entries(poses)) {
       await page.evaluate((v) => nested.setView(v), v);
       await sleep(3000);
-      const file = `local/nested/r14-${name}-${sm ? 'smooth' : 'box'}${tag}.png`;
+      const file = `local/nested/${R.opt('prefix', 'r14')}-${name}-${sm ? 'smooth' : 'box'}${tag}.png`;
       await page.screenshot({ path: file });
       console.log(file);
     }
@@ -98,7 +98,7 @@ await run({ name: 'r14-stills', kind: 'behaviour', size: '960x640', dpr: 1, echo
       enc.writeFrame(applyPalette(f.data, pal), f.width, f.height, { palette: pal, delay: 120 });
     }
     enc.finish();
-    fs.writeFileSync(`local/nested/r14-zoom-smooth${tag}.gif`, enc.bytes());
-    console.log(`local/nested/r14-zoom-smooth${tag}.gif`);
+    fs.writeFileSync(`local/nested/${R.opt('prefix', 'r14')}-zoom-smooth${tag}.gif`, enc.bytes());
+    console.log(`local/nested/${R.opt('prefix', 'r14')}-zoom-smooth${tag}.gif`);
   }
 });
