@@ -11,6 +11,21 @@ await run({ name: 'nested-smoothboot', kind: 'behaviour', size: '960x640', dpr: 
   page.on('console', (m) => {
     if (m.type() === 'error' || m.type() === 'warning' || m.text().startsWith('[smooth]')) console.log(`[page ${m.type()}] ${m.text()}`);
   });
+  // (--boot 1, round 19: smooth off; when the first frame was submitted and when the GPU finished it: Chrome compiles
+  // pipelines made synchronously in the GPU process, so a first frame's submit returns before they are compiled)
+  if (R.opt('boot', '0') === '1') {
+    for (let i = 0; i < 2; i++) {
+      await page.goto(`https://localhost:${port}/nested.html?k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140`, { waitUntil: 'load' });
+      await page.waitForFunction(() => window.nested && nested.app.frameCount > 0, { timeout: 120000, polling: 20 });
+      const t = await page.evaluate(async () => {
+        const a = nested.app;
+        await a.device.queue.onSubmittedWorkDone();
+        return { first: a.firstFrameAt, done: performance.now() };
+      });
+      console.log(`boot ${i ? 'reload' : 'cold'}: first frame submitted ${t.first.toFixed(0)} ms, GPU done with it ${t.done.toFixed(0)} ms`);
+    }
+    return;
+  }
   // (--split 1: smooth off, then each sheet pipeline made alone, one after the other, timed)
   if (R.opt('split', '0') === '1') {
     await page.goto(`https://localhost:${port}/nested.html?k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140`, { waitUntil: 'load' });

@@ -27466,3 +27466,41 @@ nested-oracle.test.ts; nested-snap.test.ts deleted). Kept, independent of the sn
 tried), nested-perf's leave-one-out modes, the r17 stills' `--only` / `--prefix`, and the stroke check's per-sample
 depths in its detail line. Heights, brush centres and radii free f32 again; the stroke radius back to 2.5. NS-139 is
 dropped (the end gate of round 19 confirms the stroke check).
+
+## 2026-11-19 — Nested scales lab, round 19 C: the sheet pass compiles small; a compile gate
+
+**Why.** The owner's phone never showed sheets (NS-136): sheetBake took 5.7 s alone, 27-30 s at boot in desktop Chrome.
+
+**Cause, measured** (sheetBake made alone; Chrome D3D11 = `nested-smoothboot --split 1`, Dawn D3D12 = the gpu tier):
+
+| variant | Chrome ms | Dawn ms |
+| --- | --- | --- |
+| round 18 kernel | 5,830 | 1,692-1,921 |
+| walk stubbed (sWalk, sBound) | 3,413 | 1,045 |
+| walk and steps 2-5 stubbed | 1,716 | 905-1,064 |
+| step 2 / 3 / 4 / 5 alone cut | - | 1,715 / 1,757 / 1,760 / 1,625 |
+| sNext stubbed / wkRec one read / sFind stubbed | - | 1,347 / 1,413 / 1,776 |
+| round 19 kernel | 1,940 | 646 |
+
+No single step dominates: the cost is code volume after FXC inlines every call. sNext held four copies of wkRec (each
+three branches, up to three hash-table lookups and six segment switches), sBound and sWalk each inlined the owners'
+prep, sFind was inlined 7 times and sheetW 10, every lcMat / oTop a lookup, and the sheet pass ran the box draw's
+column bottoms (bFill) it never reads. Dawn's D3D11 backend in Node (FXC) took over 14 minutes for the old kernel, so
+Chrome is the D3D11 measure. The direct rule (the owner's 1D picture) is what the walk already computed (the owners'
+surface heights merged; no box walls), so the rule and the reference are unchanged.
+
+**What.** Same rule, shaped for one call site a helper (NESTED_SCALES.md "As built (round 19)"): sAdvance reads each
+record of a line once; one pass over the lines run twice (bound, walk); oRec / sRec / oNext; loops over the rim lines
+and the zipper chain for the lookups; carried slot addresses; bFillRecs. GPU sheets = reference on every level
+(`smooth=only` 11 of 11: 8,064 / 8,388 / 3,014 triangles, 0 extra, 0 missing).
+
+**Boot, measured** (`nested-smoothboot`, fresh Chrome, `?smooth=1`; before / after): cold first sheet frame 28,366 /
+25,672 ms (sheet pass 26,617 / 24,413, sheet draw 21,789 / 22,666); reload 4,778 / 7,153 (sheet pass 278 / 133 ms:
+cached). So caching works on reload; round 18's "not cached" was each run's fresh browser. The cold wait is NOT the
+sheet pass: `--boot 1` (new) shows the first frame submitted at 1,074 ms but finished by the GPU at 22,307 ms cold
+(8,201 reload): Chrome compiles the 28 pipelines GpuNest makes synchronously in its GPU process, and the asynchronous
+sheet pipelines queue behind them. NS-141.
+
+**Compile gate.** test/gpu/nested-compile.test.ts now times all 33 pipelines on Dawn against
+test/gpu/nested-compile-budgets.ts (1.5 x, floor 400 ms; total 21.0 s measured, budget 31.5 s). Biggest: faceBakeRim
+4,750, faceBakeOne (measurement only) 4,674, faceBake 2,392, derive 1,821, camera 1,038 ms.

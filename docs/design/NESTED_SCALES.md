@@ -1094,6 +1094,18 @@ the solid below the next air gap down." "Why make those [skirts, outer ring] if 
   floating 194 -> 68 (NS-92 reopens); the sheet pass inside a level-1 carve 6.8 -> 5.0 ms; bowl walls read as stairs of
   whole child units (NS-140); restrict's conservation inexact (worst block 0.115 parent units); the stroke check failed
   at r 3 (NS-139, dropped with it). Commit 79e6768a holds it.
+- *The sheet pass compiles small (NS-136).* The rule is unchanged (the walk was already the direct one: the owners'
+  surface heights merged in order, joined while the owners are not all solid or all air between; the old box-wall
+  clusters are long gone), so the reference stays the judge (GPU = reference, 0 extra, 0 missing). The code is shaped
+  for FXC, which inlines every call: each line's owners are read in one pass run twice (ps 0 the bound, ps 1 the
+  walk); the walk reads each record once from one call site (sAdvance: per quadrant the next surface; the four
+  quadrants merged by their next heights, a pending mask advancing one quadrant a turn); one record reader for any
+  level's pages (oRec) and one through the workgroup copy (sRec); a parent column's surfaces in turn (oNext); cluster
+  lookups and sheet addresses from one site each (loops over the rim lines and the zipper chain; the previous slot's
+  address carried); the sheet pass fills only the records, not the box draw's bottoms (bFillRecs). No pipeline split.
+- *Compile gate (quick loop).* test/gpu/nested-compile.test.ts times every pipeline the page makes on Dawn and fails
+  one over its budget (test/gpu/nested-compile-budgets.ts: about 1.5 x the round 19 time, floor 400 ms; the total
+  too). Every builder runs it with the unit tests, before any browser check.
 
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 

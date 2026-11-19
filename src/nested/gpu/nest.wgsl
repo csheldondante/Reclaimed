@@ -1972,6 +1972,11 @@ fn sIdx(X: i32, Y: i32) -> i32 {
 }
 /** (every thread, uniform control flow) the copy of the columns round chunk (cx, cy) */
 fn bFill(L: u32, cx: i32, cy: i32, li: u32) {
+  bFillRecs(L, cx, cy, li);
+  bFillBottoms(L, li);
+}
+/** (round 19: the sheet pass needs only this part) the counts and first SC records of the columns round chunk (cx, cy) */
+fn bFillRecs(L: u32, cx: i32, cy: i32, li: u32) {
   sOrg = vec2<i32>(cx * 16 - 1, cy * 16 - 1);
   for (var q = li; q < 324u; q += 256u) {
     let X = sOrg.x + i32(q % 18u);
@@ -1987,6 +1992,9 @@ fn bFill(L: u32, cx: i32, cy: i32, li: u32) {
     sM[q] = mats;
   }
   workgroupBarrier();
+}
+/** the box draw's part: each drawn column's bottom and the shared down caps */
+fn bFillBottoms(L: u32, li: u32) {
   // (round 8) each drawn column's bottom from its own and its neighbours' depths (zbG's values, from the copy)
   for (var q = li; q < 324u; q += 256u) {
     let X = sOrg.x + i32(q % 18u);
@@ -2513,39 +2521,38 @@ struct LC {
   Y: i32,
   s: u32,
 }
-fn lcN(c: LC) -> u32 {
-  if (c.lv == u.a.w) { return bCount(c.lv, c.X, c.Y); }
-  return oCount(c.lv, c.X, c.Y);
+// (round 19, NS-136) The sheet pass compiles in one piece on D3D11 (FXC inlines every call): every helper below is
+// called from as few places as possible, record reads go through one function each (oRec / sRec), and the walk reads
+// each record of a line once from a single call site.
+/** record j of a column of any level, from its pages: (top bits, material); (0, air) where the page is missing */
+fn oRec(lv: u32, X: i32, Y: i32, j: u32) -> vec2<u32> {
+  let p = pageOf(lv, X >> 4, Y >> 4, j / KR);
+  if (p >= NOT_LOADED) { return vec2<u32>(0u, MAT_AIR); }
+  let b = p * PW + 256u + (colIn(X, Y) * KR + j % KR) * 2u;
+  return vec2<u32>(pgLoad(b), pgLoad(b + 1u));
 }
-fn lcMat(c: LC, j: u32) -> u32 {
-  if (c.lv == u.a.w) { return bRec(c.lv, c.X, c.Y, j).y; }
-  let p = pageOf(c.lv, c.X >> 4, c.Y >> 4, j / KR);
-  if (p >= NOT_LOADED) { return MAT_AIR; }
-  return pgLoad(p * PW + 256u + (colIn(c.X, c.Y) * KR + j % KR) * 2u + 1u);
+/** a drawn column's record count: the baked level's through the workgroup's copy where it holds it, else the pages */
+fn sCount(lv: u32, X: i32, Y: i32) -> u32 {
+  let i = select(-1, sIdx(X, Y), lv == u.a.w);
+  if (i >= 0) { return sN[i]; }
+  return oCount(lv, X, Y);
 }
-var<private> wkC: array<LC, 8>;
-var<private> wkN: array<u32, 8>;
-/** the other level's column's first record page (NONE: the baked level's own, read through the workgroup's copy) */
-var<private> wkP: array<u32, 8>;
-/** record j of walk column q: (top in the line's units, material) */
-fn wkRec(q: u32, j: u32) -> vec2<f32> {
-  let c = wkC[q];
-  var r = vec2<u32>(0u);
-  if (wkP[q] == NONE) {
-    r = bRec(c.lv, c.X, c.Y, j);
-  } else if (j < KR && wkP[q] < NOT_LOADED) {
-    let b = wkP[q] * PW + 256u + (colIn(c.X, c.Y) * KR + j) * 2u;
-    r = vec2<u32>(pgLoad(b), pgLoad(b + 1u));
-  } else {
-    r = vec2<u32>(bitcast<u32>(oTop(c.lv, c.X, c.Y, j)), lcMat(c, j));
-  }
-  var t = bitcast<f32>(r.x);
-  if (c.s == 1u) { t = toKid(c.lv, t); }
-  return vec2<f32>(t, f32(r.y));
+/** record j: (top bits, material), through the workgroup's copy where it holds it, else the pages */
+fn sRec(lv: u32, X: i32, Y: i32, j: u32) -> vec2<u32> {
+  let i = select(-1, sIdx(X, Y), lv == u.a.w);
+  if (i >= 0 && j < SC) { return vec2<u32>(bitcast<u32>(sT[u32(i) * SC + j]), (sM[i] >> (8u * j)) & 255u); }
+  return oRec(lv, X, Y, j);
 }
-/** each walk column's first record whose top lies above the walk's current breakpoint (the walk only goes up, so the
- *  cursors only move forward: a line's walk reads each record once, not once a breakpoint) */
-var<private> wkJ: array<u32, 8>;
+/** the walk's four quadrant columns (q 0-3): who owns it, whether drawn, its record count */
+var<private> wkC: array<LC, 4>;
+var<private> wkN: array<u32, 4>;
+/** per walk column: the next record to read; the solidity and top (line units) of the record before it; the next
+ *  surface's height (NO_DEPTH: none left); the solidity just above the walk's last breakpoint */
+var<private> wkJ: array<u32, 4>;
+var<private> wkS: array<bool, 4>;
+var<private> wkT: array<f32, 4>;
+var<private> wkX: array<f32, 4>;
+var<private> wkA: array<bool, 4>;
 /** the chunk's cache page 0 (the sheet pass; bChunk is the chunk) */
 var<private> sCp: u32;
 /** (round 15, NS-116) the chunk's cluster table pages cz 1..16, looked up once a workgroup (civPages): a long table's
@@ -2667,65 +2674,49 @@ fn sPrep(Lw: u32, LX: i32, LY: i32) {
     wkC[q] = c;
     wkOn[q] = on;
     wkJ[q] = 0u;
+    wkS[q] = false;
+    wkT[q] = 0.0;
+    wkX[q] = NO_DEPTH;
+    wkA[q] = false;
     wkN[q] = 0u;
-    wkP[q] = NONE;
-    if (on) {
-      wkN[q] = lcN(c);
-      if (c.lv != u.a.w) { wkP[q] = pageOf(c.lv, c.X >> 4, c.Y >> 4, 0u); }
-    }
+    if (on) { wkN[q] = sCount(c.lv, c.X, c.Y); }
   }
 }
-/** whether record j of walk column q ends in a surface (solid below its top, air above, or the other way) */
-fn sSurf(q: u32, j: u32) -> bool {
-  let a = matSolid(u32(wkRec(q, j).y));
-  var b = false;
-  if (j + 1u < wkN[q]) { b = matSolid(u32(wkRec(q, j + 1u).y)); }
-  return a != b;
-}
-/** the lowest surface height above z on the walked line (NO_DEPTH: none); moves each cursor to its first record whose top
- *  lies above z (z never below the last call's) */
-fn sNext(z: f32) -> f32 {
-  var best = NO_DEPTH;
-  for (var q = 0u; q < 4u; q++) {
-    let n = wkN[q];
-    var j = wkJ[q];
-    loop {
-      if (j >= n) { break; }
-      if (wkRec(q, j).x > z) { break; }
-      j++;
+/** walk column q moved on to its next surface: records read from wkJ[q] up, each once a line (the one record read of
+ *  the walk); a record ends in a surface when its solidity differs from the next one's (the last one's from the air
+ *  above); its top goes to wkX[q] (NO_DEPTH: none left). The first record read sets the solidity under every surface
+ *  (wkA: a column continues downward as its first record; a drawn column with no records is air). */
+fn sAdvance(q: u32) {
+  let c = wkC[q];
+  let n = wkN[q];
+  var j = wkJ[q];
+  var ps = wkS[q];
+  var pt = wkT[q];
+  wkX[q] = NO_DEPTH;
+  loop {
+    if (j > n) { break; }
+    var s = false;
+    var t = 0.0;
+    if (j < n) {
+      let r = sRec(c.lv, c.X, c.Y, j);
+      s = matSolid(r.y);
+      t = bitcast<f32>(r.x);
+      if (c.s == 1u) { t = toKid(c.lv, t); }
     }
-    wkJ[q] = j;
-    var s = j;
-    loop {
-      if (s >= n) { break; }
-      let t = wkRec(q, s).x;
-      if (t >= best) { break; }
-      if (sSurf(q, s)) {
-        best = t;
-        break;
-      }
-      s++;
-    }
-  }
-  return best;
-}
-/** after sNext(z): whether the present owners are not all solid or all air just above z (a column continues downward as
- *  its first record; a drawn column with no records is air) */
-fn sJoined() -> bool {
-  var have = false;
-  var s0 = false;
-  for (var q = 0u; q < 4u; q++) {
-    if (!wkOn[q]) { continue; }
-    var v = false;
-    if (wkJ[q] < wkN[q]) { v = matSolid(u32(wkRec(q, wkJ[q]).y)); }
-    if (!have) {
-      have = true;
-      s0 = v;
-    } else if (v != s0) {
-      return true;
+    if (j == 0u) { wkA[q] = s; }
+    let at = pt;
+    let surf = j > 0u && s != ps;
+    ps = s;
+    pt = t;
+    j++;
+    if (surf) {
+      wkX[q] = at;
+      break;
     }
   }
-  return false;
+  wkJ[q] = j;
+  wkS[q] = ps;
+  wkT[q] = pt;
 }
 fn sFix(z: f32) -> i32 { return i32(floor(z * SFIX)); }
 /** cluster i of the chunk's table: its first word */
@@ -2737,25 +2728,40 @@ fn scl(i: u32) -> u32 {
   if (pz < 16u) { p = wCivP[pz]; } else { p = pageOf(CACHE_ID + u.a.w, bChunk.x, bChunk.y, 1u + pz); }
   return p * PW + (j % CPP) * 4u;
 }
-/** the most clusters level L's corner line (CX, CY) can have (its owners' records) */
-fn sBound(L: u32, CX: i32, CY: i32) -> u32 {
-  let c = sCanon(L, CX, CY);
-  sPrep(u32(c.x), c.y, c.z);
-  return wkN[0] + wkN[1] + wkN[2] + wkN[3];
-}
-/** corner line (CX, CY) walked bottom up; its clusters written from `first` (bot, top, z = integer mean, normal 0) */
-fn sWalk(L: u32, CX: i32, CY: i32, first: u32) -> u32 {
-  let c = sCanon(L, CX, CY);
-  sPrep(u32(c.x), c.y, c.z);
+/** (after sPrep) the line walked bottom up: its breakpoints are the owners' surface heights, merged in order; two
+ *  consecutive ones are joined when the present owners are not all solid or all air between them; its clusters written
+ *  from `first` (bot, top, z = fixed-point mean, normal 0); their count */
+fn sWalk(first: u32) -> u32 {
   var cnt = 0u;
   var a = 0.0;
   var b = -NO_DEPTH;
   var sum = 0;
   var n = 0u;
+  // (each quadrant's first surface found first; then each one whose surface was consumed, one a turn: one call site)
+  var pend = 15u;
   loop {
-    let nx = sNext(b);
-    var join = false;
-    if (n > 0u && nx < NO_DEPTH) { join = sJoined(); }
+    if (pend != 0u) {
+      let q = firstTrailingBit(pend);
+      pend &= pend - 1u;
+      sAdvance(q);
+      continue;
+    }
+    var nx = NO_DEPTH;
+    var have = false;
+    var s0 = false;
+    var mixed = false;
+    for (var q = 0u; q < 4u; q++) {
+      nx = min(nx, wkX[q]);
+      if (wkOn[q]) {
+        if (!have) {
+          have = true;
+          s0 = wkA[q];
+        } else if (wkA[q] != s0) {
+          mixed = true;
+        }
+      }
+    }
+    let join = n > 0u && nx < NO_DEPTH && mixed;
     if (join) {
       sum += sFix(nx);
       n++;
@@ -2774,6 +2780,13 @@ fn sWalk(L: u32, CX: i32, CY: i32, first: u32) -> u32 {
       n = 1u;
     }
     b = nx;
+    // (the breakpoint consumed: each quadrant whose surface it is changes state there and moves on)
+    for (var q = 0u; q < 4u; q++) {
+      if (wkX[q] == nx) {
+        wkA[q] = !wkA[q];
+        pend |= 1u << q;
+      }
+    }
   }
   return cnt;
 }
@@ -2792,21 +2805,31 @@ fn sFind(CX: i32, CY: i32, z: f32) -> u32 {
 }
 fn sClW(CX: i32, CY: i32, i: u32) -> u32 { return scl((pgLoad(sCp * PW + SLN + lnIdx(CX, CY)) & 0xfffffu) + i); }
 fn sZ(CX: i32, CY: i32, i: u32) -> f32 { return bitcast<f32>(pgLoad(sClW(CX, CY, i) + 2u)); }
-/** a column of level lv (any level, from the pages): whether record j ends in a surface */
-fn oSurf(lv: u32, X: i32, Y: i32, j: u32, n: u32) -> bool {
-  let c = LC(lv, X, Y, 0u);
-  let a = matSolid(lcMat(c, j));
-  var b = false;
-  if (j + 1u < n) { b = matSolid(lcMat(c, j + 1u)); }
-  return a != b;
+/** a column's surfaces in turn (any level, from its pages; oNext): the next record to read, the material and top bits of
+ *  the record before it */
+struct OSurf {
+  j: u32,
+  m: u32,
+  t: u32,
 }
-fn oSurfaces(lv: u32, X: i32, Y: i32) -> u32 {
-  let n = oCount(lv, X, Y);
-  var s = 0u;
-  for (var j = 0u; j < n; j++) {
-    if (oSurf(lv, X, Y, j, n)) { s++; }
+/** the next surface of column (lv, X, Y) of n records after state *s: (top bits, material below, material above, 1), or
+ *  w = 0 when none is left. A record ends in a surface when its solidity differs from the next one's (the last one's
+ *  from the air above). */
+fn oNext(lv: u32, X: i32, Y: i32, n: u32, s: ptr<function, OSurf>) -> vec4<u32> {
+  var out = vec4<u32>(0u);
+  loop {
+    let j = (*s).j;
+    if (j > n) { break; }
+    var r = vec2<u32>(0u, MAT_AIR);
+    if (j < n) { r = oRec(lv, X, Y, j); }
+    let prev = *s;
+    *s = OSurf(j + 1u, r.y, r.x);
+    if (j > 0u && matSolid(r.y) != matSolid(prev.m)) {
+      out = vec4<u32>(prev.t, prev.m, r.y, 1u);
+      break;
+    }
   }
-  return s;
+  return out;
 }
 /** sheet j's first word in the chunk's sheet pages */
 fn sheetW(j: u32) -> u32 {
@@ -2891,7 +2914,7 @@ fn sheetBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
   if (cp >= NOT_LOADED) { return; }
   bOrg = vec2<i32>(cx - 1, cy - 1);
   bChunk = vec2<i32>(cx, cy);
-  bFill(L, cx, cy, li);
+  bFillRecs(L, cx, cy, li);
   sCp = cp;
   let base = cp * PW;
   // (round 14's skip, the same hash: the chunk's 20 x 20 columns unchanged and off every rim: nothing to do)
@@ -2931,24 +2954,39 @@ fn sheetBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
   if (workgroupUniformLoad(&wflag) == 1u) { return; }
   // sizes: the cluster table (each line's place bounded by its owners' records: a scan), the sheets (the deepest column's
   // surfaces, and on a child's window edge the parent columns' outside: the zippers), then every page made at once
-  var bound = 0u;
-  for (var q = li; q < 361u; q += 256u) { bound += sBound(L, cx * 16 - 1 + i32(q % 19u), cy * 16 - 1 + i32(q / 19u)); }
-  let sc = wgScan(li, bound);
+  // (round 19: one pass over the lines twice, ps 0 the bound, ps 1 the walk, so the line's owners are read from one call
+  // site; 1. below)
   let X = cx * 16 + i32(lid.x);
   let Y = cy * 16 + i32(lid.y);
+  let nOwn = sN[sIdx(X, Y)];
+  var S = 0u;
+  var first = 0u;
+  for (var ps = 0u; ps < 2u; ps++) {
+  if (ps == 1u) {
+  let sc = wgScan(li, first);
+  first = sc.x;
   var ns = 0u;
-  let nOwn = bCount(L, X, Y);
-  for (var j = 0u; j < nOwn; j++) {
-    let a = matSolid(bRec(L, X, Y, j).y);
-    var b = false;
-    if (j + 1u < nOwn) { b = matSolid(bRec(L, X, Y, j + 1u).y); }
-    if (a != b) { ns++; }
+  var pm = false;
+  for (var j = 0u; j <= nOwn; j++) {
+    var s = false;
+    if (j < nOwn) { s = matSolid(sRec(L, X, Y, j).y); }
+    if (j > 0u && s != pm) { ns++; }
+    pm = s;
   }
   if (li < 16u) {
     let z = sZip(L, cx, cy, li / 8u, li % 8u);
-    if (z.ok) { ns = max(ns, oSurfaces(L - 1u, z.X, z.Y)); }
+    if (z.ok) {
+      let n = oCount(L - 1u, z.X, z.Y);
+      var st = OSurf(0u, MAT_AIR, 0u);
+      var c = 0u;
+      loop {
+        if (oNext(L - 1u, z.X, z.Y, n, &st).w == 0u) { break; }
+        c++;
+      }
+      ns = max(ns, c);
+    }
   }
-  let S = wgMax(li, ns);
+  S = wgMax(li, ns);
   if (li == 0u) {
     var A = 0u;
     if (sc.y > SCL0) { A = 1u + (sc.y - SCL0 - 1u) / CPP; }
@@ -2975,14 +3013,15 @@ fn sheetBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
   let A = workgroupUniformLoad(&wSA);
   if (li < 16u) { wShP[li] = pageOf(CACHE_ID + L, cx, cy, 1u + A + li); }
   workgroupBarrier();
-  // 1. every corner line of the chunk and the ring round it walked once
-  var first = sc.x;
+  }
+  // 1. every corner line of the chunk and the ring round it walked once (ps 1); ps 0 sums each line's bound (its owners'
+  // records: the most clusters it can have)
   for (var q = li; q < 361u; q += 256u) {
-    let CX = cx * 16 - 1 + i32(q % 19u);
-    let CY = cy * 16 - 1 + i32(q / 19u);
-    let c = sWalk(L, CX, CY, first);
-    pgStore(base + SLN + q, first | (c << 20u));
-    first += sBound(L, CX, CY);
+    let c = sCanon(L, cx * 16 - 1 + i32(q % 19u), cy * 16 - 1 + i32(q / 19u));
+    sPrep(u32(c.x), c.y, c.z);
+    if (ps == 1u) { pgStore(base + SLN + q, first | (sWalk(first) << 20u)); }
+    first += wkN[0] + wkN[1] + wkN[2] + wkN[3];
+  }
   }
   storageBarrier();
   workgroupBarrier();
@@ -3020,13 +3059,19 @@ fn sheetBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
         let top = bitcast<f32>(pgLoad(cb + 1u));
         var sum = 0;
         var m = 0u;
-        for (var j = 0u; j < nX; j++) {
-          if (!oSurf(L - 1u, XX, XY, j, nX)) { continue; }
-          let zk = toKid(L - 1u, oTop(L - 1u, XX, XY, j));
+        var st = OSurf(0u, MAT_AIR, 0u);
+        loop {
+          let sf = oNext(L - 1u, XX, XY, nX, &st);
+          if (sf.w == 0u) { break; }
+          let zk = toKid(L - 1u, bitcast<f32>(sf.x));
           if (zk < bot || zk > top) { continue; }
-          let zp = sFix(sZ(P.x, P.y, sFind(P.x, P.y, zk)));
-          let zq = sFix(sZ(Q.x, Q.y, sFind(Q.x, Q.y, zk)));
-          sum += zp * k + (zq - zp) * i;
+          // (the clusters holding it on the rim lines P (e 0) and Q (e 1): one call site)
+          var zpq = vec2<i32>(0);
+          for (var e = 0; e < 2; e++) {
+            let R = select(P, Q, e == 1);
+            zpq[e] = sFix(sZ(R.x, R.y, sFind(R.x, R.y, zk)));
+          }
+          sum += zpq.x * k + (zpq.y - zpq.x) * i;
           m++;
         }
         if (m > 0u) { pgStore(cb + 2u, bitcast<u32>(f32(sum) / f32(m * u32(k) * 256u))); }
@@ -3042,7 +3087,9 @@ fn sheetBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
     let CY = cy * 16 + i32(q / 17u);
     if (rimP(L, CX, CY)) { continue; }
     let lw = pgLoad(base + SLN + lnIdx(CX, CY));
-    var cur = array<u32, 4>(0u, 0u, 0u, 0u);
+    // (per quadrant column: the next record to read and the one before it; each record read once, one call site)
+    var cj = array<u32, 4>(0u, 0u, 0u, 0u);
+    var cr = array<vec2<u32>, 4>(vec2<u32>(0u), vec2<u32>(0u), vec2<u32>(0u), vec2<u32>(0u));
     for (var ci = 0u; ci < (lw >> 20u); ci++) {
       let cb = scl((lw & 0xfffffu) + ci);
       let top = bitcast<f32>(pgLoad(cb + 1u));
@@ -3050,20 +3097,18 @@ fn sheetBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
       for (var qd = 0u; qd < 4u; qd++) {
         let QX = CX - 1 + i32(qd & 1u);
         let QY = CY - 1 + i32(qd >> 1u);
-        let n = bCount(L, QX, QY);
-        var j = cur[qd];
+        let n = sN[sIdx(QX, QY)];
         loop {
-          if (j >= n) { break; }
-          let r = bRec(L, QX, QY, j);
-          let t = bitcast<f32>(r.x);
-          if (t > top) { break; }
-          let a = matSolid(r.y);
-          var b = false;
-          if (j + 1u < n) { b = matSolid(bRec(L, QX, QY, j + 1u).y); }
-          if (a != b) { nsum += sQuadN(L, QX, QY, t, a); }
-          j++;
+          let j = cj[qd];
+          if (j > n) { break; }
+          let pr = cr[qd];
+          if (j > 0u && bitcast<f32>(pr.x) > top) { break; }
+          var r = vec2<u32>(0u, MAT_AIR);
+          if (j < n) { r = sRec(L, QX, QY, j); }
+          if (j > 0u && matSolid(r.y) != matSolid(pr.y)) { nsum += sQuadN(L, QX, QY, bitcast<f32>(pr.x), matSolid(pr.y)); }
+          cj[qd] = j + 1u;
+          cr[qd] = r;
         }
-        cur[qd] = j;
       }
       var wd = 0u;
       if (dot(nsum, nsum) > 0.0) { wd = octEnc(normalize(nsum)); }
@@ -3079,17 +3124,24 @@ fn sheetBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
     var j = 0u;
     var prev = vec4<u32>(0xffffffffu);
     var run = vec2<u32>(0u);
-    for (var r = 0u; r < nOwn; r++) {
-      let rec = bRec(L, X, Y, r);
-      let a = matSolid(rec.y);
-      var b = false;
+    // (the flags word of the column's previous surface; each record read once, one call site)
+    var pf = 0u;
+    var rec = vec2<u32>(0u, MAT_AIR);
+    for (var r1 = 0u; r1 <= nOwn; r1++) {
       var m1 = MAT_AIR;
-      if (r + 1u < nOwn) {
-        m1 = bRec(L, X, Y, r + 1u).y;
-        b = matSolid(m1);
+      var t1 = 0u;
+      if (r1 < nOwn) {
+        let x = sRec(L, X, Y, r1);
+        m1 = x.y;
+        t1 = x.x;
       }
+      let r0 = rec;
+      rec = vec2<u32>(t1, m1);
+      if (r1 == 0u) { continue; }
+      let a = matSolid(r0.y);
+      let b = matSolid(m1);
       if (a == b) { continue; }
-      let h = bitcast<f32>(rec.x);
+      let h = bitcast<f32>(r0.x);
       var ix = vec4<u32>(0u);
       for (var c = 0u; c < 4u; c++) {
         let CX = X + i32(c & 1u);
@@ -3101,23 +3153,24 @@ fn sheetBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
       let sw = sheetW(j) + col * 3u;
       pgStore(sw, ix.x | (ix.y << 16u));
       pgStore(sw + 1u, ix.z | (ix.w << 16u));
-      let mat = select(m1, rec.y, a) & 255u;
+      let mat = select(m1, r0.y, a) & 255u;
       pgStore(sw + 2u, 0x80000000u | select(0u, 1u, a) | (mat << 8u));
       // triangle 0 (corners 0, 1, 3) and 1 (0, 3, 2): same three vertices as the surface below?
       let same0 = j > 0u && ix.x == prev.x && ix.y == prev.y && ix.w == prev.w;
       let same1 = j > 0u && ix.x == prev.x && ix.w == prev.w && ix.z == prev.z;
-      if (j > 0u && !same0 && run.x % 2u == 1u) { pgStore(sheetW(j - 1u) + col * 3u + 2u, pgLoad(sheetW(j - 1u) + col * 3u + 2u) | 2u); }
-      if (j > 0u && !same1 && run.y % 2u == 1u) { pgStore(sheetW(j - 1u) + col * 3u + 2u, pgLoad(sheetW(j - 1u) + col * 3u + 2u) | 4u); }
+      if (j > 0u && !same0 && run.x % 2u == 1u) { pgStore(pf, pgLoad(pf) | 2u); }
+      if (j > 0u && !same1 && run.y % 2u == 1u) { pgStore(pf, pgLoad(pf) | 4u); }
       run.x = select(1u, run.x + 1u, same0);
       run.y = select(1u, run.y + 1u, same1);
       prev = ix;
+      pf = sw + 2u;
       j++;
     }
     if (j > 0u) {
-      var f = pgLoad(sheetW(j - 1u) + col * 3u + 2u);
+      var f = pgLoad(pf);
       if (run.x % 2u == 1u) { f |= 2u; }
       if (run.y % 2u == 1u) { f |= 4u; }
-      pgStore(sheetW(j - 1u) + col * 3u + 2u, f);
+      pgStore(pf, f);
     }
     for (var e = j; e < S; e++) { pgStore(sheetW(e) + col * 3u + 2u, 0u); }
   }
@@ -3133,35 +3186,40 @@ fn sheetBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
       var j = 0u;
       var prev: array<vec3<u32>, 8>;
       var run: array<u32, 8>;
-      for (var r = 0u; r < n; r++) {
-        if (!oSurf(L - 1u, z.X, z.Y, r, n)) { continue; }
-        let c = LC(L - 1u, z.X, z.Y, 0u);
-        let up = matSolid(lcMat(c, r));
-        var mat = lcMat(c, r);
-        if (!up) { mat = lcMat(c, r + 1u); }
-        let zk = toKid(L - 1u, oTop(L - 1u, z.X, z.Y, r));
+      var st = OSurf(0u, MAT_AIR, 0u);
+      // (the flags word of the previous surface's slot)
+      var pw = 0u;
+      loop {
+        let sf = oNext(L - 1u, z.X, z.Y, n, &st);
+        if (sf.w == 0u) { break; }
+        let up = matSolid(sf.y);
+        let mat = select(sf.z, sf.y, up);
+        let zk = toKid(L - 1u, bitcast<f32>(sf.x));
         let zw = sheetW(j) + SZIP + li * 2u;
         pgStore(zw, bitcast<u32>(zk));
-        var flags = 0x80000000u | select(0u, 1u, up) | ((mat & 255u) << 8u);
-        let p0 = z.l0;
-        let i0 = sFind(p0.x, p0.y, zk);
-        for (var t = 1u; t < k; t++) {
-          let pa = z.l0 + z.d * i32(t);
-          let pb = z.l0 + z.d * i32(t + 1u);
-          let key = vec3<u32>(i0, sFind(pa.x, pa.y, zk), sFind(pb.x, pb.y, zk));
-          let same = j > 0u && all(key == prev[t]);
-          if (j > 0u && !same && run[t] % 2u == 1u) {
-            let pw = sheetW(j - 1u) + SZIP + li * 2u + 1u;
-            pgStore(pw, pgLoad(pw) | (1u << (15u + t)));
+        let flags = 0x80000000u | select(0u, 1u, up) | ((mat & 255u) << 8u);
+        // (the chain's lines t = 0 .. k, one cluster lookup each: triangle t is (A, s_t, s_t+1), A = line 0)
+        var i0 = 0u;
+        var ia = 0u;
+        for (var t = 0u; t <= k; t++) {
+          let pt = z.l0 + z.d * i32(t);
+          let ib = sFind(pt.x, pt.y, zk);
+          if (t == 0u) { i0 = ib; }
+          if (t >= 2u) {
+            let tt = t - 1u;
+            let key = vec3<u32>(i0, ia, ib);
+            let same = j > 0u && all(key == prev[tt]);
+            if (j > 0u && !same && run[tt] % 2u == 1u) { pgStore(pw, pgLoad(pw) | (1u << (15u + tt))); }
+            run[tt] = select(1u, run[tt] + 1u, same);
+            prev[tt] = key;
           }
-          run[t] = select(1u, run[t] + 1u, same);
-          prev[t] = key;
+          ia = ib;
         }
         pgStore(zw + 1u, flags);
+        pw = zw + 1u;
         j++;
       }
       if (j > 0u) {
-        let pw = sheetW(j - 1u) + SZIP + li * 2u + 1u;
         var f = pgLoad(pw);
         for (var t = 1u; t < k; t++) {
           if (run[t] % 2u == 1u) { f |= 1u << (15u + t); }
