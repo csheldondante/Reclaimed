@@ -12,7 +12,8 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
   });
   // (round 20: --texbands N, the textured draw's band window)
   const tb = R.opt('texbands', '');
-  await page.goto(`https://localhost:${port}/nested.html?k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140${tb ? `&texbands=${tb}` : ''}`, { waitUntil: 'load' });
+  // (round 22: --slide 0|1, the sheets' slide; --rimtop 1)
+  await page.goto(`https://localhost:${port}/nested.html?k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140${tb ? `&texbands=${tb}` : ''}&slide=${R.opt('slide', '1')}&rimtop=${R.opt('rimtop', '0')}`, { waitUntil: 'load' });
   // (round 21: and the boot's pipelines made, as the stills wait: the suite's first edit needs level 1's window, which a
   // staged boot (round 19) opens later; without this the suite threw on a null window)
   await page.waitForFunction(() => window.nested && nested.app.frameCount > 60 && nested.app.pipesReady, { timeout: 180000, polling: 100 });

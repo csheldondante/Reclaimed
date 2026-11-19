@@ -50,11 +50,16 @@ export function edgeDec(e: number): EdgeSample | null {
 }
 
 /** whether two fields describe the same line within `steps` quantisation steps (GPU f32 against the oracle's f64) */
-export function edgeClose(a: number, b: number, steps = 2): boolean {
+export function edgeClose(a: number, b: number, steps = 2, dSteps = steps): boolean {
   if (!(a & EDGE_ON) || !(b & EDGE_ON)) return (a & EDGE_ON) === (b & EDGE_ON);
+  const e = edgeDiff(a, b);
+  return e.da <= steps && e.dq <= dSteps;
+}
+/** two present fields' difference in quantisation steps: angle (512 a turn), distance (1024 a column) */
+export function edgeDiff(a: number, b: number): { da: number; dq: number } {
   const da = Math.abs(((a >>> 9) & (A_STEPS - 1)) - ((b >>> 9) & (A_STEPS - 1)));
   const dq = Math.abs(((a >>> 18) & (Q_STEPS - 1)) - ((b >>> 18) & (Q_STEPS - 1)));
-  return Math.min(da, A_STEPS - da) <= steps && dq <= steps;
+  return { da: Math.min(da, A_STEPS - da), dq };
 }
 
 /** enhance: a parent's line seen from a child column. off = the child's centre minus the parent's, PARENT units; k the
@@ -83,8 +88,10 @@ export function edgeFromChildren(es: number[], offs: [number, number][], k: numb
     py += offs[i][1] + (s.d / k) * s.ny;
     n++;
   }
+  // (no line where the children's normals spread too far: a feature smaller than the parent's cell, e.g. a small
+  // mound's whole outline, whose mean normal nearly cancels; GPU f32 and the oracle's f64 then pick opposite ones)
   const l = Math.hypot(sx, sy);
-  if (!n || l < 1e-6) return 0;
+  if (!n || l < 0.5 * n) return 0;
   const nx = sx / l;
   const ny = sy / l;
   return edgeEncA(Math.atan2(ny, nx), (nx * px + ny * py) / n);

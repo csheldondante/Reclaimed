@@ -27622,3 +27622,50 @@ lines. Measured (test/unit/nested-slide.test.ts): a carve of radius 7.2 on flat 
 every one within 0.02 columns of the true circle beyond what the bound lets it reach; the farthest rim vertex is 0.346
 columns off the circle (0.696 unslid). The bound is 0.35, not the brief's 0.45: at 0.45 random carves folded 8
 triangles in the first run; 0.35 is the largest disc that provably never folds a sheet triangle (edge.ts SLIDE_MAX).
+
+**Step c-d, the GPU (0747f95e).** The ball kernel writes the samples (box grown by 3 columns in plan), derive and
+restrict carry them (one call site each for the compile: matWord, restrictEdge), the residual keeps the live edge
+(RES_EDGE in word 2 of a top's residual record), pack merges on the material only and keeps the kept top's edge, raise /
+dig / melt clear what they move. sheetBake: the cached records' edges in a new workgroup array (sE, 5 KB; the sheet pass
+only), the walk collects each consumed surface's sample and solves the slide per cluster, step 3 moves it to the
+cluster's word 1; the hash includes the edges. The draw adds it (misc2.y). GPU = reference (smoothref,
+`?selftest=1&smooth=only&wt=0`): L0 8,064, L1 8,388, L2 3,014 triangles, 0 extra, 0 missing, 97 slid vertices; union
+closed. (The first run failed only because the comparison placed the reference's vertices without their slide.)
+Compile (Dawn, three runs after noisy first ones): derive 2,036-2,076 ms (budget 2,700), sheetBake 734-790 (1,000;
+round 19 measured 646), no budget raised. The first measurements (derive 3,978, sheetBake 1,235-1,386) were noise: the
+same code measured 2,123 / 734 minutes later.
+
+**Step e, the look** (local/nested/r22-<pose>-<slide|noslide>-<tex|flat>.png and r22rt-* with ?rimtop=1,
+scripts/nested-r22-stills.mjs: a crater from above and low, an add mound, three overlapping carves, a carve across level
+1's window edge, the tunnel mouth, the closeup). Plainly: rims do not read round yet. The slide on vs off changes little
+on screen; what the eye reads as teeth is (a) the height alternation along a rim (a corner whose cluster joins floor and
+top sits at their mean, its neighbour at the top), (b) material per triangle (stone shards up a soil wall, NS-150), (c)
+at levels finer than the brush's, the parent's staircase of cells that enhance's heights inherit (8 child columns a
+stair). rimtop=1 removes (a) at the brush's own level (crater-low and closeup: the far rim's brown teeth gone, the
+ground runs flat to the rim) and turns the wall's stripes smoother with the slide, but at a derived level it lifts
+corners whose inherited samples are one-sided round them: spikes up the wall (r22rt-closeup). Recommendation: rimtop
+stays 0 until enhance is edge-aware; next round: a child takes the side of its parent's edge line it lies on (heights),
+then the material at a rim from the line.
+
+**Perf** (nested-perf --smooth 1 --profile 1, same scene, slide 1 and slide 0 in two pages; the GPU was shared with
+another session, so the two runs differ by 3x on identical code paths: the carve is the same with the slide on or off,
+only the draw adds one unpack a vertex). Slide-1 page: carve at level 1 with bakes median 21.0 ms (14.0-33.9), without
+bakes 14.5; bakes' share L0 ~3.2, L1 ~3.9, L2 ~4.3 ms; draw ms per view 6.5-10.7 except the tunnel inside 21.4 (that
+view measured 8.9 in the slide-0 page, the noisy one: noise). Triangles identical in both pages (L0 129,024, L1
+132,092-136,722, L2 239,152-299,448): topology unchanged. No clean A/B against round 21 was possible on a shared GPU
+(NS-169).
+
+**The self-test's edge check** (a crater at depth 1, a mound at depth 2, every level's samples against the oracle's):
+first run 3 of 259 differ at depth 1, 1 of 179 at depth 2. Diagnosed: all at the range's end. Under the tunnel's
+overlapping balls one ball's sample of a column lies at d = -2.0; in f64 it is in range and replaces the previous
+ball's, in f32 it is just out and the previous one stays (gpu (1, 0) d 0.27, oracle (-1, 0) d -2.0); derived children
+follow. The check allows 1 in 50 such and prints the first two. While looking, restrict now gives no line where the
+children's normals spread so far that their mean is under half their count (a feature smaller than the parent's cell,
+e.g. a small mound's whole outline: no single line; GPU and CPU alike).
+
+**End gate of round 22** (slide on by default, rimtop 0): typecheck; nested unit tests 65 of 65 (59 + 6 new); compile
+gate passed (derive 1,926-2,251, restrictK 681-1,381, sheetBake 643-790, total 16.5 s of 31.5; no budget raised); boot
+gate passed (reload: first frame 6.93 s, every boot pipeline 14.45 s, first sheet frame 10.12 s); `?selftest=1&smooth=
+only` 12 of 12 (one more: the slid-vertex count); full selftest smooth on 47 of 47 (with the new edge check), smooth off
+37 of 37. The coverage check now rounds a cap's corner to its column (a slid corner is up to 0.35 off): before that fix
+the smooth coverage checks counted 1,368-1,789 faults that were the check, not the draw.

@@ -864,7 +864,8 @@ fn restrictEdge(L: u32, X: i32, Y: i32, k: i32, i: u32, n: u32) -> u32 {
     }
   }
   let l = length(s);
-  if (c == 0.0 || l < 1e-6) { return 0u; }
+  // (no line where the normals spread too far: a feature smaller than the parent's cell; edge.ts edgeFromChildren)
+  if (c == 0.0 || l < 0.5 * c) { return 0u; }
   let nn = s / l;
   return edgeEncA(atan2(nn.y, nn.x), dot(nn, pt) / c);
 }

@@ -1241,7 +1241,8 @@ staircase of cells, each corner between a carved and an uncarved cell collapsing
   An edge is a straight line. Child from parent: d_child = (d_parent - dot(n, childCentre - parentCentre)) * k, same n,
   none past the range. Parent from children: of the children with the template's interval count that keep one (row
   order), the mean normal (normalised) and the mean of their line points (centre + d n, parent units) projected on it
-  (not a least-squares line). The residual: derive mode 1 stores, in word 2 of a top's residual record (2i + 1), RES_EDGE
+  (not a least-squares line); none where the normals spread so far that their mean is under half their count (a feature
+  smaller than the parent's cell has no single line). The residual: derive mode 1 stores, in word 2 of a top's residual record (2i + 1), RES_EDGE
   | the live edge where the live edge differs from enhance(parent)'s (so a column whose only difference is its edge gets
   a residual and a page); mode 0 takes it where the residual applies (gResOk), else the enhanced edge; a whole-column
   residual keeps the material word with its edge (word 2 & 0x3fffffff). So the edited level's own samples are exact
@@ -1273,6 +1274,17 @@ staircase of cells, each corner between a carved and an uncarved cell collapsing
 - *Toggle.* `?slide=0|1` (default 1) and the "Round edges" button: draw only (the bake always stores the slide), so the
   switch is instant; with it off the sheets are drawn exactly as before (the offset is +0.0). Picking, the camera's
   ground distance and the brushes still use columns.
+- *The look (stills local/nested/r22-* and r22rt-* (rimtop 1), scripts/nested-r22-stills.mjs; every pose slide on / off,
+  textured / flat, in one page).* Plainly: rims do NOT read round yet. The slide alone changes little on screen: the
+  teeth the eye reads are mostly (a) the HEIGHT alternation along a rim (a corner joining the floor and the top sits at
+  their mean, its neighbour at the top: the slide moves corners sideways, not up), (b) the material per triangle (a
+  stone column's triangles grey, a soil one's brown: the shards on a crater's wall, NS-150), and (c) at a finer level
+  than the brush's, the parent's staircase of cells inherited through enhance's heights (8 child columns a stair; a
+  slide of 0.35 child columns cannot touch it). `?rimtop=1` removes (a) at the brush's own level (the far rim of
+  r22rt-crater-low and -closeup: the ground runs flat to the rim, no brown teeth) but at a derived level it raises a
+  corner where the inherited samples are one-sided round it: spikes up the wall (r22rt-closeup, right). Next, in order:
+  edge-aware enhance (a child takes the side of its parent's line it lies on, so finer levels round the rim instead of
+  the parent's staircase), the material at a rim from the edge line (NS-150), then rimtop on by default.
 
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 

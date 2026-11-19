@@ -602,6 +602,13 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
 - NS-168 (test, round 22) The reference's random carve test leaves 4 open edges at a child window's corner in one run
   (oracle chain in f64 read as f32), slide or not (identical with every sample removed); the GPU's own columns and the
   hand-made scenes close exactly. Not investigated.
+- NS-169 (perf, round 22) The round's carve and draw costs were measured on a GPU shared with another session (two
+  pages of identical code paths differed 3x): re-measure the carve and the sheet pass against round 21 on a quiet
+  machine, and on the phone.
+- NS-170 (look, round 22, the main open item) Rims are still not round on screen: at a level finer than the brush's,
+  enhance's heights inherit the parent's staircase of cells (8 child columns a stair), which a 0.35-column slide cannot
+  touch. Next: edge-aware enhance (a child near its parent's edge line takes the height of the side it lies on, block
+  mean kept), then rimtop=1 by default (it spikes today where a derived corner's samples are one-sided).
 - NS-146 (limit, round 20) The detail bands (detail.wgsl DPt) need k a power of two: a level's s is L x round(log2 k),
   so the integer window origin can be shifted into each band's lattice exactly. Another k shades with wrong band
   scales (no error). Assert it at the page's start, or carry the scale as a float for other k.
