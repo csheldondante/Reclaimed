@@ -346,6 +346,11 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   A/B, `nested-perf.mjs --ab 1`; GpuNest.rimOff is the measurement switch, u.e.w in faceBake). The round 10 gate (12 ms
   carve) was not re-measured on a quiet GPU this round. Next if it matters: bake rim lines in a pass of their own (one
   thread a rim line computing its breakpoint list once into a scratch page) instead of each wall side walking them.
+  Round 12, quiet GPU: the rule's A/B on the bakes' share is +0.7 to +2.3 ms a carve (medians off 4.7-6.4, on 6.1-7.4),
+  not +3.6 to +8. Built: the bake is two pipelines (nest.wgsl BAKE_RIM override): chunks that touch no rim line run
+  round 10's code with no rim code compiled in, rim chunks the full rule (A/B: one pipeline 9.4 / split 8.3 ms median,
+  within the noise); an edit's three regions a level baked as one union (no measurable change). The carve is over target
+  for another reason: NS-105.
 - NS-102 (limit, round 11, for the owner) Collapse (T = 2 columns) closes thin features by merging their bounds: a
   one-column tunnel or bubble under T high is filled (the unit test's 0.6 tunnel and 0.5 bubble: 13 units of air gone),
   a thin floating layer or a stack of thin layers becomes a zero-volume double sheet (two coincident faces of opposite
@@ -353,6 +358,24 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   thin stack), a pillar under T high spreads into a bump over its 3 x 3 corners (volume kept within 0.5). Tall one-column
   pillars, pits and tunnels over T keep their boxes. Whether to drop coincident pairs (they cancel as a chain, so dropping
   both keeps the mesh closed) is a step-2 question; the DC plane fit replaces collapse anyway.
+  Round 12 (reference only): dropping coincident cap pairs is built in boxmesh.ts dropCapPairs (per column, cap runs on
+  the same three vertices dropped in pairs from the bottom; a fan column's down cap takes no part), with the GPU's
+  collapse computed from the columns alone (collapseCols, mesh.cluster: joined = the four columns of a level not all
+  solid or all air just above a breakpoint), equal to the mesh's collapse on every scene. Closure exact after dropping,
+  0 coincident left on every scene: deep thin stacks 6,946 coincident -> 0 (3,425 pairs), one-column tunnels 84 -> 0,
+  random 333 -> 0, three random levels 303 -> 0. Not on the GPU (the smooth GPU bake is deferred; scope changed).
+- NS-104 (limit, round 12) dropCapPairs' fan rule (a fan column's down cap not paired) is not exercised by any unit-test
+  scene (no top cap's run reached a fan bottom). The GPU bake would need it; an adversarial scene first.
+- NS-105 (perf, round 12, the main cost) A level-1 carve with three levels live: derive on level 2 is ~8-10 ms of the
+  ~12-16 ms without bakes, for 12 chunks (3,072 columns). Each child column reads its parent's records through the page
+  hash (pageOf) many times over: 64 children share each parent column, and layers() reads the own and four bilinear
+  neighbours' layer values per interval, sameMats per neighbour and per stencil cell, two workgroup barriers and a 64-word
+  blockSum per interval. Pack is ~4-5 ms over all its calls, the empty op (plan, merges, directory, submit, wait) ~4 ms.
+  Next: copy the parent's (16 / k + 4)^2 columns' records into workgroup memory once a workgroup (as faceBake's bFill),
+  and pack only columns a pass wrote. Measured with `nested-perf.mjs --profile 1` (steps left out in turn).
+- NS-106 (measurement only, round 12) GpuNest.bakeSkip (a level mask), splitBake (false: one bake pipeline, the A/B),
+  skip 'ball' and 'pack', counts (dispatches, submits) and readBakes() (chunks per bake and region slot, a readback for
+  tests), nested-perf.mjs `--profile 1`, `--levels 1`, and `--ab 1`'s split A/B.
 - NS-95 (hack, round 10, tests only) GpuNest.oldTop (derive's u.e.x) brings back round 9's top rule, and `skip`
   'resClear' the round 9 residuals, for the before stills and counts (scripts/nested-carves.mjs, `?skip=` on
   `?selftest=1&carves=only`, nested-perf.mjs `--old 1`).

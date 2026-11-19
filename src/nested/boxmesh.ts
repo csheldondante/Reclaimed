@@ -67,6 +67,12 @@ export interface BoxMesh {
   tris: Tri[];
   /** drawn columns per level */
   drawn: number[];
+  /** (round 12, the GPU's collapse) the cluster of a vertex identity from the columns round its corner line alone (no
+   *  mesh): its lowest and highest breakpoint and its placed height (f32, summed bottom up); see clusterOf below */
+  cluster: (id: VertexId, T: number) => { bot: number; top: number; z: number };
+  /** (round 12) whether column (X, Y) of level L lies in a 4 x 4 block whose down caps the GPU bakes as one fan (NS-83):
+   *  its down cap takes no part in dropping coincident cap pairs */
+  fan: (L: number, X: number, Y: number) => boolean;
 }
 
 const NO_DEPTH = 3e38;
@@ -338,7 +344,157 @@ export function boxMesh(scene: MeshScene): BoxMesh {
       }
     drawn.push(nDrawn);
   }
-  return { ids, tris, drawn };
+  // ---- (round 12) the collapse as the GPU computes it: from the columns round a corner line, no mesh ----------------
+  // A vertex's corner line: its level's four columns, and on a rim line (the identity is the child's) also the parent's
+  // four (heights through toKid). Breakpoints: every record top and bottom of those columns. A segment between two
+  // consecutive breakpoints is an edge of the mesh (joined) exactly when the four columns of one level are not all solid
+  // or all air just above its lower end (a wall stands on some half-edge round the line there); below a column's bottom,
+  // and where the column is not drawn, it is air. A cluster: the chain of joined segments shorter than T round the
+  // vertex; its height the f32 mean of its breakpoints, summed bottom up (the same arithmetic on every face).
+  type LC = { lv: number; X: number; Y: number; s: number };
+  const lineCols = (id: VertexId): LC[] => {
+    const out: LC[] = [];
+    for (let q = 0; q < 4; q++) out.push({ lv: id.L, X: id.cx - 1 + (q & 1), Y: id.cy - 1 + (q >> 1), s: 0 });
+    if (id.L > 0 && rimC(id.L, id.cx, id.cy)) {
+      const px = fdiv(id.cx, k);
+      const py = fdiv(id.cy, k);
+      for (let q = 0; q < 4; q++) out.push({ lv: id.L - 1, X: px - 1 + (q & 1), Y: py - 1 + (q >> 1), s: 1 });
+    }
+    return out;
+  };
+  const cv = (c: LC, z: number) => (c.s ? toKid(c.lv, z) : z);
+  const bpNext = (cs: LC[], z: number) => {
+    let best = NO_DEPTH;
+    for (const c of cs) {
+      const p = drawnPart(c.lv, c.X, c.Y);
+      if (!p) continue;
+      const b = cv(c, zb(c.lv, c.X, c.Y));
+      if (b > z) best = Math.min(best, b);
+      for (const t0 of p.top) {
+        const t = cv(c, t0);
+        if (t > z) {
+          best = Math.min(best, t);
+          break;
+        }
+      }
+    }
+    return best;
+  };
+  const bpPrev = (cs: LC[], z: number) => {
+    let best = -NO_DEPTH;
+    for (const c of cs) {
+      const p = drawnPart(c.lv, c.X, c.Y);
+      if (!p) continue;
+      const b = cv(c, zb(c.lv, c.X, c.Y));
+      if (b < z) best = Math.max(best, b);
+      for (let j = p.top.length - 1; j >= 0; j--) {
+        const t = cv(c, p.top[j]);
+        if (t < z) {
+          best = Math.max(best, t);
+          break;
+        }
+      }
+    }
+    return best;
+  };
+  /** solid just above breakpoint z (no breakpoint lies between z and the next one, so this is the segment's state) */
+  const solidAbove = (c: LC, z: number) => {
+    const p = drawnPart(c.lv, c.X, c.Y);
+    if (!p) return false;
+    if (z < cv(c, zb(c.lv, c.X, c.Y))) return false;
+    for (let j = 0; j < p.top.length; j++) if (cv(c, p.top[j]) > z) return solid(p.mat[j]);
+    return false;
+  };
+  const joinedAbove = (cs: LC[], z: number) => {
+    for (let g = 0; g < cs.length; g += 4) {
+      const s0 = solidAbove(cs[g], z);
+      for (let q = 1; q < 4; q++) if (solidAbove(cs[g + q], z) !== s0) return true;
+    }
+    return false;
+  };
+  const f = Math.fround;
+  const cluster = (id: VertexId, T: number) => {
+    const cs = lineCols(id);
+    const Tf = f(T);
+    let a = id.z;
+    for (;;) {
+      const p = bpPrev(cs, a);
+      if (p <= -NO_DEPTH || !(f(a - p) < Tf) || !joinedAbove(cs, p)) break;
+      a = p;
+    }
+    let b = a;
+    let sum = a;
+    let n = 1;
+    for (;;) {
+      const nx = bpNext(cs, b);
+      if (nx >= NO_DEPTH || !(f(nx - b) < Tf) || !joinedAbove(cs, b)) break;
+      sum = f(sum + nx);
+      n++;
+      b = nx;
+    }
+    return { bot: a, top: b, z: f(sum / n) };
+  };
+  const fan = (L: number, X: number, Y: number) => {
+    const bx = fdiv(X, 4) * 4;
+    const by = fdiv(Y, 4) * 4;
+    let z: number | undefined;
+    for (let q = 0; q < 16; q++) {
+      const cX = bx + (q % 4);
+      const cY = by + Math.floor(q / 4);
+      const p = drawnPart(L, cX, cY);
+      if (!p || !solid(p.mat[0])) return false;
+      const b = zb(L, cX, cY);
+      if (z === undefined) z = b;
+      else if (b !== z) return false;
+    }
+    for (let e = 0; e <= 4; e++) if (rimP(L, bx + e, by) || rimP(L, bx + e, by + 4) || rimP(L, bx, by + e) || rimP(L, bx + 4, by + e)) return false;
+    return true;
+  };
+  return { ids, tris, drawn, cluster, fan };
+}
+
+/** (round 12) the collapse as the GPU bakes it: each identity at its cluster's height from the columns (mesh.cluster) */
+export function collapseCols(mesh: BoxMesh, T = 2): Placement {
+  return (v) => [v.cx, v.cy, mesh.cluster(v, T).z];
+}
+
+/** (round 12, NS-102) coincident cap pairs dropped: a thin layer that collapses flat leaves its top and bottom cap
+ *  triangles on the same three vertices, facing opposite ways (they z-fight). Within one column, the cap triangles (the
+ *  same corner triple) that land on the same three vertices are a run of consecutive caps (clusters are intervals of a
+ *  corner line), alternating up and down; dropping them in pairs from the bottom keeps the mesh closed (each pair's
+ *  edges cancel) and leaves one, the top, where the run is odd. The GPU's rule per cap: kept iff no cap of its run lies
+ *  above it and an even number lie below. A fan column's down cap (the GPU bakes a fan there) takes no part. Returns a
+ *  new placed mesh. */
+export function dropCapPairs(mesh: BoxMesh, m: PlacedMesh): PlacedMesh & { pairs: number } {
+  const groups = new Map<string, number[]>();
+  m.tris.forEach((t, i) => {
+    const s = mesh.tris[m.src[i]];
+    if (s.kind !== 4 && s.kind !== 5) return;
+    const v0 = mesh.ids[s.v[0]];
+    if (s.kind === 5 && mesh.fan(s.L, s.X, s.Y)) {
+      // (the down cap at the column's bottom: the lowest vertex of the column's caps)
+      const isDown = !mesh.tris.some((o) => o !== s && o.L === s.L && o.X === s.X && o.Y === s.Y && (o.kind === 4 || o.kind === 5) && mesh.ids[o.v[0]].cx === v0.cx && mesh.ids[o.v[0]].cy === v0.cy && mesh.ids[o.v[0]].z < v0.z);
+      if (isDown) return;
+    }
+    const key = `${s.L}:${s.X}:${s.Y}:${[...t].sort((a, b) => a - b).join(',')}`;
+    let g = groups.get(key);
+    if (!g) groups.set(key, (g = []));
+    g.push(i);
+  });
+  const drop = new Set<number>();
+  for (const g of groups.values()) {
+    if (g.length < 2) continue;
+    g.sort((a, b) => mesh.ids[mesh.tris[m.src[a]].v[0]].z - mesh.ids[mesh.tris[m.src[b]].v[0]].z);
+    for (let i = 0; i < g.length - (g.length % 2); i++) drop.add(g[i]);
+  }
+  const tris: [number, number, number][] = [];
+  const src: number[] = [];
+  m.tris.forEach((t, i) => {
+    if (drop.has(i)) return;
+    tris.push(t);
+    src.push(m.src[i]);
+  });
+  return { ...m, tris, src, pairs: drop.size / 2 };
 }
 
 // ---- placement -------------------------------------------------------------------------------------------------------

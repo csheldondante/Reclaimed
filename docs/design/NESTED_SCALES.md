@@ -545,6 +545,11 @@ History (rounds 1-4; superseded where the above differs):
   one z cannot hold per-vertex units). Each level is still closed by itself (it walls its own window edge and its child's
   footprint). Checked by watertight.ts rimJunctions (no vertex of one level inside a vertical edge of the other on a rim
   line, no parent vertex there in its own units) in the suite's manifold eyes and the shaft poses.
+- **Round 12 (NS-103): rim chunks pay for the rim rule, others do not.** The bake is two pipelines of one entry point
+  (nest.wgsl override BAKE_RIM): a chunk any of whose corner lines is a rim line (chunkRim) is baked with the rule, every
+  other chunk by the same code with the rim code compiled out. Both run over every bake slot and skip the other's chunks.
+  An edit's regions on one level (edit, derive, restrict into it) are baked as one union of chunks (dilate takes up to
+  three slots).
 - **Not covered by the rule (BACKLOG NS-98):** horizontal edges along the rim (a parent cap's edge spans k child columns;
   the child's caps meet it per column) and the child's corner lines on its window edge between parent lines. These can
   only crack where the two levels' heights there are exactly equal (collinear edges of different spans); not seen.
@@ -582,6 +587,21 @@ also preserve sharp edges." Thin features softening is accepted.
   stored word a record (16-bit normal + 16-bit signed distance, written by the terrain function and brushes, interpolated
   by enhance), the vertex clamped to its cell neighbourhood, crease-angle shading; the GPU bake behind a switch; Phong
   enhancement.
+- **Round 12 (reference only; the GPU bake is deferred while its design is revised with the owner).**
+  - *Collapse from the columns.* A vertex's cluster needs no mesh: its corner line's columns (its level's four; on a rim
+    line also the parent's four, heights through toKid) give the breakpoints (every record top and bottom), and the
+    segment above a breakpoint is an edge exactly when one level's four columns are not all solid or all air just above
+    it (below a column's bottom and where it is not drawn: air). A cluster is the chain of such segments shorter than T;
+    its height the f32 mean of its breakpoints summed bottom up (boxmesh.ts mesh.cluster, collapseCols; equal to the
+    mesh-based collapse on every unit-test scene).
+  - *Coincident cap pairs are dropped.* A thin layer that collapses flat leaves its top and bottom cap triangles on the
+    same three vertices facing opposite ways (z-fighting). Only caps of one column can coincide (walls of a half-edge
+    never do: a wall triangle's two same-line vertices lie in one strip piece). Per column and cap triangle, the caps on
+    the same three vertices are a run of consecutive caps, alternating up and down; they are dropped in pairs from the
+    bottom, the top one kept where the run is odd. Per cap: kept iff no cap of its run is above it and an even number
+    are below (the run is the caps within the cluster bounds of its three corners). Each dropped pair's edges cancel, so
+    the mesh stays exactly closed. A column whose down cap the GPU bakes as a fan (NS-83) keeps its down cap out of the
+    runs. (boxmesh.ts dropCapPairs; NS-102, NS-104.)
 
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 

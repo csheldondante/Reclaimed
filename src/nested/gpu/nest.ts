@@ -148,6 +148,14 @@ export class GpuNest {
   private bakeNext = BAKE_SLOT;
   /** (measurement only) skip the bakes: an op's cost without them */
   bakeOff = false;
+  /** (measurement only, round 12) a mask of levels whose bakes are skipped: where a carve's bake time goes */
+  bakeSkip = 0;
+  /** (measurement only, round 12) false: round 11's one bake pipeline for every chunk (the split's A/B) */
+  splitBake = true;
+  /** (measurement only, round 12) compute dispatches and submits encoded so far */
+  readonly counts = { dispatches: 0, submits: 0 };
+  private bakeLog: { L: number; slot: number }[] = [];
+  private lastBakes: { L: number; slot: number }[] = [];
   /** (measurement only, NS-42) an edit's passes left out: 'restrict', 'residual', 'derive' (the result is then wrong) */
   readonly skip = new Set<string>();
   /** (tests only, round 10) 1: derive's top surface interpolates every neighbour as round 9 did (the before stills) */
@@ -212,6 +220,9 @@ export class GpuNest {
     const dpl = device.createPipelineLayout({ bindGroupLayouts: [this.dirLayout] });
     for (const e of ['derive', 'restrictK', 'rootGen', 'zPick', 'release', 'resClear', 'merge', 'edit', 'meltSnap', 'meltApply', 'camera', 'pick', 'ball', 'pack', 'faceBake', 'snap', 'tabOut', 'tabIn', 'shrinkFree', 'shrinkMove', 'shrinkCopy'])
       this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: pl, compute: { module, entryPoint: e } });
+    // (round 12, NS-103) the bake of chunks that touch a rim line: the rim rule's code compiled in (nest.wgsl BAKE_RIM)
+    this.pipes.faceBakeRim = device.createComputePipeline({ label: 'nest faceBake (rim chunks)', layout: pl, compute: { module, entryPoint: 'faceBake', constants: { BAKE_RIM: 1 } } });
+    this.pipes.faceBakeOne = device.createComputePipeline({ label: 'nest faceBake (round 11: one bake)', layout: pl, compute: { module, entryPoint: 'faceBake', constants: { BAKE_RIM: 1, BAKE_SPLIT: 0 } } });
     for (const e of ['plan', 'dilate']) this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: ppl, compute: { module, entryPoint: e } });
     for (const e of ['dirClear', 'dirBuild', 'dirFinish']) this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: dpl, compute: { module, entryPoint: e } });
     this.rebind();
@@ -326,12 +337,14 @@ export class GpuNest {
   private run(entry: string, off: number, x: number, y = 1): void {
     if (x <= 0 || y <= 0) return;
     const p = this.begin();
+    this.counts.dispatches++;
     p.setPipeline(this.pipes[entry]);
     p.setBindGroup(0, entry === 'plan' || entry === 'dilate' ? this.planBg : entry.startsWith('dir') ? this.dirBg : this.bg, [off]);
     p.dispatchWorkgroups(x, y);
   }
   private runIndirect(entry: string, off: number, slot: number): void {
     const p = this.begin();
+    this.counts.dispatches++;
     p.setPipeline(this.pipes[entry]);
     p.setBindGroup(0, this.bg, [off]);
     p.dispatchWorkgroupsIndirect(this.args, slot * 16);
@@ -347,6 +360,10 @@ export class GpuNest {
     this.enc = null;
     this.uUsed = 0;
     this.bakeNext = BAKE_SLOT;
+    this.counts.submits++;
+    // (a frame's camera submit bakes nothing: the op's bakes stay readable)
+    if (this.bakeLog.length) this.lastBakes = this.bakeLog;
+    this.bakeLog = [];
     if (read) this.readStats();
   }
   /** a CPU slot: a chunk rect to dispatch over (written before this op's submit) */
@@ -570,18 +587,29 @@ export class GpuNest {
   // ---- the baked draw ---------------------------------------------------------------------------------------------------
   /** bake level L's faces over region slots, their chunks grown by one (a column's walls depend on its neighbours) */
   private bake(L: number, slots: number[], grow = true): void {
-    if (this.bakeOff) return;
+    if (this.bakeOff || (this.bakeSkip >> L) & 1) return;
+    // (round 12) two pipelines over the same slot: chunks that touch no rim line, and those that do (each skips the other's)
+    const both = (s: number) => {
+      const off = this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = s), (e[3] = this.rimOff)));
+      this.bakeLog.push({ L, slot: s });
+      if (!this.splitBake) return this.runIndirect('faceBakeOne', off, s);
+      this.runIndirect('faceBake', off, s);
+      this.runIndirect('faceBakeRim', off, s);
+    };
     if (!grow) {
-      for (const s of slots) this.runIndirect('faceBake', this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = s), (e[3] = this.rimOff))), s);
+      for (const s of slots) both(s);
       return;
     }
-    const dil = slots.map((s) => {
+    // (round 12, NS-103) one bake over the union of the slots' chunks (up to three a dilate): they mostly overlap, and
+    // baked one by one their shared chunks were baked two or three times
+    for (let i = 0; i < slots.length; i += 3) {
       if (this.bakeNext >= SLOTS) throw new Error('nest: more bake regions in one submit than slots');
       const t = this.bakeNext++;
-      this.run('dilate', this.uni(({ a, e }) => ((a[3] = L), e.set([s, t, 0, 0]))), 1);
-      return t;
-    });
-    for (const t of dil) this.runIndirect('faceBake', this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = t), (e[3] = this.rimOff))), t);
+      const g = slots.slice(i, i + 3);
+      while (g.length < 3) g.push(255);
+      this.run('dilate', this.uni(({ a, e }) => ((a[3] = L), e.set([g[0] | (g[1] << 8) | (g[2] << 16), t, 0, 0]))), 1);
+      both(t);
+    }
   }
   /** bake level L's faces over chunk rects given by the CPU (a window's edge ring, a child's footprint grown by a
    *  column: exactly the columns whose neighbours changed between drawn and air), clipped to the window; CPU slots from
@@ -630,6 +658,7 @@ export class GpuNest {
   }
   /** a pass's TMP columns written back as the partition (pack) over a slot of level L */
   private pack(L: number, slot: number): void {
+    if (this.skip.has('pack')) return;
     this.runIndirect('pack', this.uni(({ a, r }) => ((a[3] = L), (r[0] = slot))), slot);
   }
   /** pages a bake may take over `chunks` chunks that have no faces yet: face pages, stacked as deep as any so far */
@@ -803,7 +832,7 @@ export class GpuNest {
       if (spec.op === 'melt') {
         this.runIndirect('meltSnap', this.uni((u) => (base(u), (u.a[3] = m))), slot);
         this.runIndirect('meltApply', this.uni((u) => (base(u), (u.a[3] = m))), slot);
-      } else this.runIndirect(ball ? 'ball' : 'edit', this.uni((u) => (base(u), (u.a[3] = m))), slot);
+      } else if (!this.skip.has('ball')) this.runIndirect(ball ? 'ball' : 'edit', this.uni((u) => (base(u), (u.a[3] = m))), slot);
       this.pack(m, slot);
       this.mergeFrees();
     }
@@ -938,6 +967,22 @@ export class GpuNest {
   }
 
   // ---- the self-test's readback (never on the interactive path) -------------------------------------------------------
+  /** (diagnostics, round 12) the last submitted op's bakes: per level, the chunks its bake dispatches covered (read back
+   *  from the dilated slots' dispatch sizes; a CPU slot's rect too) */
+  async readBakes(): Promise<{ L: number; chunks: number }[] & { slots?: number[] }> {
+    this.submit();
+    const tmp = this.device.createBuffer({ size: this.args.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const enc = this.device.createCommandEncoder();
+    enc.copyBufferToBuffer(this.args, 0, tmp, 0, this.args.size);
+    this.device.queue.submit([enc.finish()]);
+    await tmp.mapAsync(GPUMapMode.READ);
+    const a = new Uint32Array(tmp.getMappedRange().slice(0));
+    tmp.destroy();
+    const out: { L: number; chunks: number }[] & { slots?: number[] } = this.lastBakes.map((b) => ({ L: b.L, chunks: a[b.slot * 4] * a[b.slot * 4 + 1] }));
+    // (every region slot's chunks: the plan's slot m * 4 + 0 restrict from m, + 1 residual, + 2 derive, + 3 edit)
+    out.slots = Array.from({ length: 32 }, (_, s) => a[s * 4] * a[s * 4 + 1]);
+    return out;
+  }
   /** (diagnostics) the camera buffer */
   async readCam(): Promise<Float32Array> {
     this.submit();

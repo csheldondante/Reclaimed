@@ -5,7 +5,7 @@
 // with a repeated vertex, each level closed by itself, and no T-junction across a rim line.
 import { describe, expect, it } from 'vitest';
 import { AIR, type Part } from '../../src/nested/oracle';
-import { asCapture, boxMesh, closure, collapse, identity, place, random, rimJunctionsRef, type MeshLevel, type MeshScene, type Placement } from '../../src/nested/boxmesh';
+import { asCapture, boxMesh, closure, collapse, collapseCols, dropCapPairs, identity, place, random, rimJunctionsRef, type MeshLevel, type MeshScene, type Placement } from '../../src/nested/boxmesh';
 import { manifold } from '../../src/nested/watertight';
 
 const STONE = 1;
@@ -157,6 +157,42 @@ describe('nested scales: the box mesh and the smooth draw step 1', () => {
         }
       }
       console.log(`[boxmesh] ${sn}\n  ${rows.join('\n  ')}`);
+    });
+
+  // (round 12, NS-102) the collapse as the GPU would compute it (from the columns round a corner line, no mesh) agrees
+  // with the mesh's, and dropping coincident cap pairs keeps every level exactly closed and leaves no coincident pair
+  for (const [sn, make] of Object.entries(scenes))
+    it(`${sn}: collapse from the columns = from the mesh; coincident cap pairs dropped, still closed`, () => {
+      const scene = make();
+      const mesh = boxMesh(scene);
+      const rows: string[] = [];
+      for (const T of [2, 0.5]) {
+        const a = place(mesh, collapse(T), scene);
+        const b = place(mesh, collapseCols(mesh, T), scene);
+        // the same merges (vertex for vertex), the same heights (f32 sums against f64)
+        expect(b.pos.length, `${sn} T=${T} merged vertices`).toBe(a.pos.length);
+        let worst = 0;
+        mesh.ids.forEach((v, i) => {
+          const pa = a.pos[a.of[i]];
+          const pb = b.pos[b.of[i]];
+          worst = Math.max(worst, Math.abs(pa[2] - pb[2]) / Math.max(1, Math.abs(pa[2])));
+        });
+        expect(worst, `${sn} T=${T} heights`).toBeLessThan(1e-5);
+        expect(b.dropped).toBe(a.dropped);
+        const before = closure(b);
+        const d = dropCapPairs(mesh, b);
+        for (let L = 0; L < scene.levels.length; L++) {
+          const c = closure(d, (s) => mesh.tris[s].L === L);
+          expect(c.odd, `${sn} T=${T} L${L} odd edges`).toBe(0);
+          expect(c.unbalanced, `${sn} T=${T} L${L} unbalanced`).toBe(0);
+          expect(c.repeated).toBe(0);
+          expect(c.coincident, `${sn} T=${T} L${L} coincident left`).toBe(0);
+        }
+        const after = closure(d);
+        expect(Math.abs(after.volume - before.volume)).toBeLessThan(1e-6 * Math.max(1, Math.abs(before.volume)));
+        rows.push(`T=${T}: ${before.tris} tris, coincident ${before.coincident} -> ${after.coincident} (${d.pairs} pairs dropped), ${after.tris} left; zero-area ${after.zeroArea}`);
+      }
+      console.log(`[pairs] ${sn}\n  ${rows.join('\n  ')}`);
     });
 
   it('collapse: triangles a column on gentle terrain, and what one-column features lose', () => {

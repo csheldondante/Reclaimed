@@ -2095,10 +2095,38 @@ fn nextBp(L: u32, CX: i32, CY: i32, z: f32) -> f32 {
 // (toKid, the one conversion both bakes use), and the draw places those vertices through the child's view-projection
 // (draw.wgsl corner: face word bits 25-27 flag them on the parent's faces). So both levels' edges along the line are
 // the same segments with bit-identical end points in clip space (up to the exact factor 1 / k), as within one level.
+// (round 12, NS-103) The bake is two pipelines of faceBake: BAKE_RIM false for the chunks that touch no rim line (no rim
+// code compiled in: the round 10 bake), true for the chunks that do (chunkRim). Both run over every bake slot; each skips
+// the other's chunks. The rim rule's code made every chunk's bake slower, rim or not.
+override BAKE_RIM: bool = false;
+/** (measurement only: false with BAKE_RIM true is round 11's one bake for every chunk, GpuNest.splitBake false) */
+override BAKE_SPLIT: bool = true;
+/** whether any corner line of chunk (cx, cy) of level L (lines cx * 16 .. cx * 16 + 16) is a rim line (rimP or rimC) */
+fn chunkRim(L: u32, cx: i32, cy: i32) -> bool {
+  if (u.e.w != 0) { return false; }
+  let a0 = cx * 16;
+  let b0 = cy * 16;
+  let a1 = a0 + 16;
+  let b1 = b0 + 16;
+  let k = i32(u.a.x);
+  if (L + 1u < 8u && u.lv[L + 1u].w != 0) {
+    let c = u.lv[L + 1u];
+    let f0 = vec2<i32>(fdiv(c.x, k), fdiv(c.y, k));
+    let f1 = vec2<i32>(fdiv(c.x + c.z, k), fdiv(c.y + c.z, k));
+    let meets = a1 >= f0.x && a0 <= f1.x && b1 >= f0.y && b0 <= f1.y;
+    let inside = a0 > f0.x && a1 < f1.x && b0 > f0.y && b1 < f1.y;
+    if (meets && !inside) { return true; }
+  }
+  if (L > 0u) {
+    let w = u.lv[L];
+    if (a0 == w.x || b0 == w.y || a1 == w.x + w.z || b1 == w.y + w.z) { return true; }
+  }
+  return false;
+}
 /** whether corner line (CX, CY) of level L lies on the boundary of its live child's footprint */
 fn rimP(L: u32, CX: i32, CY: i32) -> bool {
   // (u.e.w: GpuNest.rimOff, the cost A/B only)
-  if (L + 1u >= 8u || u.lv[L + 1u].w == 0 || u.e.w != 0) { return false; }
+  if (!BAKE_RIM || L + 1u >= 8u || u.lv[L + 1u].w == 0 || u.e.w != 0) { return false; }
   let c = u.lv[L + 1u];
   let k = i32(u.a.x);
   let x = CX * k;
@@ -2108,7 +2136,7 @@ fn rimP(L: u32, CX: i32, CY: i32) -> bool {
 }
 /** whether corner line (cx, cy) of level L (a child) is a rim line: on its window's boundary and a parent corner line */
 fn rimC(L: u32, cx: i32, cy: i32) -> bool {
-  if (L == 0u || u.e.w != 0) { return false; }
+  if (!BAKE_RIM || L == 0u || u.e.w != 0) { return false; }
   let w = u.lv[L];
   let k = i32(u.a.x);
   if (cx < w.x || cy < w.y || cx > w.x + w.z || cy > w.y + w.z) { return false; }
@@ -2457,6 +2485,7 @@ fn faceBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id)
   let cx = o.x + i32(wid.x);
   let cy = o.y + i32(wid.y);
   if (!inWin(L, cx * 16, cy * 16)) { return; }
+  if (BAKE_SPLIT && chunkRim(L, cx, cy) != BAKE_RIM) { return; }
   if (li < 9u) { wPg[li] = pageOf(L, cx - 1 + i32(li % 3u), cy - 1 + i32(li / 3u), 0u); }
   workgroupBarrier();
   bOrg = vec2<i32>(cx - 1, cy - 1);
@@ -2524,31 +2553,42 @@ fn dirFinish() {
     dargs[L * 4u + 3u] = 0u;
   }
 }
-/** a bake slot (u.e.y) from a region slot (u.e.x): its chunks grown by one each way, within level u.a.w's window */
+/** a bake slot (u.e.y) from up to three region slots (u.e.x: s0 | s1 << 8 | s2 << 16, 255 none): the union of their
+ *  chunks grown by one each way, within level u.a.w's window. (Round 12, NS-103: an edit's three regions on a level, the
+ *  edit, the derive and the restrict into it, mostly overlap; baked one by one their shared chunks were baked two or
+ *  three times in one submit.) */
 @compute @workgroup_size(1)
 fn dilate() {
   let L = u.a.w;
-  let s = u32(u.e.x);
   let t = u32(u.e.y);
-  let nx = i32(args[s * 4u]);
-  let ny = i32(args[s * 4u + 1u]);
   let w = u.lv[L];
-  if (nx <= 0 || ny <= 0 || w.z == 0) {
+  var x0 = 1 << 30;
+  var y0 = 1 << 30;
+  var x1 = -(1 << 30);
+  var y1 = -(1 << 30);
+  for (var i = 0u; i < 3u; i++) {
+    let s = (u32(u.e.x) >> (8u * i)) & 255u;
+    if (s == 255u) { continue; }
+    let nx = i32(args[s * 4u]);
+    let ny = i32(args[s * 4u + 1u]);
+    if (nx <= 0 || ny <= 0 || w.z == 0) { continue; }
+    let ox = slotW(s, 4u);
+    let oy = slotW(s, 5u);
+    // the columns the slot's pass changes (its box) grown by two columns, in chunks: a column's bottom depends on its
+    // four neighbours' depths, and its walls' splits on the bottoms of the columns round its corner lines (round 8; one
+    // before) (a CPU slot's box is everything: its chunks grown by one)
+    let bx0 = (max(slotW(s, 0u), -(1 << 28)) - 2) >> 4;
+    let by0 = (max(slotW(s, 1u), -(1 << 28)) - 2) >> 4;
+    let bx1 = ((min(slotW(s, 2u), 1 << 28) + 1) >> 4) + 1;
+    let by1 = ((min(slotW(s, 3u), 1 << 28) + 1) >> 4) + 1;
+    x0 = min(x0, max(max(ox - 1, bx0), w.x / 16));
+    y0 = min(y0, max(max(oy - 1, by0), w.y / 16));
+    x1 = max(x1, min(min(ox + nx + 1, bx1), (w.x + w.z) / 16));
+    y1 = max(y1, min(min(oy + ny + 1, by1), (w.y + w.z) / 16));
+  }
+  if (x1 <= x0 || y1 <= y0) {
     setSlot(t, vec4<i32>(0), 0, 0, 0, 0);
     return;
   }
-  let ox = slotW(s, 4u);
-  let oy = slotW(s, 5u);
-  // the columns the slot's pass changes (its box) grown by two columns, in chunks: a column's bottom depends on its four
-  // neighbours' depths, and its walls' splits on the bottoms of the columns round its corner lines (round 8; one before)
-  // (a CPU slot's box is everything: its chunks grown by one)
-  let bx0 = (max(slotW(s, 0u), -(1 << 28)) - 2) >> 4;
-  let by0 = (max(slotW(s, 1u), -(1 << 28)) - 2) >> 4;
-  let bx1 = ((min(slotW(s, 2u), 1 << 28) + 1) >> 4) + 1;
-  let by1 = ((min(slotW(s, 3u), 1 << 28) + 1) >> 4) + 1;
-  let x0 = max(max(ox - 1, bx0), w.x / 16);
-  let y0 = max(max(oy - 1, by0), w.y / 16);
-  let x1 = min(min(ox + nx + 1, bx1), (w.x + w.z) / 16);
-  let y1 = min(min(oy + ny + 1, by1), (w.y + w.z) / 16);
   setSlot(t, vec4<i32>(-(1 << 30), -(1 << 30), 1 << 30, 1 << 30), x0, y0, x1 - x0, y1 - y0);
 }

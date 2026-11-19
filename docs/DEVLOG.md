@@ -26996,3 +26996,53 @@ triangles a column (4.4 with the down caps and the walls between bottoms), slope
 features: a 0.5 pillar spreads into a bump (volume +0.5), a 0.6 one-column tunnel and a 0.5 bubble fill (13 units of air
 gone) and leave coincident face pairs (closed, but they would z-fight), 30 thin layers merge into 6,946 coincident
 triangles; tall pillars, deep pits and tunnels over T keep their boxes (NS-102).
+
+## 2026-11-19 — Nested scales lab, round 12: where a carve's time goes (NS-105); coincident cap pairs dropped in the reference
+
+**Why.** Round 11 could not judge speed (shared GPU). The owner: "Water tight is the more important requirement" and
+"Definitely don't give me something with crappy performance that still has holes." Mid-round the scope narrowed: the
+smooth GPU bake is being redesigned with the owner, so only the reference-side pair dropping was built, plus a per-step
+breakdown of a carve (the owner: "Aren't they just interval booleans on the GPU?").
+
+**Speed, quiet GPU** (checked: no other headless Chrome for the first runs; one other agent's headless Chrome appeared
+later, and one run with it busy, carve median 31.7 ms, is discarded). `nested-perf.mjs`, 960 x 640, a level-1 carve
+(radius 0.5 world) at the tunnel mouth, three levels live, ten carves a run. Carve medians with bakes: 15.6, 14.3 (round
+11 code); 15.5, 14.2 (union bake); 15.9, 16.2 (split bake); without bakes 7.5-9.4. Draw alone, worst view (tunnel inside,
+looking back): 6.0-6.7 ms. So: over the 12 ms target, and not because of the rim rule.
+
+- Rim rule A/B (the bakes' share, GpuNest.rimOff alternating): off 4.7-6.4 / on 6.1-7.4 ms median, +0.7 to +2.3 ms (not
+  round 11's +3.6 to +8, measured on a shared GPU).
+- Bakes by level (bakeSkip): L2 ~4-6 ms, L1 ~1-3, L0 ~1. One carve bakes L0 2 chunks, L1 4, L2 18 (4,608 columns, ~95k
+  triangles written).
+- Steps left out in turn (`--profile 1`, medians of 5, wall time submit to GPU done, no bakes 16.1 ms at that spot):
+  ball write ~1.1, resClear ~1.0, restrict ~1.5, residual (level 1, 12 chunks) ~1.9, derive on level 2 (12 chunks, 3,072
+  columns, with its pack) ~9.8, all packs ~4.0, everything but plan, merges, directory and the submit: 3.8 ms left (the
+  fixed cost of an op: 41 dispatches in one compute pass, one submit, the wait). Page allocation is inside the kernels
+  (ensurePages) and was not separable.
+- Answer to the owner: the boolean itself (ball + pack of its columns) is about 1-2 ms. The time is the finer level's
+  re-derive: level 2 = enhance(level 1) + residual over the enhance support, a limited PPM and bilinear layer pass per
+  child column, where every read of a parent record goes through the page hash (64 children share each parent column
+  and each reads it and its neighbours again, per interval), with two workgroup barriers per interval. NS-105: cache the
+  parent's records in workgroup memory once a workgroup (as the bake's bFill does), pack only what a pass wrote.
+
+**Changed (bake, kept; both within the noise).** The bake is two pipelines of faceBake (override BAKE_RIM): chunks with
+no rim line run with the rim code compiled out, rim chunks with it (A/B one pipeline 9.4 / split 8.3 ms median of the
+bakes' share). An edit's regions on a level are baked as one union of chunks (no measurable change). Measurement
+switches: NS-106.
+
+**Coincident cap pairs, reference only** (boxmesh.ts collapseCols, mesh.cluster, dropCapPairs; NESTED_SCALES.md "The
+smooth draw", round 12). The collapse computed from the columns alone (what a GPU bake can do) equals the mesh-based one
+on every scene at T = 2 and 0.5. Dropping cap pairs per column keeps every level exactly closed (0 odd, 0 unbalanced, no
+repeated vertex, volume unchanged) and leaves 0 coincident triangles: deep thin stacks 6,946 -> 0 (3,425 pairs, 10,860 ->
+4,010 triangles), one-column tunnels 84 -> 0, random 333 -> 0, three random levels 303 -> 0 (T = 2).
+
+**Gate (smooth off; no smooth draw on the GPU this round).**
+
+| check | result |
+|---|---|
+| `?selftest=1` | 36 of 36 (manifold 0, rim lines 0 faults over 3,328, 0 hole pixels over 40 + 65 + 162 poses) |
+| narrow shaft check | 0 hole pixels over 36 poses, coverage 0 |
+| stress | passed, 0 refusals |
+| unit tests | nested 44 of 44 (box mesh 29) |
+| carve median with bakes | 14.2-16.2 ms: target 12 (14 at a rim) NOT met; cause NS-105 |
+| draw alone, worst view | 6.0-6.7 ms |

@@ -63,6 +63,7 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
   await sleep(2500);
   if (R.opt('profile', '0') === '1') await page.evaluate(() => (window.__profile = true));
   if (R.opt('ab', '0') === '1') await page.evaluate(() => (window.__ab = true));
+  if (R.opt('levels', '0') === '1') await page.evaluate(() => (window.__levels = true));
   // (--old 1, round 10: the carves with round 9's rules, derive's top from every neighbour and no residual cleared, to
   // measure what the round 10 rules add to an edit)
   if (R.opt('old', '0') === '1')
@@ -95,26 +96,100 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
         if (a.nest.stats.grows === g0) (i % 2 === 0 ? ab.off : ab.on).push(r.withBake - r.without);
       }
       a.nest.rimOff = 0;
+      // (round 12) the split bake (plain and rim pipelines) against round 11's one pipeline, the same way
+      ab.one = [];
+      ab.split = [];
+      for (let i = 0; i < 16; i++) {
+        a.nest.splitBake = i % 2 === 1;
+        const at = { level: 1, x: (h[0] - 1 + i * 0.25) * 8 - w1.gx, y: (h[1] + 0.2) * 8 - w1.gy, z: (h[2] + 0.8 - zo) * 8 };
+        const g0 = a.nest.stats.grows;
+        const r = await nested.benchEdit({ op: 'carve', radius: 0.5, amount: 0, at });
+        if (a.nest.stats.grows === g0) (i % 2 === 1 ? ab.split : ab.one).push(r.withBake - r.without);
+      }
+      a.nest.splitBake = true;
+    }
+    // (--levels 1, round 12) which level's bake a carve's bake time goes to: carves alternating a mask of levels whose
+    // bakes are skipped, the bakes' share (with - without) of each
+    const lv = {};
+    if (window.__levels) {
+      const masks = [0, 1, 2, 4, 7];
+      for (let i = 0; i < 25; i++) {
+        const m = masks[i % masks.length];
+        a.nest.bakeSkip = m;
+        const at = { level: 1, x: (h[0] - 1 + i * 0.16) * 8 - w1.gx, y: (h[1] + 1.0) * 8 - w1.gy, z: (h[2] + 0.8 - zo) * 8 };
+        const g0 = a.nest.stats.grows;
+        const r = await nested.benchEdit({ op: 'carve', radius: 0.5, amount: 0, at });
+        if (a.nest.stats.grows === g0) (lv[`skip ${m}`] ??= []).push(+(r.withBake - r.without).toFixed(1));
+      }
+      a.nest.bakeSkip = 0;
     }
     // (--profile 1) where a slow carve's time goes: the same carve spot again with passes left out (results wrong)
     const prof = [];
     if (window.__profile) {
-      for (const skip of [[], ['derive'], ['residual'], ['restrict'], ['derive', 'residual', 'restrict']]) {
-        const at = { level: 1, x: (h[0] - 0.6) * 8 - w1.gx, y: (h[1] + 1.5) * 8 - w1.gy, z: (h[2] + 0.4 - zo) * 8 };
+      // (round 12) each step left out in turn, interleaved, 5 rounds; medians of the op's wall time (submit to GPU done)
+      // without its bakes; the bakes' share per level from bakeSkip; then the op's dispatches, submits and chunks baked.
+      // 'pack' last: left out it leaks the scratch pages.
+      const NONE = ['ball', 'resClear', 'restrict', 'residual', 'derive'];
+      const sets = { all: [], ball: ['ball'], resClear: ['resClear'], restrict: ['restrict'], residual: ['residual'], derive: ['derive'], 'all edit passes': NONE };
+      const t = {};
+      const med = (v) => [...v].sort((x, y) => x - y)[Math.floor(v.length / 2)];
+      for (let rep = 0; rep < 5; rep++)
+        for (const [name, skip] of Object.entries(sets)) {
+          const at = { level: 1, x: (h[0] - 0.6 + rep * 0.3) * 8 - w1.gx, y: (h[1] + 1.5) * 8 - w1.gy, z: (h[2] + 0.4 - zo) * 8 };
+          a.nest.skip.clear();
+          for (const s of skip) a.nest.skip.add(s);
+          const r = await nested.benchEdit({ op: 'carve', radius: 0.5, amount: 0, at });
+          (t[name] ??= []).push(r.without);
+        }
+      a.nest.skip.clear();
+      const base = med(t.all);
+      for (const [name, v] of Object.entries(t)) prof.push(`${name === 'all' ? 'all (no bakes)' : `without ${name}`} ${med(v).toFixed(1)} ms${name === 'all' ? '' : ` (step ~${(base - med(v)).toFixed(1)})`}`);
+      // the bakes per level
+      const bk = {};
+      for (let rep = 0; rep < 5; rep++)
+        for (const m of [0, 1, 2, 4, 7]) {
+          a.nest.bakeSkip = m;
+          const at = { level: 1, x: (h[0] - 0.6 + rep * 0.3) * 8 - w1.gx, y: (h[1] + 2.0) * 8 - w1.gy, z: (h[2] + 0.4 - zo) * 8 };
+          const r = await nested.benchEdit({ op: 'carve', radius: 0.5, amount: 0, at });
+          (bk[m] ??= []).push(r.withBake);
+        }
+      a.nest.bakeSkip = 0;
+      const all = med(bk[0]);
+      prof.push(`with all bakes ${all.toFixed(1)} ms; no bakes ${med(bk[7]).toFixed(1)}; L0 bake ~${(all - med(bk[1])).toFixed(1)}, L1 ~${(all - med(bk[2])).toFixed(1)}, L2 ~${(all - med(bk[4])).toFixed(1)}`);
+      // one carve's dispatches, submits and chunks baked per level
+      const c0 = { ...a.nest.counts };
+      const at = { level: 1, x: (h[0] - 0.3) * 8 - w1.gx, y: (h[1] + 2.5) * 8 - w1.gy, z: (h[2] + 0.4 - zo) * 8 };
+      while (!a.nest.edit({ op: 'carve', radius: 0.5, amount: 0, at })) await new Promise((r) => setTimeout(r, 30));
+      const disp = a.nest.counts.dispatches - c0.dispatches;
+      const subs = a.nest.counts.submits - c0.submits;
+      const bakes = await a.nest.readBakes();
+      const rep = await nested.manifold();
+      const tri = Object.fromEntries(rep.map((x) => [x.depth, x.tris]));
+      const per = {};
+      for (const b of bakes) per[b.L] = (per[b.L] ?? 0) + b.chunks;
+      prof.push(`one carve: ${disp} dispatches, ${subs} submit(s); chunks baked (each by two pipelines, rim and plain) ${Object.entries(per).map(([L, c]) => `L${L} ${c} (${c * 256} columns, ~${Math.round((tri[L] * c) / (a.nest.wins[L].n / 16) ** 2)} triangles at the level's mean)`).join(', ')}`);
+      const sl = bakes.slots;
+      prof.push(`regions in chunks (edit / restrict from the child / residual / derive): ${[0, 1, 2].map((m) => `L${m} ${sl[m * 4 + 3]} / ${m + 1 < 3 ? sl[(m + 1) * 4] : '-'} / ${sl[m * 4 + 1]} / ${sl[m * 4 + 2]}`).join('; ')}`);
+      // (pack last: it leaks scratch pages when left out)
+      const pk = [];
+      for (let rep = 0; rep < 3; rep++) {
         a.nest.skip.clear();
-        for (const s of skip) a.nest.skip.add(s);
-        const r = await nested.benchEdit({ op: 'carve', radius: 0.5, amount: 0, at });
-        prof.push(`${skip.join('+') || 'all'} ${r.withBake.toFixed(1)}/${r.without.toFixed(1)}`);
+        a.nest.skip.add('pack');
+        const at2 = { level: 1, x: (h[0] - 0.6 + rep * 0.3) * 8 - w1.gx, y: (h[1] + 3) * 8 - w1.gy, z: (h[2] + 0.4 - zo) * 8 };
+        pk.push((await nested.benchEdit({ op: 'carve', radius: 0.5, amount: 0, at: at2 })).without);
       }
       a.nest.skip.clear();
+      prof.push(`without pack ${med(pk).toFixed(1)} ms (step ~${(base - med(pk)).toFixed(1)})`);
     }
-    return { out, prof, ab, live: nested.state().live, log: a.opLog.slice(-40) };
+    return { out, prof, ab, lv, live: nested.state().live, log: a.opLog.slice(-40) };
   }, h);
+  if (Object.keys(carve.lv).length) console.log(`bakes' share by skipped levels (mask: L0 1, L1 2, L2 4): ${JSON.stringify(carve.lv)}`);
   if (carve.ab.on.length) {
     const med = (v) => [...v].sort((x, y) => x - y)[Math.floor(v.length / 2)];
     console.log(`rim rule A/B, the bakes' share of a carve (ms): off ${carve.ab.off.map((x) => x.toFixed(1)).join(' ')} (median ${med(carve.ab.off).toFixed(1)}); on ${carve.ab.on.map((x) => x.toFixed(1)).join(' ')} (median ${med(carve.ab.on).toFixed(1)})`);
+    console.log(`split bake A/B, the bakes' share (ms): one pipeline ${carve.ab.one.map((x) => x.toFixed(1)).join(' ')} (median ${med(carve.ab.one).toFixed(1)}); split ${carve.ab.split.map((x) => x.toFixed(1)).join(' ')} (median ${med(carve.ab.split).toFixed(1)})`);
   }
-  if (carve.prof.length) console.log(`profile (with bakes / without): ${carve.prof.join('; ')}`);
+  if (carve.prof.length) console.log(`profile:\n  ${carve.prof.join('\n  ')}`);
   console.log(`carve in order (with, without): ${carve.out.map((o) => `${o.withBake.toFixed(1)}/${o.without.toFixed(1)}`).join(' ')}`);
   const w = carve.out.map((o) => o.withBake).sort((a, b) => a - b);
   const wo = carve.out.map((o) => o.without).sort((a, b) => a - b);
