@@ -27753,3 +27753,10 @@ difference. NS-180: fix at the brush's sample, not here. With the defaults 27 of
 crater-low and closeup stills keep the far wall's staircase and the tall dark spikes, and the near rim gains a row of
 small brown spikes. Per the scope cut ("I don't want to waste too much time on the rendering") left behind its flag,
 default off (NS-179); B (crossing rims) and C (relaxation) logged, not built (NS-183, NS-184).
+
+**End gate, defaults unchanged (rimsnap off, edgeenh off):** typecheck; nested unit tests 71 of 71 (68 + 3 new);
+compile gate passed (derive 2,244, restrictK 828, total 17,764 ms); boot gate passed (reload at maxbuf 256: first frame
+6,923 ms, first sheet frame 10,950); full self-test 47 of 47 (smooth on) and 37 of 37 (`smooth=0`); `smooth=only` 12 of
+12. With `rimsnap=1` (which turns edge-aware enhance on in the sandbox and the smooth reference too): `smooth=only` 12 of
+12. Perf A/B (carve, sheet pass) not run: the scope cut (NS-178). The self-test's tunnel check now logs where the GPU
+and the oracle differ and the oracle's restrict of the GPU's children there (test only).
