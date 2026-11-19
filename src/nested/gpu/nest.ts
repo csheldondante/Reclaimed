@@ -605,31 +605,40 @@ export class GpuNest {
 
   // ---- the baked draw ---------------------------------------------------------------------------------------------------
   /** bake level L's faces over region slots, their chunks grown by one (a column's walls depend on its neighbours) */
-  private bake(L: number, slots: number[], grow = true): void {
+  private bake(L: number, slots: number[], grow = true, rows?: number[]): void {
     if (this.bakeOff || (this.bakeSkip >> L) & 1) return;
     // (round 12) two pipelines over the same slot: chunks that touch no rim line, and those that do (each skips the other's)
-    const both = (s: number) => {
-      const off = this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = s), (e[3] = this.rimOff)));
+    const both = (s: number, nrows: number) => {
       this.bakeLog.push({ L, slot: s });
       if (this.smooth) {
         // (round 14, NS-107) the cache pass over the same chunks first (the vertex cache and the template mask), then
         // the exceptions placed by the same cluster function; the next dispatch sees the cache (WebGPU: a usage scope
         // a dispatch)
         this.smoothPipes();
-        // (measurement only: skip 'cache' or 'ex', the result then wrong)
-        if (!this.skip.has('cache')) this.runIndirect('cacheBake', off, s);
-        if (!this.skip.has('ex')) {
-          this.runIndirect('faceBakeS', off, s);
-          this.runIndirect('faceBakeRimS', off, s);
+        // (round 15, NS-116) one chunk row of the slot a submit (u.e.z = row + 1; the kernels' other rows return at
+        // once): no single submit is long enough for the driver's timeout, whatever the region. All in the same op, so
+        // no frame draws between the rows (the draw is submitted after the op). nrows: the slot's rows when the CPU
+        // knows them, else the level's window rows (a GPU region lies inside it).
+        for (let b = 0; b < nrows; b++) {
+          const off = this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = s), (e[2] = nrows > 1 ? b + 1 : 0), (e[3] = this.rimOff)));
+          // (measurement only: skip 'cache' or 'ex', the result then wrong)
+          if (!this.skip.has('cache')) this.runIndirect('cacheBake', off, s);
+          if (!this.skip.has('ex')) {
+            this.runIndirect('faceBakeS', off, s);
+            this.runIndirect('faceBakeRimS', off, s);
+          }
+          if (nrows > 1) this.submit(false);
         }
         return;
       }
+      const off = this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = s), (e[3] = this.rimOff)));
       if (!this.splitBake) return this.runIndirect('faceBakeOne', off, s);
       this.runIndirect('faceBake', off, s);
       this.runIndirect('faceBakeRim', off, s);
     };
+    const winRows = this.wins[L] ? this.wins[L]!.n / 16 : 1;
     if (!grow) {
-      for (const s of slots) both(s);
+      slots.forEach((s, i) => both(s, rows?.[i] ?? winRows));
       return;
     }
     // (round 12, NS-103) one bake over the union of the slots' chunks (up to three a dilate): they mostly overlap, and
@@ -640,7 +649,7 @@ export class GpuNest {
       const g = slots.slice(i, i + 3);
       while (g.length < 3) g.push(255);
       this.run('dilate', this.uni(({ a, e }) => ((a[3] = L), e.set([g[0] | (g[1] << 8) | (g[2] << 16), t, 0, 0]))), 1);
-      both(t);
+      both(t, winRows);
     }
   }
   /** bake level L's faces over chunk rects given by the CPU (a window's edge ring, a child's footprint grown by a
@@ -648,7 +657,8 @@ export class GpuNest {
    *  `first` (8 a submit; each is written before the submit, so one submit cannot reuse one) */
   private bakeRects(L: number, rects: { x0: number; y0: number; x1: number; y1: number }[], first: number): void {
     if (first + rects.length > 8) throw new Error('nest: more than 8 CPU slots in one submit');
-    this.bake(L, rects.map((r, i) => this.cpuSlot(first + i, this.clipChunks(L, r))), false);
+    const cl = rects.map((r) => this.clipChunks(L, r));
+    this.bake(L, cl.map((r, i) => this.cpuSlot(first + i, r)), false, cl.map((r) => r.y1 - r.y0));
   }
   /** a chunk rect clipped to level L's window (empty when outside) */
   private clipChunks(L: number, r: { x0: number; y0: number; x1: number; y1: number }): { x0: number; y0: number; x1: number; y1: number } {
@@ -712,15 +722,17 @@ export class GpuNest {
    *  hold it yet. */
   /** (measurement only, round 15, NS-116) each chunk row's GPU time of a whole-window bake (setSmooth), when set: the
    *  time from its submit (or the previous row's end) to its end */
-  rowTimes: { L: number; y: number; ms: number }[] | null = null;
+  rowTimes: { L: number; y: number; x?: number; ms: number }[] | null = null;
+  /** (measurement only) with rowTimes: a chunk a submit */
+  chunkTimes = false;
   private lastDone = 0;
-  private timeRow(L: number, y: number): void {
+  private timeRow(L: number, y: number, x?: number): void {
     const rt = this.rowTimes;
     if (!rt) return;
     const ts = performance.now();
     void this.device.queue.onSubmittedWorkDone().then(() => {
       const now = performance.now();
-      rt.push({ L, y, ms: now - Math.max(ts, this.lastDone) });
+      rt.push({ L, y, x, ms: now - Math.max(ts, this.lastDone) });
       this.lastDone = now;
     });
   }
@@ -742,6 +754,16 @@ export class GpuNest {
     for (let m = 0; m < live; m++) {
       const w = this.wins[m]!;
       for (let y = w.gy / 16; y < (w.gy + w.n) / 16; y++) {
+        // (measurement only: chunkTimes, a chunk a submit, each timed)
+        if (this.chunkTimes) {
+          for (let x = w.gx / 16; x < (w.gx + w.n) / 16; x++) {
+            this.bakeRects(m, [{ x0: x, y0: y, x1: x + 1, y1: y + 1 }], 0);
+            this.mergeFrees();
+            this.submit(false);
+            this.timeRow(m, y, x);
+          }
+          continue;
+        }
         this.bakeRects(m, [{ x0: w.gx / 16, y0: y, x1: (w.gx + w.n) / 16, y1: y + 1 }], 0);
         this.mergeFrees();
         this.submit(false);

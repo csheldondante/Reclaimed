@@ -27211,3 +27211,32 @@ tail (NS-118).
 **Tests.** smoothref (GPU = reference, the capture reading the caps, the wall blocks and the exception blocks as drawn):
 L0 11,038, L1 12,856, L2 4,936 triangles, 0 GPU-only, 0 reference-only, 0 odd, 0 degenerate, 0 coincident, rim lines 0
 junctions; `?selftest=1&smooth=only` 11 of 11 (0 hole pixels over 40 poses, 52 cruise samples, 162 pit poses).
+
+## 2026-11-19 — Nested scales lab, round 15 step 2: the device loss (NS-116) was the shared wall walk; every smooth bake bounded
+
+**Why.** The full selftest with the smooth draw on lost the GPU device in the dug world (round 14). The owner: watertight
+first, then speed; "Definitely don't give me something with crappy performance that still has holes."
+
+**Measured first** (scripts/nested-dug.mjs: the pit suite's shafts with boxes, then whole-window rebakes timed a chunk
+a submit). The worst chunks are level 2 chunks whose columns hold 46-60 records. On them the cache pass took ~9 ms, but
+the box bake cost the same as the smooth exception bake: 257-353 ms a chunk, a box row 3.3 s. The time was the wall walk
+both share: O(records^2) twice (nextBp scanned each column from the bottom at every strip step; each wall side restarted
+the neighbour's scan at record 0 for each record), with a hash-table page lookup for every record past 24, plus the
+cluster table's spill pages looked up at every binary-search probe.
+
+**Fixed** (exact: the same reads in another order, the same output). nextBp / nextBpRim: binary search over a column's
+rising tops. Wall sides: a neighbour cursor that only moves up. Cluster table pages: looked up once a workgroup
+(civPages). After: worst chunk smooth 112 ms (was ~300), boxes ~40 (was ~270); a dug-world switch-on 822 ms (was 4.2 s
+with a 3.5 s row). A/B with the old linear walk on the box rim check: identical faults (NS-119 is older).
+
+**Bounded.** Every smooth bake goes one chunk row of its slot a submit (u.e.z; the other rows return at once); all in the
+op, before the frame's draw, so no frame shows half a bake.
+
+**Gate** (`?selftest=1`, smooth section on, the tree untouched during the run): 46 of 47, the device kept through the
+whole run (past the watertight suite's pose 15 at four levels, where round 14 lost it). Box sections all pass. Smooth:
+closure 0 odd edges, rim lines 0 faults over 5,632, coverage 0, cruise 0 holes, pit / cave / shafts 0 hole pixels over 162
+poses, GPU = reference (L0 11,038, L1 12,856, L2 4,936, 0 extra, 0 missing). The one failure: the 40-pose screen check,
+which this section runs in the dug world the box pit section leaves: 942,830 "hole pixels" (sky down the shafts; boxes in
+the same world 907,794: NS-120, a test question). An earlier run (files edited mid-run, so void) saw 24 rim faults in
+that world; boxes show the same intermittent fault there (NS-119, not fixed). Not run this step: the 3-run gate, the shaft
+and stress scripts (the owner's spec arrived; the next step changes the placement, so the gate runs after it).

@@ -792,6 +792,49 @@ wallTmpl / emitColS / faceBake (SMOOTH), draw.wgsl tCorner / vsT / vsS / fsS / c
   - The capture (tests) reads what is drawn: the caps' slots, the wall blocks (captureT) and the exception blocks
     (captureSB). smoothref: every drawn triangle equals the reference, 0 extra, 0 missing (L0 11,038, L1 12,856, L2
     4,936: the same as round 14).
+- *Step 2 (NS-116): where the time went, and the bound.* Measured in the selftest's dug world (scripts/nested-dug.mjs:
+  the pit suite's shafts with boxes, then whole-window rebakes timed a chunk a submit, GpuNest.rowTimes / chunkTimes,
+  measurement only). The cost was NOT the smooth draw's own passes: the cache pass took ~9 ms on the worst chunks, and
+  the box bake cost the same as the smooth exception bake (257-353 ms a chunk) on chunks whose columns hold 46-60
+  records. Both run the box rule's wall walk, which was O(records^2) twice over, with a hash-table page lookup for every
+  record past a page's 24: (1) nextBp / nextBpRim scanned each column's records from the bottom at every strip step
+  (now a binary search: a column's tops rise with the record index); (2) each wall side restarted the neighbour's scan at
+  record 0 for each record of the column (now a cursor that only moves up, starting at the neighbour's first record
+  above the record's bottom: the records under it were skipped by the scan anyway, so the output is the same). And the
+  cluster table's pages past page 0 were looked up in the hash table at every probe of the binary search (now looked up
+  once a workgroup, civPages). Worst chunk after: smooth 112 ms, boxes ~40 ms (L0 near a child's footprint, 64 records).
+  These change the box bake's code but not its output (both are exact reorderings of the same reads).
+- *The bound:* every smooth bake goes one chunk row of its slot a submit (GpuNest.bake: u.e.z = row + 1, the cache pass
+  and the exception bake return at once for other rows; a CPU rect's rows are known, a GPU region uses its level's window
+  rows). All of an op's submits go before the frame's draw, so no frame shows a half-baked level (the old mesh is never
+  drawn half-replaced: the draw simply comes after). The box bake is not banded (unchanged path).
+- *The owner's spec for the smooth draw (2026-11-19, during round 15; relayed by the orchestrator, his words):* "Each
+  layer should be nxn for loaded chunk and should make a simple quad lattice except where there is an air gap next to
+  or below a column. If the intervals do not overlap." / "Each vertex averages its adjacent neighbors. Air gaps mean it
+  is not adjacent and they instead average the bottom of the column. We make the surface from instanced nxn sheets with
+  a vertex shader that does the heights and we only instance more for overhangs and we compute in integer order to make
+  them seamless by construction." / "Games already use heightmaps with no overhangs and texture and noise can make it
+  look fine. We literally have a mechanism for layers and the intervals with an air gap is the obvious rule."
+  The orchestrator's reading of "adjacent", to be built: not a new interval-overlap test (taken literally a cave floor
+  would average with the mountain top behind its back wall, and it is not transitive round a corner: a crack); two
+  surfaces on a corner line are in one group when an exposed wall joins them, which is what the round 13/14 cluster
+  tables already encode, with every wall collapsed (threshold unlimited), one value per cluster for every quad that
+  touches it. Then the owner's clarification: "the vertex height averaging the bottom of the column in that case would
+  make the sheets meet by construction": EVERY wall on a corner line collapses, lips and cave back walls included; all
+  surfaces joined by exposed walls form one cluster and get ONE vertex at the mean of the cluster's heights (tops and
+  bottoms alike); a lip closes as a wedge, a cave's floor and ceiling meet at its back wall. No side faces. Cells with
+  inner air get more sheet instances; baked geometry only for rim strips, the window edge ring and the bottom skirts.
+  Known and accepted: lips and cave mouths taper to a knife edge over one column; a feature one column wide collapses to
+  zero thickness (a 1-wide tunnel closes); a 2-wide tunnel gets a diamond section.
+- *What this round builds of it (first form):* the collapse threshold unlimited (SMOOTH_T = 3e38 in the cache pass,
+  T = Infinity in the reference; no dial, the earlier `?collapse=` idea dropped as the spec says). Then every wall whose
+  two tops are joined on a corner line collapses, and the template draws only the cap lattice on solid terrain (the
+  wall list comes out empty there; kept, it costs nothing when empty). Closure, the pair rule and the rim rule are the
+  proven round 13/14 ones (a simplicial map of the closed box mesh); a cluster is placed at the f32 mean of its
+  breakpoints, summed bottom up in one fixed order with one division (the spec asks for an integer sum: open, NS-121;
+  the f32 sum is already bit-identical on both sides because both read the same stored table). Not yet as the spec
+  draws it: the inner-air cells are still the baked exceptions, not extra sheet instances (NS-121). Cliffs become
+  one-column ramps (vertices move only vertically this round); the stored plane word sharpens them next round.
 
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 

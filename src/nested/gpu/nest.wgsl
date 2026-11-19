@@ -2086,13 +2086,17 @@ fn nextBp(L: u32, CX: i32, CY: i32, z: f32) -> f32 {
     if (n == 0u) { continue; }
     let b = bBot(L, X, Y);
     if (b > z) { best = min(best, b); }
-    for (var j = 0u; j < n; j++) {
-      let t = bitcast<f32>(bRec(L, X, Y, j).x);
-      if (t > z) {
-        best = min(best, t);
-        break;
-      }
+    // (round 15, NS-116) the first record whose top is above z, by a binary search (a column's tops rise with j): the
+    // linear scan made every wall step O(records), a wall O(records^2), with a hash lookup a record past the first page;
+    // a dug world's 60-record columns took ~300 ms a chunk, boxes and smooth alike
+    var lo = 0u;
+    var hi = n;
+    loop {
+      if (lo >= hi) { break; }
+      let mid = (lo + hi) / 2u;
+      if (bitcast<f32>(bRec(L, X, Y, mid).x) > z) { hi = mid; } else { lo = mid + 1u; }
     }
+    if (lo < n) { best = min(best, bitcast<f32>(bRec(L, X, Y, lo).x)); }
   }
   return best;
 }
@@ -2210,18 +2214,25 @@ fn nextBpRim(Lk: u32, cx: i32, cy: i32, zc: f32, ob: vec4<f32>) -> f32 {
         }
         if (b > zc) { best = min(best, b); }
       }
-      for (var j = 0u; j < n; j++) {
-        var t = 0.0;
-        if (own) { t = bitcast<f32>(bRec(lv, X, Y, j).x); } else { t = oTop(lv, X, Y, j); }
-        if (s == 1u) { t = toKid(lv, t); }
-        if (t > zc) {
-          best = min(best, t);
-          break;
-        }
+      // (round 15, NS-116) the first top above zc by a binary search, as nextBp (toKid keeps the order)
+      var lo = 0u;
+      var hi = n;
+      loop {
+        if (lo >= hi) { break; }
+        let mid = (lo + hi) / 2u;
+        if (rimTop(own, s, lv, X, Y, mid) > zc) { hi = mid; } else { lo = mid + 1u; }
       }
+      if (lo < n) { best = min(best, rimTop(own, s, lv, X, Y, lo)); }
     }
   }
   return best;
+}
+/** a rim line column's record top in the child's units (nextBpRim) */
+fn rimTop(own: bool, s: u32, lv: u32, X: i32, Y: i32, j: u32) -> f32 {
+  var t = 0.0;
+  if (own) { t = bitcast<f32>(bRec(lv, X, Y, j).x); } else { t = oTop(lv, X, Y, j); }
+  if (s == 1u) { t = toKid(lv, t); }
+  return t;
 }
 /** the bottoms of the OTHER level's four columns round a rim line (as nextBpRim reads them, converted; 3e38 where not
  *  drawn): zbG reads many pages, so a wall side computes them once, not at every step of its strip */
@@ -2409,6 +2420,9 @@ fn emitCol(L: u32, X: i32, Y: i32, write: bool, at: u32) -> u32 {
       obs[s2] = rimOther(select(L, L + 1u, up), select(AX, BX, s2 == 1u) * kk, select(AY, BY, s2 == 1u) * kk);
     }
     var lo = zb;
+    // (round 15, NS-116) the neighbour's scan starts at its first record above this record's bottom (a cursor that only
+    // moves up; the records under it are skipped by the scan anyway): restarting at record 0 made a side O(records^2)
+    var js = 0u;
     for (var j = 0u; j < n; j++) {
       let r = bRec(L, X, Y, j);
       let hi = bitcast<f32>(r.x);
@@ -2416,8 +2430,13 @@ fn emitCol(L: u32, X: i32, Y: i32, write: bool, at: u32) -> u32 {
         let w = lxy | (d << 8u) | ((r.y & 255u) << 11u);
         // the neighbour's solid runs subtracted from [lo, hi], in order
         var cur = lo;
-        var jn = 0u;
+        loop {
+          if (js >= nn || bitcast<f32>(bRec(L, NX, NY, js).x) > lo) { break; }
+          js++;
+        }
+        var jn = js;
         var nlo = nb;
+        if (js > 0u) { nlo = bitcast<f32>(bRec(L, NX, NY, js - 1u).x); }
         loop {
           if (cur >= hi) { break; }
           // the next solid range of the neighbour reaching above cur (or none: [3e38, 3e38])
@@ -2645,10 +2664,19 @@ const WALL_B: u32 = 32u;
 const CIVP: u32 = 4181u;
 /** the chunk's cache page 0 (cache pass and smooth exception bake; bChunk is the chunk) */
 var<private> sCp: u32;
+/** (round 15, NS-116) the chunk's cluster table pages cz 1..16, looked up once a workgroup (civPages): a long table's
+ *  binary search did a hash-table lookup at every probe (a chunk of 46-60 records a column took ~300 ms) */
+var<workgroup> wCivP: array<u32, 16>;
+fn civPages(li: u32) {
+  if (li < 16u) { wCivP[li] = pageOf(CACHE_ID + u.a.w, bChunk.x, bChunk.y, 1u + li); }
+  workgroupBarrier();
+}
 fn civ(i: u32) -> u32 {
   if (i < CIV0) { return sCp * PW + CIV + i * 3u; }
   let j = i - CIV0;
-  let p = pageOf(CACHE_ID + u.a.w, bChunk.x, bChunk.y, 1u + j / CIVP);
+  let pz = j / CIVP;
+  var p = 0u;
+  if (pz < 16u) { p = wCivP[pz]; } else { p = pageOf(CACHE_ID + u.a.w, bChunk.x, bChunk.y, 1u + pz); }
   return p * PW + (j % CIVP) * 3u;
 }
 /** the chunk's table index of corner line (CX, CY) (lines -1..17 of the chunk: 0..360) */
@@ -2812,6 +2840,8 @@ fn cacheBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
   let cx = o.x + i32(wid.x);
   let cy = o.y + i32(wid.y);
   if (!inWin(L, cx * 16, cy * 16)) { return; }
+  // (round 15, NS-116) a banded bake: only the slot's chunk row u.e.z - 1 (GpuNest.bake, one row a submit)
+  if (u.e.z != 0 && i32(wid.y) != u.e.z - 1) { return; }
   if (li == 0u) {
     ensurePages(CACHE_ID + L, cx, cy, 1u, u.d.x);
     wCp = pageOf(CACHE_ID + L, cx, cy, 0u);
@@ -2872,6 +2902,7 @@ fn cacheBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
   }
   storageBarrier();
   workgroupBarrier();
+  civPages(li);
   var first = sc.x;
   for (var q = li; q < 361u; q += 256u) {
     let CX = cx * 16 - 1 + i32(q % 19u);
@@ -3192,14 +3223,23 @@ fn emitColS(L: u32, X: i32, Y: i32, write: bool, at: u32, mw: u32, mwL: u32, mwD
       obs[s2] = rimOther(select(L, L + 1u, up), select(AX, BX, s2 == 1u) * kk, select(AY, BY, s2 == 1u) * kk);
     }
     var lo = zb;
+    // (round 15, NS-116) the neighbour's first record whose top lies above this record's bottom: a cursor that only
+    // moves up (the scan below skips every record under it anyway); restarting the scan at record 0 for each record made
+    // a side O(records^2)
+    var js = 0u;
     for (var j = 0u; j < n; j++) {
       let r = bRec(L, X, Y, j);
       let hi = bitcast<f32>(r.x);
       if (matSolid(r.y)) {
         let w = lxy | (d << 8u) | ((r.y & 255u) << 11u);
         var cur = lo;
-        var jn = 0u;
+        loop {
+          if (js >= nn || bitcast<f32>(bRec(L, NX, NY, js).x) > lo) { break; }
+          js++;
+        }
+        var jn = js;
         var nlo = nb;
+        if (js > 0u) { nlo = bitcast<f32>(bRec(L, NX, NY, js - 1u).x); }
         loop {
           if (cur >= hi) { break; }
           var a = 3e38;
@@ -3285,6 +3325,8 @@ fn faceBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id)
   let cx = o.x + i32(wid.x);
   let cy = o.y + i32(wid.y);
   if (!inWin(L, cx * 16, cy * 16)) { return; }
+  // (round 15, NS-116) a banded bake (the smooth draw's): only the slot's chunk row u.e.z - 1
+  if (u.e.z != 0 && i32(wid.y) != u.e.z - 1) { return; }
   if (BAKE_SPLIT && chunkRim(L, cx, cy) != BAKE_RIM) { return; }
   if (li < 9u) { wPg[li] = pageOf(L, cx - 1 + i32(li % 3u), cy - 1 + i32(li / 3u), 0u); }
   workgroupBarrier();
@@ -3307,6 +3349,7 @@ fn faceBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id)
     let cp = workgroupUniformLoad(&wCp);
     if (workgroupUniformLoad(&wflag) == 1u) { return; }
     sCp = cp;
+    civPages(li);
     mw = pgLoad(cp * PW + CMASK + colIn(X, Y));
     // the template's bits of the column's -x and -y walls: the mask words of the edges' owners (the column on the low
     // side, maybe in the chunk before), as the cache pass wrote them (one function, wallTmpl, decides them)

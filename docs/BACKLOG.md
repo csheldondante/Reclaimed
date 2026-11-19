@@ -409,7 +409,9 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   horizontal down caps out on both sides (the GPU bakes fans where the reference has two triangles a column).
 - NS-114 (limit, round 14) Smooth: a down-cap fan only where every corner line on the block's rim leaves the bottom where
   it is (clusterAt(zb) == zb); elsewhere each column keeps its placed two-triangle down cap (more triangles; never seen).
-- NS-116 (bug, round 14, blocks the smooth toggle) With the smooth draw on in a deeply dug world (the full selftest's
+- NS-116 (round 15: the cost found and cut, every smooth bake bounded to a chunk row a submit; the device is no longer
+  lost in the full selftest; the gate is still blocked by NS-119 / NS-120, see the round 15 DEVLOG)
+  (bug, round 14, blocks the smooth toggle) With the smooth draw on in a deeply dug world (the full selftest's
   sandbox after the box pit section: shafts to -24, four levels), a bake runs past the driver's timeout and the device
   is lost (the watertight suite's pose 15). The switch and promote now bake a chunk row a submit; slides and edits
   still bake their regions in one dispatch. Fix the cost (NS-112) or split every smooth bake into bounded dispatches;
@@ -420,6 +422,25 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   (hillside 9.1 vs 3.7 ms, tunnel 18 vs 7 ms) for 5x fewer visible triangles. Next: the design's fallback, walls as a
   per-chunk list of edges whose wall bit is set and whose tops differ (one word an edge, written by the classify step),
   drawn as a second instanced draw of 6 triangles an edge; caps a 2-triangle template.
+- NS-119 (bug, round 15, found, NOT fixed; boxes AND smooth, older than round 14) In the dug world (the pit suite's
+  shafts, one of them across level 1's west rim, then the watertight suite's scene and strokes), the rim-line check
+  finds T-junctions on a few rim lines: "L0 edge 208..416.07 at line 480,952 holds L1's vertex 384 / 415.23 / 416.06"
+  (child units; 384 is a child bottom, the others child tops) and "L0 edge 278.89..279.83 at line 328,976 holds L1's
+  vertex 279.48". 40-120 faults over ~5,400 lines with boxes, 24 with smooth in the full selftest. The same with the
+  round 14 linear wall walk (A/B with the old code: identical values), so not the round 15 cost changes. The faults come
+  and go between eyes (3 frames vs settled), which points at a bake region an op misses (stale parent rim chunk), not
+  the arithmetic. Discriminator ready: scripts/nested-dug.mjs `--rebake 1` (fault count at three eyes before and after
+  every window is rebaked). Blocks the smooth toggle's gate (the full selftest's smooth section runs its watertight
+  suite in this world).
+- NS-120 (test, round 15) The full selftest's smooth section runs the 40-pose watertight suite in the dug world the box
+  pit section leaves; its screen check counts sky seen down the shafts as hole pixels (boxes there: 907,794; smooth
+  937,190). Either run that suite on a fresh sandbox (as the box section does) after switching on in the dug world (the
+  bake-cost stress stays), or make the pose check pit-aware. Not changed this round (a test change to decide with the
+  owner).
+- NS-121 (next, round 15) The owner's spec, the parts not built in round 15's first form: inner-air cells drawn as extra
+  instanced sheets (a top and an underside sheet a layer, heights from the cluster tables) instead of baked exceptions,
+  baked geometry only for rim strips, the window edge ring and bottom skirts; the cluster mean as an integer (fixed-
+  point) sum in a fixed column order with one division.
 - NS-118 (perf, round 15) The box draw instances every face page whole (3 x 3,135 vertices whatever its count, the
   empty slots degenerate): a 4 x 4 canvas costs 7.5 of its 8.2 ms in the tunnel. The smooth draw's exceptions now go in
   blocks of 128 triangles (draw.wgsl vsSB, nest.wgsl exDir); the box draw could use the same blocks (boxes are not
