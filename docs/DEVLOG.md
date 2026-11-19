@@ -27088,3 +27088,45 @@ on gentle ground: the cost risk step D must measure (NESTED_SCALES.md names the 
 pose sets), C (crease shading), D (measurements, stills). The design for them is written in NESTED_SCALES.md; BACKLOG
 NS-107. The smooth-off gate was not re-run: no runtime code changed (boxmesh.ts is tests-only; the tags are new optional
 fields).
+
+## 2026-11-19 — Nested scales lab, round 14 step B: the smooth draw on the GPU (template + vertex cache + baked exceptions), behind `?smooth=1` and a Smooth toggle
+
+**Why.** The owner's goal for the morning: "smooth watertight terrain with sharp edges when desired"; "Water tight is the
+more important requirement"; "it should be deforming vertices and baking the seam mesh nothing per frame"; "Do we really
+build the mesh or just take an already present mesh with masked triangle bits and then set their heights to the grid?"
+Round 13 proved the split in the reference; this round puts it on the GPU (NESTED_SCALES.md "As built (round 14)").
+
+**Built.** nest.wgsl: the cache pass (cacheBake: per corner line a cluster table walked once, the four slots, the mask),
+the exception bake (faceBake with SMOOTH: emitColS, placed by table lookups, the template's parts masked off, repeated-
+vertex triangles skipped, coincident cap pairs dropped by the dropCapPairs rule), fans only where the bottom stays put,
+the input-hash skip, cache pages in release (mode 8: only them) and in the draw's lists (dirBuild, dirFinish). draw.wgsl:
+the template (tCorner, vsT: the reference's templateTris rule, per column 14 slots), the exceptions (vsS), fsS (face normal
+from derivatives), captureT (tests). nest.ts setSmooth (an op: every live window baked again), render.ts the two
+pipelines, app.ts `?smooth=1` and the Smooth button. Smooth off runs none of it (the box pipelines are unchanged; the
+directory lists one more kind of page, none exist).
+
+**Two changes from the written plan, both forced by measurements.**
+- One cluster walk a line, kept as a table in the cache page (not one cluster function called at every vertex site): with
+  the walk inlined at each site the first smooth switch did not finish in four minutes. Bit-identity is then by
+  construction: every placement of a vertex reads the same stored value.
+- The skip hashes the chunk's inputs, not its exception output: the output hash still did the whole exception walk.
+
+**Cost work (the pit suite's shafts lost the device with the first version):** a shaft (30 carves, radius 2.2 world, level 1,
+down to -24) timed carve by carve, GPU ms: boxes 43 ... 399 (each carve deeper costs more, boxes too); smooth first
+version 47 ... 787; with the walk's columns read once a walk (rim lines' other-level bottoms were re-read from the pages at
+every breakpoint) and a binary search in the table 44 ... 587; with a cursor per walk column and the pair rule scanned
+outward within the cluster 43 ... 508. The suite's pit then passes.
+
+**Tests (all GPU, readbacks tests-only).**
+- GPU against the reference (src/nested/smoothref.ts; root 64, level 1 64 wide, level 2 32 wide, a carve across level 2's
+  rim, a cave at level 2, an add): every drawn triangle equals the reference collapse mesh after dropCapPairs, per level:
+  L0 11,038, L1 12,856, L2 4,936 triangles (bottom-lattice down caps aside), 0 GPU-only, 0 reference-only; odd 0,
+  degenerate 0, coincident 0; rim lines 0 junctions. Exact equality first showed 1-ulp differences everywhere: D3D's f32
+  division is not correctly rounded; paired within 1e-5 relative (NS-113).
+- Sandbox, smooth on (`?selftest=1&smooth=only`): manifold at 8 eyes 0 odd edges, rim lines 0 faults, coverage 0, screen
+  0 hole pixels over 40 poses and 41 cruise samples, pit / cave / shafts 0 hole pixels over 162 poses, coverage 0: 11 of
+  11. Narrow check (scripts/nested-smooth.mjs): 0 odd, 0 degenerate, 0 coincident, before and after carves.
+- Smooth off: `?selftest=1` 36 of 36 (run with the first smooth version; the box path changed since only by the
+  directory's cache branch).
+
+Step C (crease shading) and D (measurements, stills) follow in this round.

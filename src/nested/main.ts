@@ -47,6 +47,52 @@ async function main(): Promise<void> {
     // (NS-86, round 9) the workgroup reduction forms probed before and after the oracle checks: on the desktop's Intel Arc
     // the atomic forms go wrong after them (the reproduction); the forms the store uses must hold in both
     // (round 10) the carves across levels; ?carves=only runs them alone, ?carves=0 skips them
+    // (round 14, NS-107) the smooth draw's section: the GPU against the reference on a small chain of its own, then the
+    // sandbox with the smooth draw on through the watertight suite (closure at 8 eyes, rim lines, 40 poses) and the pit,
+    // cave and shaft poses. ?smooth=only runs this section alone; ?smooth=0 skips it.
+    const smoothSection = async (res: { pass: boolean; name: string; detail: string }[], withSandbox: boolean) => {
+      log.textContent += '\nThe smooth draw (round 14)\n\n';
+      const { smoothAgainstReference } = await import('./smoothref');
+      for (const c of await smoothAgainstReference(device, (s) => console.log(`[smooth] ${s}`))) {
+        res.push(c);
+        say(c);
+      }
+      if (!withSandbox) return;
+      const api = (window as unknown as { nested: Parameters<typeof import('./suite').watertightSuite>[0] & { smooth(on: boolean): Promise<void> } }).nested;
+      await api.smooth(true);
+      await new Promise((r) => setTimeout(r, 1500));
+      const { watertightSuite, pitAndCave } = await import('./suite');
+      const wt = await watertightSuite(api, { screen: q.get('wtscreen') !== '0', log: (s) => console.log(`[suite] smooth ${s}`) });
+      for (const c of wt.checks) {
+        const s = { ...c, name: `smooth: ${c.name}` };
+        res.push(s);
+        say(s);
+      }
+      if (q.get('pit') === '0') return;
+      const pit = await pitAndCave(api, { taps: 4, log: (s) => console.log(`[suite] smooth ${s}`) });
+      for (const c of [
+        { name: 'smooth: screen: no hole pixels in the pit, cave and shaft poses, also after a cruise, a demote and the pool\'s shrinks', pass: pit.total === 0, detail: `${pit.total} hole pixels over ${pit.poses} poses` },
+        { name: 'smooth: coverage after the pit, cave, shafts, a cruise, a demote and shrinks', pass: pit.coverage === 0, detail: `${pit.coverage} faults` },
+      ]) {
+        res.push(c);
+        say(c);
+      }
+    };
+    if (q.get('smooth') === 'only') {
+      const res: { pass: boolean; name: string; detail: string }[] = [];
+      if (q.get('wt') !== '0') {
+        const { App } = await import('./app');
+        await App.start(device, new URLSearchParams('k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140'));
+        const api = (window as unknown as { nested: { app: { frameCount: number } } }).nested;
+        while (api.app.frameCount < 60) await new Promise((r) => setTimeout(r, 50));
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+      await smoothSection(res, q.get('wt') !== '0');
+      const failed = res.filter((c) => !c.pass).length;
+      log.textContent += `\n${res.length - failed} of ${res.length} passed.\n`;
+      (window as unknown as { __selftest: unknown }).__selftest = { done: true, failed, results: res };
+      return;
+    }
     if (q.get('carves') === 'only') {
       const { carveChecks } = await import('./carves');
       const res = await carveChecks(device, (s) => console.log(`[carves] ${s}`), (q.get('skip') ?? '').split(',').filter(Boolean));
@@ -118,6 +164,7 @@ async function main(): Promise<void> {
         }
       }
       if (q.get('pit') === '0') {
+        if (q.get('smooth') !== '0') await smoothSection(res, true);
         const failed = res.filter((c) => !c.pass).length;
         log.textContent += `\n${res.length - failed} of ${res.length} passed.\n`;
         (window as unknown as { __selftest: unknown }).__selftest = { done: true, failed, results: res };
@@ -133,6 +180,7 @@ async function main(): Promise<void> {
         res.push(c);
         say(c);
       }
+      if (q.get('smooth') !== '0') await smoothSection(res, true);
     }
     const failed = res.filter((c) => !c.pass).length;
     log.textContent += `\n${res.length - failed} of ${res.length} passed.\n`;

@@ -163,6 +163,10 @@ export class GpuNest {
   /** (measurement only, round 11, NS-103) 1: the bake treats no line as a rim line (round 10's rims, the cost A/B) */
   rimOff = 0;
   private pipes: Record<string, GPUComputePipeline> = {};
+  private pipeLayout!: GPUPipelineLayout;
+  private module!: GPUShaderModule;
+  /** (round 14, NS-107) the smooth draw: every bake also runs the cache pass and bakes the exceptions placed (setSmooth) */
+  smooth = false;
   private enc: GPUCommandEncoder | null = null;
   private pass: GPUComputePassEncoder | null = null;
   readonly stats: PoolStats;
@@ -198,8 +202,9 @@ export class GpuNest {
     this.scr = device.createBuffer({ label: 'nest scratch', size: Math.max(160 * 160 * 8, TCAP * 4) * 4, usage: S }); // (the melt's box; the table's compaction)
     this.reg = device.createBuffer({ label: 'nest regions', size: REG_WORDS * 4, usage: S });
     this.args = device.createBuffer({ label: 'nest dispatch args', size: SLOTS * 16, usage: S | GPUBufferUsage.INDIRECT });
-    this.drawArgs = device.createBuffer({ label: 'nest draw args', size: MAX_LEVELS * 16, usage: S | GPUBufferUsage.INDIRECT });
-    device.queue.writeBuffer(this.drawArgs, 0, new Uint32Array(MAX_LEVELS * 4));
+    // (round 14: levels 0-7 the faces, 8-15 the smooth draw's template over the cache pages)
+    this.drawArgs = device.createBuffer({ label: 'nest draw args', size: 2 * MAX_LEVELS * 16, usage: S | GPUBufferUsage.INDIRECT });
+    device.queue.writeBuffer(this.drawArgs, 0, new Uint32Array(2 * MAX_LEVELS * 4));
     this.cam = device.createBuffer({ label: 'nest camera', size: 1024 * 4, usage: S });
     this.ubuf = device.createBuffer({ label: 'nest uniforms', size: UB * USLOTS, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     // the table starts empty (key1 = EMPTY)
@@ -223,6 +228,10 @@ export class GpuNest {
     // (round 12, NS-103) the bake of chunks that touch a rim line: the rim rule's code compiled in (nest.wgsl BAKE_RIM)
     this.pipes.faceBakeRim = device.createComputePipeline({ label: 'nest faceBake (rim chunks)', layout: pl, compute: { module, entryPoint: 'faceBake', constants: { BAKE_RIM: 1 } } });
     this.pipes.faceBakeOne = device.createComputePipeline({ label: 'nest faceBake (round 11: one bake)', layout: pl, compute: { module, entryPoint: 'faceBake', constants: { BAKE_RIM: 1, BAKE_SPLIT: 0 } } });
+    // (round 14, NS-107) the smooth draw: the cache pass (rim lines seen everywhere) and the exception bakes, made when it
+    // is first switched on (smooth off compiles and runs nothing of it)
+    this.pipeLayout = pl;
+    this.module = module;
     for (const e of ['plan', 'dilate']) this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: ppl, compute: { module, entryPoint: e } });
     for (const e of ['dirClear', 'dirBuild', 'dirFinish']) this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: dpl, compute: { module, entryPoint: e } });
     this.rebind();
@@ -260,7 +269,8 @@ export class GpuNest {
     for (const b of drop) b.destroy();
     // the draw's list of face pages: up to the pool's pages a level (rebuilt by every op, so a grow needs no copy)
     this.dir?.destroy();
-    this.dir = this.device.createBuffer({ label: 'nest face directory', size: (16 + MAX_LEVELS * cap * 2) * 4, usage: U });
+    // (round 14: a second list per level, the smooth draw's cache pages)
+    this.dir = this.device.createBuffer({ label: 'nest face directory', size: (16 + 2 * MAX_LEVELS * cap * 2) * 4, usage: U });
     this.cap = cap;
     Object.assign(this.stats, { cap, held: this.physical, segs: this.segCap.filter((c) => c > 0).length, mb: Math.round((this.physical * PW * 4) / 2 ** 20), free: cap - this.stats.used });
     if (old.cap > 0) this.stats.grows++;
@@ -565,7 +575,7 @@ export class GpuNest {
     this.device.queue.submit([enc.finish()]);
     for (const b of drop) b.destroy();
     this.dir.destroy();
-    this.dir = this.device.createBuffer({ label: 'nest face directory', size: (16 + MAX_LEVELS * cap * 2) * 4, usage: U });
+    this.dir = this.device.createBuffer({ label: 'nest face directory', size: (16 + 2 * MAX_LEVELS * cap * 2) * 4, usage: U });
     Object.assign(this.stats, { held: this.physical, segs: this.segCap.filter((c) => c > 0).length, mb: Math.round((this.physical * PW * 4) / 2 ** 20) });
     this.rebind();
     this.directory();
@@ -592,6 +602,19 @@ export class GpuNest {
     const both = (s: number) => {
       const off = this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = s), (e[3] = this.rimOff)));
       this.bakeLog.push({ L, slot: s });
+      if (this.smooth) {
+        // (round 14, NS-107) the cache pass over the same chunks first (the vertex cache and the template mask), then
+        // the exceptions placed by the same cluster function; the next dispatch sees the cache (WebGPU: a usage scope
+        // a dispatch)
+        this.smoothPipes();
+        // (measurement only: skip 'cache' or 'ex', the result then wrong)
+        if (!this.skip.has('cache')) this.runIndirect('cacheBake', off, s);
+        if (!this.skip.has('ex')) {
+          this.runIndirect('faceBakeS', off, s);
+          this.runIndirect('faceBakeRimS', off, s);
+        }
+        return;
+      }
       if (!this.splitBake) return this.runIndirect('faceBakeOne', off, s);
       this.runIndirect('faceBake', off, s);
       this.runIndirect('faceBakeRim', off, s);
@@ -661,9 +684,46 @@ export class GpuNest {
     if (this.skip.has('pack')) return;
     this.runIndirect('pack', this.uni(({ a, r }) => ((a[3] = L), (r[0] = slot))), slot);
   }
-  /** pages a bake may take over `chunks` chunks that have no faces yet: face pages, stacked as deep as any so far */
+  /** pages a bake may take over `chunks` chunks that have no faces yet: face pages, stacked as deep as any so far (and
+   *  with the smooth draw on, a cache page each) */
   private bakeBound(chunks: number): number {
-    return chunks * this.facePages();
+    return chunks * (this.facePages() + (this.smooth ? 1 : 0));
+  }
+  /** (round 14) the smooth draw's pipelines, made the first time it is switched on */
+  private smoothPipes(): void {
+    if (this.pipes.cacheBake) return;
+    const mk = (label: string, entryPoint: string, constants: Record<string, number>) =>
+      this.device.createComputePipeline({ label, layout: this.pipeLayout, compute: { module: this.module, entryPoint, constants } });
+    this.pipes.cacheBake = mk('nest cacheBake', 'cacheBake', { BAKE_RIM: 1 });
+    this.pipes.faceBakeS = mk('nest faceBake (smooth)', 'faceBake', { SMOOTH: 1 });
+    this.pipes.faceBakeRimS = mk('nest faceBake (smooth, rim chunks)', 'faceBake', { SMOOTH: 1, BAKE_RIM: 1 });
+  }
+  /** (round 14, NS-107) the smooth draw on or off: every live level's whole window baked again (on: its cache pages and
+   *  placed exceptions; off: the cache pages let go, boxes). An op like any other: refused (false) while the pool cannot
+   *  hold it yet. */
+  setSmooth(on: boolean): boolean {
+    if (on === this.smooth) return true;
+    const live = this.live;
+    let chunks = 0;
+    for (let m = 0; m < live; m++) chunks += (this.wins[m]!.n / 16) ** 2;
+    const was = this.smooth;
+    this.smooth = on;
+    if (on && !this.reserve(this.bakeBound(chunks))) {
+      this.smooth = was;
+      return false;
+    }
+    if (!on) for (let m = 0; m < live; m++) this.run('release', this.uni(({ a, e }) => ((a[2] = 8), (a[3] = m), e.set([0, 0, 0, 0]))), TCAP / 64);
+    this.mergeFrees();
+    // (one submit a level: the CPU slots are written before each submit)
+    for (let m = 0; m < live; m++) {
+      const w = this.wins[m]!;
+      this.bakeRects(m, [{ x0: w.gx / 16, y0: w.gy / 16, x1: (w.gx + w.n) / 16, y1: (w.gy + w.n) / 16 }], 0);
+      this.directory();
+      this.mergeFrees();
+      this.submit();
+    }
+    this.trace?.(this, `smooth ${on}`);
+    return true;
   }
 
   // ---- operations -----------------------------------------------------------------------------------------------------

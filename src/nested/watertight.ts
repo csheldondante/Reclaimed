@@ -19,6 +19,8 @@ export interface EdgeReport {
   degenerate: number;
   /** a few open edges' midpoints (local units) */
   where: [number, number, number][];
+  /** (round 14) triangles sharing their three vertices with another (z-fighting pairs) */
+  coincident: number;
   /** (round 11) the rim lines to this level's live child (rimJunctions) */
   rim?: { junctions: number; unflagged: number; lines: number; where: string[] };
 }
@@ -27,8 +29,10 @@ export interface EdgeReport {
 // face set is closed everywhere; before, the edges on a fixed bottom plane were the one boundary allowed.
 export function manifold(cap: { depth: number; n: number; tris: Float32Array }): EdgeReport {
   const t = cap.tris;
-  const vk = (o: number) => `${t[o]},${t[o + 1]},${t[o + 2]}`;
+  // (round 14: the smooth draw's rim vertices carry the w 2 flag too: z in the child's units, kept apart from the level's own)
+  const vk = (o: number) => `${t[o]},${t[o + 1]},${t[o + 2]}${t[o + 3] === 2 ? 'k' : ''}`;
   const edges = new Map<string, number>();
+  const faces = new Map<string, number>();
   let tris = 0;
   let degenerate = 0;
   const slots = t.length / 12;
@@ -41,6 +45,8 @@ export function manifold(cap: { depth: number; n: number; tris: Float32Array }):
       continue;
     }
     tris++;
+    const fk = [...k].sort().join('|');
+    faces.set(fk, (faces.get(fk) ?? 0) + 1);
     for (let e = 0; e < 3; e++) {
       const a = k[e];
       const b = k[(e + 1) % 3];
@@ -60,7 +66,10 @@ export function manifold(cap: { depth: number; n: number; tris: Float32Array }):
       if (where.length < 6) where.push([(s[0] + e[0]) / 2, (s[1] + e[1]) / 2, +((s[2] + e[2]) / 2).toFixed(3)]);
     } else if (c > 2) over++;
   }
-  return { depth: cap.depth, tris, edges: count, open, over, degenerate, where };
+  // (round 14) faces on the same three vertices (a collapsed thin layer's two caps: they z-fight; none expected)
+  let coincident = 0;
+  for (const c of faces.values()) if (c > 1) coincident += c;
+  return { depth: cap.depth, tris, edges: count, open, over, degenerate, where, coincident };
 }
 
 /** (round 11, NS-97, test only) the rim lines between each level and its live child (parent corner lines on the child's

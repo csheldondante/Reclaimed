@@ -137,6 +137,7 @@ export class App {
     if (q.has('yaw')) this.yaw = Number(q.get('yaw'));
     if (q.has('pitch')) this.pitch = Number(q.get('pitch'));
     this.nest.root(this.rootN);
+    this.wantSmooth = q.get('smooth') === '1';
     this.place(Number(q.get('tx') ?? 128), Number(q.get('ty') ?? 128), Number(q.get('d') ?? 260));
     this.bornAt[0] = this.nest.now();
     this.ui();
@@ -191,6 +192,12 @@ export class App {
       this.buttons.get('tint')!.classList.toggle('on', this.render.tint);
     });
     this.buttons.get('tint')!.classList.toggle('on', this.render.tint);
+    // (round 14, NS-107) the smooth draw: the boxes' vertices moved by the collapse (boxes stay the default)
+    add('smooth', 'Smooth', () => {
+      this.wantSmooth = !this.wantSmooth;
+      this.buttons.get('smooth')!.classList.toggle('on', this.wantSmooth);
+    });
+    this.buttons.get('smooth')!.classList.toggle('on', this.wantSmooth);
     this.setMode(this.mode);
     const c = this.canvas;
     c.addEventListener('pointerdown', (e) => {
@@ -482,7 +489,11 @@ export class App {
   }
 
   // ---- the frame -------------------------------------------------------------------------------------------------------
+  /** (round 14, NS-107) the smooth draw wanted (?smooth=1, the Smooth button); switched by an op, retried while the pool
+   *  grows */
+  wantSmooth = false;
   private frame(): void {
+    if (this.wantSmooth !== this.nest.smooth && !this.frozen) this.nest.setSmooth(this.wantSmooth);
     const t = performance.now();
     const dt = Math.min(0.1, (t - this.last) / 1000);
     this.frames.push(t - this.last);
@@ -784,6 +795,13 @@ export class App {
         } finally {
           this.frozen = was;
         }
+      },
+      /** (round 14) the smooth draw on or off; resolves once it is switched (the frame loop runs the op) */
+      smooth: async (on: boolean) => {
+        this.wantSmooth = on;
+        this.buttons.get('smooth')?.classList.toggle('on', on);
+        while (this.nest.smooth !== on) await new Promise((r) => setTimeout(r, 30));
+        await this.device.queue.onSubmittedWorkDone();
       },
       tint: (on: boolean) => {
         this.render.tint = on;

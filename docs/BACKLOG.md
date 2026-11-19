@@ -376,7 +376,9 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
 - NS-106 (measurement only, round 12) GpuNest.bakeSkip (a level mask), splitBake (false: one bake pipeline, the A/B),
   skip 'ball' and 'pack', counts (dispatches, submits) and readBakes() (chunks per bake and region slot, a readback for
   tests), nested-perf.mjs `--profile 1`, `--levels 1`, and `--ab 1`'s split A/B.
-- NS-107 (step A built, round 13) The smooth draw as a fixed template + vertex cache + baked exceptions
+- NS-107 (step A built, round 13; step B built, round 14: the GPU cache pass with per-line cluster tables, the template
+  draw, the masked and placed exception bake, the input-hash skip, `?smooth=1` and the Smooth toggle, the GPU-vs-reference
+  test and the smooth section of `?selftest=1`; see the round 14 DEVLOG for what passes) The smooth draw as a fixed template + vertex cache + baked exceptions
   (NESTED_SCALES.md "The smooth draw: template, cache, exceptions"). Built: the reference split (boxmesh.ts smoothCache,
   templateMask, templateTris, smoothSplit; Tri tags down / p0 / p1; BoxMesh exposes col, zb, rim) and its unit tests
   (exact on 15 scenes x T = 2, 0.5). Next, in order: B the GPU (cache pages level id 48 + depth, cache + classify pass,
@@ -393,6 +395,23 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
 - NS-110 (limit, round 13) The template's mask treats a cap as an exception wherever its top's cluster reaches its own
   bottom on any corner (conservative: the pair rule needs all three corners of a triangle merged). Only very thin simple
   columns (under T from their bottom) are affected.
+- NS-111 (hack, round 14) The smooth bake skips a chunk (cache pass and exception bake) when a 64-bit hash (two 32-bit
+  sums) of its 18 x 18 input columns equals the one kept in its cache page. A collision would leave that chunk's cache and
+  exceptions stale (not watertight there). Rim chunks always bake. Exact alternative: a per-chunk version counter bumped
+  by every pass that writes a column (pack), compared instead of hashed.
+- NS-112 (perf, round 14) With the smooth draw on, a carve's bakes cost more than the boxes' (see the round 14 DEVLOG:
+  the exception bake per changed chunk is ~1.3-1.7x the box bake; the cache pass a few ms). Ideas not tried: fewer
+  placement lookups a wall step (the strip's lines' clusters read once into registers), the exception bake per column
+  only where its mask says it has exceptions (most simple columns have only a down cap), the dispatch split so rim
+  chunks do not hold the plain ones' occupancy down.
+- NS-113 (limit, tests only, round 14) The GPU-vs-reference test (src/nested/smoothref.ts) pairs triangles with z within
+  1e-5 relative (D3D's f32 division is not correctly rounded; the reference's mean is) and leaves the bottom lattice's
+  horizontal down caps out on both sides (the GPU bakes fans where the reference has two triangles a column).
+- NS-114 (limit, round 14) Smooth: a down-cap fan only where every corner line on the block's rim leaves the bottom where
+  it is (clusterAt(zb) == zb); elsewhere each column keeps its placed two-triangle down cap (more triangles; never seen).
+- NS-115 (measurement only, round 14) GpuNest.skip 'cache' / 'ex' leave out the smooth cache pass / exception bake (the
+  result is then wrong); nested-perf.mjs `--smooth 1`, `--sab 1` (boxes vs smooth in one page), nested-smooth.mjs
+  (`--skips 1`, `--shaft 1`, `--box 1`).
 - NS-95 (hack, round 10, tests only) GpuNest.oldTop (derive's u.e.x) brings back round 9's top rule, and `skip`
   'resClear' the round 9 residuals, for the before stills and counts (scripts/nested-carves.mjs, `?skip=` on
   `?selftest=1&carves=only`, nested-perf.mjs `--old 1`).

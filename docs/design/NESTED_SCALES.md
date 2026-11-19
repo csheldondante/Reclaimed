@@ -660,7 +660,7 @@ whose vertices read a VERTEX CACHE, plus EXCEPTIONS baked as face lists by the b
   stacks 100 %; soil over stone hills 19 % at T = 2 but 61.8 % at T = 0.5 (stone tops inside wall ranges: walls that
   survive the collapse cross a record boundary; BACKLOG NS-108).
 
-**The GPU design (step B onward; not built yet).**
+**The GPU design (written before the code; what was built, and the one change, under "As built (round 14)" below).**
 - *Cache page (level id 48 + depth, one a chunk, from the one pool, keyed like the column pages; no cap):* the chunk's 17
   x 17 corner lines (its border lines are written in both chunks by the same arithmetic, so the copies are bit-identical)
   x 20 words: raw vec4 (the four slots' tops), then per slot (x, y, z, normal as an octahedral 2 x 16 bit word), then 256
@@ -697,6 +697,63 @@ whose vertices read a VERTEX CACHE, plus EXCEPTIONS baked as face lists by the b
   ~4 + walls). If the vertex stage measures as the draw's bottleneck (step D's tiny-viewport split), the fallback is a
   per-chunk list of the edges whose wall bit is set and whose tops differ (one word an edge, written by the classify
   step's scan), drawn as a second instanced draw of 6 triangles an edge; the caps stay a fixed template.
+
+**As built (round 14, step B; one change of plan, the cluster tables).** nest.wgsl cacheBake / walkLine / clusterAt /
+wallTmpl / emitColS / faceBake (SMOOTH), draw.wgsl tCorner / vsT / vsS / fsS / captureT, render.ts, nest.ts setSmooth.
+- *Change from the plan: one cluster walk a line, kept in a table.* The plan called one WGSL cluster function from every
+  vertex site of the cache pass and of the exception bake. The D3D compiler inlines every call: with a cluster walk at
+  each cap corner, wall step and fan check, the smooth bake did not finish in four minutes (compile or run; not split).
+  So the cache pass walks each corner line of its chunk ONCE, bottom up (walkLine: breakpoints by bpNextC, consecutive
+  ones closer than T and joined above (joinedAboveC) chain into a cluster, its height the f32 sum bottom up / n, the
+  reference's arithmetic) and stores the clusters of more than one breakpoint as (bot, top, placed) intervals in the
+  chunk's cache page (CLOFF: a word a line, first | count << 20; intervals from CIV in page 0, then whole pages cz 1, 2,
+  ... sized by a scan: paged, no cap). Every placement after that is a lookup (clusterAt: the interval holding z, or z
+  itself): the cache's slots, the exceptions, the fans' check. A vertex the template and an exception share therefore
+  reads the same stored bits, not two evaluations that ought to agree; a chunk's border lines are walked by both chunks'
+  cache passes (same pipeline, same function, same inputs). On a parent's rim line the table holds the child's line
+  (both levels' columns, the child's units), which is what the parent's exceptions place there.
+- *The cache page* (level id 48 + depth, one or more a chunk): words 0-2 header, 3 the exceptions' second hash; 289
+  lines x 20 words (raw x 4, per slot dx, dy, z, normal); mask words from 5784 (bits 0 cap, 1 wall +x, 2 wall +y, 8-15
+  top material, 16-23 / 24-31 the +x / +y wall's material: the higher column's top, so a template wall never reads the
+  neighbour chunk); the cluster table from 6040.
+- *Order in a bake:* every GpuNest.bake (dilate, then per slot) runs cacheBake, faceBakeS, faceBakeRimS over the same
+  slot in one compute pass (a dispatch is a usage scope: the exceptions see the cache). The wall template bit is
+  computed by one function (wallTmpl) in both the mask and the exception bake.
+- *Fans:* a 4 x 4 block (or chunk) bakes its down caps as one fan only where every corner line on its rim leaves the
+  bottom where it is (clusterAt(zb) == zb); elsewhere each column keeps its own placed down cap, which takes part in the
+  pair rule. (Stricter than the reference's fan rule; the reference test excludes the bottom lattice's down caps.)
+- *The skip (changed while building: inputs, not outputs).* The plan hashed the exception words in the count pass; that
+  pass still did all the exception work, so it saved little. Built instead: the cache pass hashes the chunk's inputs
+  (its 18 x 18 columns as the bake reads them: drawn or not, every record, the bottoms; two independent 32-bit sums),
+  compares with the hash in its cache page (words 0-1) and, when equal and the chunk touches no rim line, returns at once
+  and sets word 2, on which the exception bake returns too. A fresh page's header is zero and the hash never is.
+  A collision would leave the chunk stale (2^-64 a chunk bake; NS-111). The exception bake reads the -x / -y walls'
+  template bits from the mask words of their owners (the chunk before), not recomputed.
+- *Cost work while building (all measured with the shaft carves of the pit suite, which lost the device):* the line walk
+  reads its columns once (on a rim line the other level's from the pages, bottoms by zbG: once a walk, not once a
+  breakpoint), keeps a cursor per column (each record read once a walk), the table lookup is a binary search, and the
+  pair rule scans outward from the cap only within its cluster. Sizes: a line's table place is bounded by half its
+  breakpoints (one walk, no counting walk).
+- *Which ops run the cache pass, and why none is missed:* every op that changes a level's drawn columns already bakes
+  them through GpuNest.bake (root; promote: the child's window and the parent round the footprint; demote: the parent
+  round the old footprint; slide: the entering chunks, the edge ring, the parent round both footprints; edit, for
+  raise / dig / melt / carve / add and strokes: per level the union of the edit, derive and restrict regions, grown two
+  columns; setSmooth: whole windows). bake() runs the cache pass first whenever the smooth draw is on, over the same
+  chunks, so the cache follows the faces everywhere the box draw's faces follow the columns (the round 8 dilation: a
+  column's bottom depends on its neighbours, a line's clusters on its columns' bottoms, the mask on the lines round a
+  column: all within the two-column grow). Pages: release lets the cache pages go with the level's other pages (slide,
+  demote; mode 8 lets only them go when the smooth draw is switched off); the pool's shrink moves pages with their
+  contents and rebuilds the draw's lists; a grow copies them. Nothing else writes columns of a live level.
+- *The draw:* per level the template (dirBuild lists the cache pages: dir[8 + L], entries from 16 + ((8 + L) cap + i) x 2;
+  dirFinish the indirect arguments at (8 + L) x 16: 256 x 14 x 3 vertices an instance) and the exceptions (the face
+  pages, the box draw's corner decode, z already placed). The fragment stage takes the face normal from the screen
+  derivatives of the level-local position, turned toward the eye.
+- *Proof on the GPU (tests only; `?selftest=1` smooth section, `?selftest=1&smooth=only`):* a small chain (root 64, level
+  1 64 wide, level 2 32 wide; a carve across level 2's rim, a cave at level 2, an add at level 1): every drawn triangle
+  (capture: template + exceptions) equals the reference's collapse mesh after dropCapPairs per level as a multiset of
+  placed triangles (x, y exact, z within 1e-5 relative: the GPU's f32 division is not correctly rounded on D3D; the
+  bottom lattice's down caps left out on both sides: fans), closed (0 odd edges, 0 degenerate, 0 coincident), rim lines
+  0 junctions. Then the sandbox with the smooth draw on through the watertight suite and the pit, cave and shaft poses.
 
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 

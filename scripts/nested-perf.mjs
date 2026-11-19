@@ -21,6 +21,15 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
     await watertightSuite(window.nested, { manifold: false, screen: false });
     return h;
   });
+  // (round 14, --smooth 1) the smooth draw on for everything below (the switch is itself a bake of every window)
+  if (R.opt('smooth', '0') === '1') {
+    const t = await page.evaluate(async () => {
+      const t0 = performance.now();
+      await nested.smooth(true);
+      return performance.now() - t0;
+    });
+    console.log(`smooth on: ${t.toFixed(0)} ms (every live window baked again)`);
+  }
   const [hx, hy, hz] = h;
   const tz = hz + 1.3;
   const views = {
@@ -32,6 +41,63 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
     'hillside': { yaw: 0.6, pitch: 0.5, eye: [hx + 20, hy + 14, hz + 12] },
     'the map': { yaw: 0.6, pitch: 0.7, eye: [hx + 60, hy + 40, hz + 70] },
   };
+  // (round 14, --sab 1) boxes against the smooth draw in the same page, alternating: per view the draw alone (5 rounds,
+  // median), then carves at level 1 at the tunnel mouth alternating the two (the switch's own rebake not timed). Then
+  // stops: the A/B is the measurement.
+  if (R.opt('sab', '0') === '1') {
+    const med = (v) => [...v].sort((x, y) => x - y)[Math.floor(v.length / 2)];
+    for (const [name, v] of Object.entries(R.opt('draws', '1') === '1' ? views : {})) {
+      await page.evaluate((v) => nested.setView(v), v);
+      await sleep(2500);
+      const r = await page.evaluate(async () => {
+        const out = { box: [], smooth: [], tris: {} };
+        for (let i = 0; i < 6; i++) {
+          const sm = i % 2 === 1;
+          await nested.smooth(sm);
+          await new Promise((r) => setTimeout(r, 300));
+          out[sm ? 'smooth' : 'box'].push(await nested.benchDraw(10));
+          if (i < 2) out.tris[sm ? 'smooth' : 'box'] = (await nested.manifold()).map((x) => `L${x.depth} ${x.tris}`).join(', ');
+        }
+        await nested.smooth(false);
+        return out;
+      });
+      console.log(`${name}: draw boxes ${med(r.box).toFixed(2)} ms (${r.box.map((x) => x.toFixed(1)).join(' ')}), smooth ${med(r.smooth).toFixed(2)} ms (${r.smooth.map((x) => x.toFixed(1)).join(' ')}); drawn triangles boxes ${r.tris.box}; smooth ${r.tris.smooth}`);
+    }
+    await page.evaluate((v) => nested.setView(v), views['tunnel mouth']);
+    await sleep(2500);
+    const c = await page.evaluate(async (h) => {
+      const a = nested.app;
+      const s = await a.nest.readAll();
+      const zo = s.zOrigin(1);
+      const w1 = a.nest.wins[1];
+      const out = { box: [], smooth: [], 'smooth, no cache pass': [], 'smooth, no exception bake': [] };
+      const modes = Object.keys(out);
+      for (let i = 0; i < 32; i++) {
+        const mode = modes[i % 4];
+        await nested.smooth(mode !== 'box');
+        a.nest.skip.clear();
+        if (mode.includes('no cache')) a.nest.skip.add('cache');
+        if (mode.includes('no exception')) a.nest.skip.add('ex');
+        const at = { level: 1, x: (h[0] - 1 + (i % 12) * 0.3) * 8 - w1.gx, y: (h[1] + 1.5 + Math.floor(i / 12) * 0.4) * 8 - w1.gy, z: (h[2] + 0.8 - zo) * 8 };
+        const g0 = a.nest.stats.grows;
+        const r = await nested.benchEdit({ op: 'carve', radius: 0.5, amount: 0, at });
+        a.nest.skip.clear();
+        if (a.nest.stats.grows === g0) out[mode].push(r);
+      }
+      // (the switch itself: a whole-window rebake of every live level, pipelines made)
+      await nested.smooth(false);
+      const t0 = performance.now();
+      await nested.smooth(true);
+      out.switchOn = performance.now() - t0;
+      await nested.smooth(false);
+      return out;
+    }, h);
+    const mn = (v) => Math.min(...v);
+    for (const k of ['box', 'smooth', 'smooth, no cache pass', 'smooth, no exception bake'])
+      if (c[k].length) console.log(`carve at level 1, ${k}: with bakes ${c[k].map((r) => r.withBake.toFixed(1)).join(' ')} (median ${med(c[k].map((r) => r.withBake)).toFixed(1)}, min ${mn(c[k].map((r) => r.withBake)).toFixed(1)}); without ${c[k].map((r) => r.without.toFixed(1)).join(' ')}; bakes' share median ${med(c[k].map((r) => r.withBake - r.without)).toFixed(1)} ms`);
+    console.log(`switching the smooth draw on (pipelines made): ${c.switchOn.toFixed(0)} ms`);
+    return;
+  }
   let drawWorst = 0;
   let frameWorst = 0;
   const rows = [];

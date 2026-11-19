@@ -875,9 +875,12 @@ fn release(@builtin(global_invocation_id) gid: vec3<u32>) {
   // the level's columns, its baked faces, a stroke's snapshot and any scratch
   let lid = k1 & 0xffu;
   // (mode 7: a stroke's snapshot only, at its end)
+  // (mode 8, round 14: the smooth draw's cache pages only, when it is switched off)
   if (u.a.z == 7u) {
     if (lid != SNAP_ID + u.a.w) { return; }
-  } else if (lid != u.a.w && lid != FACE_ID + u.a.w && lid != SNAP_ID + u.a.w && lid != TMP_ID + u.a.w) { return; }
+  } else if (u.a.z == 8u) {
+    if (lid != 48u + u.a.w) { return; }
+  } else if (lid != u.a.w && lid != FACE_ID + u.a.w && lid != SNAP_ID + u.a.w && lid != TMP_ID + u.a.w && lid != 48u + u.a.w) { return; }
   let k0 = atomicLoad(&tab[s * 4u]);
   let cx = i32(k0 & 0xffffu);
   let cy = i32(k0 >> 16u);
@@ -2005,6 +2008,14 @@ fn bFill(L: u32, cx: i32, cy: i32, li: u32) {
     for (var e = 0; e <= 4; e++) {
       if (rimP(L, bx + e, by) || rimP(L, bx + e, by + 4) || rimP(L, bx, by + e) || rimP(L, bx + 4, by + e)) { ok = 0u; }
     }
+    // (round 14, the smooth draw) a fan has one z: only where the collapse leaves the bottom where it is on every corner
+    // line along the block's rim (else each column keeps its own placed down cap)
+    if (SMOOTH && ok == 1u) {
+      for (var i = 0u; i < 16u; i++) {
+        let q = fanPt(0u, 0u, 4u, i);
+        if (placeAt(bx + i32(q & 31u), by + i32(q >> 5u), z) != z) { ok = 0u; }
+      }
+    }
     sBlk[li] = ok;
   }
   workgroupBarrier();
@@ -2476,6 +2487,725 @@ fn emitCol(L: u32, X: i32, Y: i32, write: bool, at: u32) -> u32 {
   return t;
 }
 
+// ---- (round 14, NS-107) the smooth draw: a fixed template + a vertex cache + baked exceptions ------------------------
+// (docs/design/NESTED_SCALES.md "The smooth draw: template, cache, exceptions"; the reference is src/nested/boxmesh.ts
+// smoothCache / templateMask / templateTris / smoothSplit, and every function here is the WGSL twin of one there.) The
+// smooth mesh is the box mesh with its vertices moved by the collapse: a vertex identity (level, corner line, height) is
+// placed at the mean of its cluster (the chain of breakpoints on its corner line joined by vertical edges shorter than
+// SMOOTH_T). The cache pass walks each corner line once (walkLine) and stores its clusters; every placement (the cache's
+// slots, the exceptions, the fans) is a lookup in that table (clusterAt), so a vertex the template and an exception share
+// gets bit-identical positions. Compiled in only where SMOOTH is set (pipeline constant) or in the cache pass; with the
+// smooth draw off nothing here runs.
+override SMOOTH: bool = false;
+/** cache pages: level id CACHE_ID + depth, one a chunk (more for a long cluster table). Words: 0-1 the hash of the
+ *  chunk's inputs, 2 1 when the last cache pass found them unchanged (its exception bake is skipped), 3 unused; from
+ *  CHDR, per corner line (lx + 17 ly, lx, ly in 0..16; border lines in both chunks, bit-identical) CLW words: the four
+ *  slots' raw heights (slot q = column (CX - 1 + (q & 1), CY - 1 + (q >> 1)); NONE_Z where the level does not draw it),
+ *  then per slot (dx, dy, z, normal): the placed position (x, y offsets from the corner line, 0 this round) and an
+ *  octahedral normal (step C); from CMASK one mask word a column (bits 0 cap, 1 wall +x, 2 wall +y, 8-15 top material,
+ *  16-23 the +x wall's material, 24-31 the +y wall's: the higher column's top). */
+const CACHE_ID: u32 = 48u;
+const CHDR: u32 = 4u;
+const CLW: u32 = 20u;
+const CMASK: u32 = 5784u;
+const NONE_Z: f32 = -3e38;
+/** the collapse's threshold (the level's column units; boxmesh.ts collapseCols T = 2) */
+const SMOOTH_T: f32 = 2.0;
+
+/** a column round a vertex's corner line: q 0-3 the line's own level's four; on a child's rim line (rimC) q 4-7 the
+ *  parent's four round the same line, heights through toKid (s = 1) */
+struct LC {
+  lv: u32,
+  X: i32,
+  Y: i32,
+  s: u32,
+}
+fn lineCol(L: u32, CX: i32, CY: i32, q: u32) -> LC {
+  if (q < 4u) { return LC(L, CX - 1 + i32(q & 1u), CY - 1 + i32(q >> 1u), 0u); }
+  let k = i32(u.a.x);
+  return LC(L - 1u, fdiv(CX, k) - 1 + i32(q & 1u), fdiv(CY, k) - 1 + i32((q >> 1u) & 1u), 1u);
+}
+/** a drawn column's record count (0: air to its level); the baked level's own columns through the workgroup's copy */
+fn lcN(c: LC) -> u32 {
+  if (c.lv == u.a.w) { return bCount(c.lv, c.X, c.Y); }
+  return oCount(c.lv, c.X, c.Y);
+}
+fn lcMat(c: LC, j: u32) -> u32 {
+  if (c.lv == u.a.w) { return bRec(c.lv, c.X, c.Y, j).y; }
+  let p = pageOf(c.lv, c.X >> 4, c.Y >> 4, j / KR);
+  if (p >= NOT_LOADED) { return MAT_AIR; }
+  return pgLoad(p * PW + 256u + (colIn(c.X, c.Y) * KR + j % KR) * 2u + 1u);
+}
+fn lcBot(c: LC) -> f32 {
+  var b = 0.0;
+  if (c.lv == u.a.w) { b = bBot(c.lv, c.X, c.Y); } else { b = zbG(c.lv, c.X, c.Y); }
+  if (c.s == 1u) { b = toKid(c.lv, b); }
+  return b;
+}
+// (a line walk's columns, read once a walk: on a rim line the other level's columns come from the pages, and their
+// bottoms (zbG) read many pages; read again at every breakpoint they made a rim chunk's cache pass take seconds)
+var<private> wkC: array<LC, 8>;
+var<private> wkN: array<u32, 8>;
+var<private> wkB: array<f32, 8>;
+/** the other level's column's first record page (NONE: the baked level's own, read through the workgroup's copy) */
+var<private> wkP: array<u32, 8>;
+fn walkPrep(L: u32, CX: i32, CY: i32, nc: u32) {
+  for (var q = 0u; q < nc; q++) {
+    let c = lineCol(L, CX, CY, q);
+    wkC[q] = c;
+    let n = lcN(c);
+    wkN[q] = n;
+    wkB[q] = 0.0;
+    wkP[q] = NONE;
+    wkJ[q] = 0u;
+    if (n > 0u) {
+      wkB[q] = lcBot(c);
+      if (c.lv != u.a.w) { wkP[q] = pageOf(c.lv, c.X >> 4, c.Y >> 4, 0u); }
+    }
+  }
+}
+/** record j of walk column q: (top in the line's units, material) */
+fn wkRec(q: u32, j: u32) -> vec2<f32> {
+  let c = wkC[q];
+  var r = vec2<u32>(0u);
+  if (wkP[q] == NONE) {
+    r = bRec(c.lv, c.X, c.Y, j);
+  } else if (j < KR && wkP[q] < NOT_LOADED) {
+    let b = wkP[q] * PW + 256u + (colIn(c.X, c.Y) * KR + j) * 2u;
+    r = vec2<u32>(pgLoad(b), pgLoad(b + 1u));
+  } else {
+    r = vec2<u32>(bitcast<u32>(oTop(c.lv, c.X, c.Y, j)), lcMat(c, j));
+  }
+  var t = bitcast<f32>(r.x);
+  if (c.s == 1u) { t = toKid(c.lv, t); }
+  return vec2<f32>(t, f32(r.y));
+}
+/** each walk column's first record whose top lies above the walk's current breakpoint (the walk only goes up, so the
+ *  cursors only move forward: a line's walk reads each record once, not once a breakpoint) */
+var<private> wkJ: array<u32, 8>;
+/** the lowest breakpoint above z on the walked line (a record top or a bottom of its nc columns; NO_DEPTH: none); z
+ *  never below the last call's */
+fn bpNextC(nc: u32, z: f32) -> f32 {
+  var best = NO_DEPTH;
+  for (var q = 0u; q < nc; q++) {
+    let n = wkN[q];
+    if (n == 0u) { continue; }
+    let b = wkB[q];
+    if (b > z) { best = min(best, b); }
+    var j = wkJ[q];
+    loop {
+      if (j >= n) { break; }
+      let t = wkRec(q, j).x;
+      if (t > z) {
+        best = min(best, t);
+        break;
+      }
+      j++;
+    }
+    wkJ[q] = j;
+  }
+  return best;
+}
+/** whether walk column q is solid just above breakpoint z (below its bottom, and where it is not drawn: air); called
+ *  right after bpNextC(z), whose cursor is the record holding the segment above z */
+fn solidAboveC(q: u32, z: f32) -> bool {
+  let n = wkN[q];
+  if (n == 0u) { return false; }
+  if (z < wkB[q]) { return false; }
+  let j = wkJ[q];
+  if (j < n) { return matSolid(u32(wkRec(q, j).y)); }
+  return false;
+}
+/** whether the segment above breakpoint z is an edge of the mesh: one level's four columns not all solid or all air */
+fn joinedAboveC(nc: u32, z: f32) -> bool {
+  for (var g = 0u; g < nc; g += 4u) {
+    let s0 = solidAboveC(g, z);
+    for (var q = 1u; q < 4u; q++) {
+      if (solidAboveC(g + q, z) != s0) { return true; }
+    }
+  }
+  return false;
+}
+// ---- the cluster tables (round 14). The D3D compiler inlines every call, and a cluster walk at each of the exception
+// bake's vertex sites made the pipeline compile and run for minutes. So the cache pass walks each corner line of its chunk
+// ONCE, bottom up, and keeps the line's clusters of more than one breakpoint (bot, top, placed) in the cache page; every
+// placement after that (the slots, the exceptions, the fans) is a lookup in that table (a breakpoint in no stored
+// cluster stays where it is). One computation a line and chunk: a vertex the template and an exception share reads the
+// same stored bits. A chunk's border lines are walked by both chunks' cache passes, the same function on the same inputs.
+/** per corner line: its first interval | count << 20 */
+const CLOFF: u32 = 6040u;
+/** intervals (bot, top, placed): from CIV in the chunk's cache page 0 (CIV0 of them), then whole pages cz 1, 2, ... */
+const CIV: u32 = 6329u;
+const CIV0: u32 = 2071u;
+const CIVP: u32 = 4181u;
+/** the chunk's cache page 0 (cache pass and smooth exception bake; bChunk is the chunk) */
+var<private> sCp: u32;
+fn civ(i: u32) -> u32 {
+  if (i < CIV0) { return sCp * PW + CIV + i * 3u; }
+  let j = i - CIV0;
+  let p = pageOf(CACHE_ID + u.a.w, bChunk.x, bChunk.y, 1u + j / CIVP);
+  return p * PW + (j % CIVP) * 3u;
+}
+/** the chunk's index of corner line (CX, CY) (0..288) */
+fn lnIdx(CX: i32, CY: i32) -> u32 { return u32((CY - bChunk.y * 16) * 17 + (CX - bChunk.x * 16)); }
+/** (boxmesh.ts mesh.cluster, from the table) the cluster of breakpoint z on the chunk's corner line (CX, CY): its lowest
+ *  and highest breakpoint and its placed height; z itself when it is alone. On a parent's rim line the table is the
+ *  child's line (z in the child's units). */
+fn clusterAt(CX: i32, CY: i32, z: f32) -> vec3<f32> {
+  let w = pgLoad(sCp * PW + CLOFF + lnIdx(CX, CY));
+  // (the intervals are in order, bottom up, and disjoint: a binary search for the last one starting at or below z; a deep
+  // scalloped shaft wall's lines hold dozens)
+  var lo = 0u;
+  var hi = w >> 20u;
+  let s = w & 0xfffffu;
+  loop {
+    if (lo >= hi) { break; }
+    let mid = (lo + hi) / 2u;
+    if (bitcast<f32>(pgLoad(civ(s + mid))) <= z) { lo = mid + 1u; } else { hi = mid; }
+  }
+  if (lo > 0u) {
+    let b = civ(s + lo - 1u);
+    let top = bitcast<f32>(pgLoad(b + 1u));
+    if (z <= top) { return vec3<f32>(bitcast<f32>(pgLoad(b)), top, bitcast<f32>(pgLoad(b + 2u))); }
+  }
+  return vec3<f32>(z, z, z);
+}
+fn placeAt(CX: i32, CY: i32, z: f32) -> f32 { return clusterAt(CX, CY, z).z; }
+/** (cache pass) corner line (CX, CY) of the chunk walked bottom up: consecutive breakpoints closer than SMOOTH_T and
+ *  joined by an edge (joinedAboveC) form a cluster, placed at the f32 mean of its breakpoints summed bottom up (sums and
+ *  one division: boxmesh.ts mesh.cluster's arithmetic). Clusters of more than one written from interval `first` (write);
+ *  returns how many. On a parent's rim line the walk is the child's line (both levels' columns, the child's units). */
+fn walkLine(L: u32, CX: i32, CY: i32, write: bool, first: u32) -> u32 {
+  var Lw = L;
+  var LX = CX;
+  var LY = CY;
+  var nc = 4u;
+  if (rimP(L, CX, CY)) {
+    let k = i32(u.a.x);
+    Lw = L + 1u;
+    LX = CX * k;
+    LY = CY * k;
+    nc = 8u;
+  } else if (L > 0u && rimC(L, CX, CY)) {
+    nc = 8u;
+  }
+  walkPrep(Lw, LX, LY, nc);
+  var cnt = 0u;
+  var a = 0.0;
+  var sum = 0.0;
+  var n = 0.0;
+  var b = -NO_DEPTH;
+  loop {
+    let nx = bpNextC(nc, b);
+    var join = false;
+    if (n > 0.0 && nx < NO_DEPTH && nx - b < SMOOTH_T) { join = joinedAboveC(nc, b); }
+    if (join) {
+      sum = sum + nx;
+      n = n + 1.0;
+    } else {
+      if (n > 1.0) {
+        if (write) {
+          let o = civ(first + cnt);
+          pgStore(o, bitcast<u32>(a));
+          pgStore(o + 1u, bitcast<u32>(b));
+          pgStore(o + 2u, bitcast<u32>(sum / n));
+        }
+        cnt++;
+      }
+      if (nx >= NO_DEPTH) { break; }
+      a = nx;
+      sum = nx;
+      n = 1.0;
+    }
+    b = nx;
+  }
+  return cnt;
+}
+/** (boxmesh.ts templateMask) a simple column: drawn, every record solid (its only solid/air boundary is its top) */
+fn simpleCol(L: u32, X: i32, Y: i32) -> bool {
+  let n = bCount(L, X, Y);
+  if (n == 0u) { return false; }
+  for (var j = 0u; j < n; j++) {
+    if (!matSolid(bRec(L, X, Y, j).y)) { return false; }
+  }
+  return true;
+}
+fn lastTop(L: u32, X: i32, Y: i32) -> f32 { return bitcast<f32>(bRec(L, X, Y, bCount(L, X, Y) - 1u).x); }
+/** a template wall's corner line: no rim line, and no breakpoint strictly inside (lo, hi) but the last tops of its
+ *  columns (no other record boundary, no bottom) */
+fn lineOkT(L: u32, CX: i32, CY: i32, lo: f32, hi: f32) -> bool {
+  if (rimP(L, CX, CY) || rimC(L, CX, CY)) { return false; }
+  for (var q = 0; q < 4; q++) {
+    let X = CX - 1 + (q & 1);
+    let Y = CY - 1 + (q >> 1);
+    let n = bCount(L, X, Y);
+    if (n == 0u) { continue; }
+    let b = bBot(L, X, Y);
+    if (b > lo && b < hi) { return false; }
+    for (var j = 0u; j + 1u < n; j++) {
+      let t = bitcast<f32>(bRec(L, X, Y, j).x);
+      if (t > lo && t < hi) { return false; }
+    }
+  }
+  return true;
+}
+/** whether the template draws the wall of edge (X, Y, dir) (dir 0: +x, 1: +y; owned by the column on its low side):
+ *  both columns simple, neither corner line of the edge a rim line, both lines clean between the two tops. The cache
+ *  pass's mask and the exception bake both call this, so they agree by construction. */
+fn wallTmpl(L: u32, X: i32, Y: i32, dir: u32) -> bool {
+  let BX = X + select(0, 1, dir == 0u);
+  let BY = Y + select(1, 0, dir == 0u);
+  if (!simpleCol(L, X, Y) || !simpleCol(L, BX, BY)) { return false; }
+  let a = lastTop(L, X, Y);
+  let b = lastTop(L, BX, BY);
+  let lo = min(a, b);
+  let hi = max(a, b);
+  // P, Q: the edge's corner lines
+  let PX = select(X, X + 1, dir == 0u);
+  let PY = select(Y + 1, Y, dir == 0u);
+  return lineOkT(L, PX, PY, lo, hi) && lineOkT(L, X + 1, Y + 1, lo, hi);
+}
+
+/** (cache pass) the most clusters of more than one breakpoint line (CX, CY) can have: half its breakpoints (each drawn
+ *  column round it gives its record tops and its bottom; on a rim line both levels' columns) */
+fn lineBound(L: u32, CX: i32, CY: i32) -> u32 {
+  var nc = 4u;
+  var Lw = L;
+  var LX = CX;
+  var LY = CY;
+  if (rimP(L, CX, CY)) {
+    Lw = L + 1u;
+    LX = CX * i32(u.a.x);
+    LY = CY * i32(u.a.x);
+    nc = 8u;
+  } else if (L > 0u && rimC(L, CX, CY)) {
+    nc = 8u;
+  }
+  var nb = 0u;
+  for (var c = 0u; c < nc; c++) {
+    let n = lcN(lineCol(Lw, LX, LY, c));
+    if (n > 0u) { nb += n + 1u; }
+  }
+  return nb / 2u;
+}
+var<workgroup> wCB: array<f32, 1156>;
+var<workgroup> wCp: u32;
+/** (round 14) the cache pass over a slot's chunks (a workgroup a chunk): each corner line's four slots (raw height, placed
+ *  position, cluster bottom), then (barrier) each column's mask word. Runs before the exception bake of the same chunks
+ *  in the same compute pass, wherever an op bakes faces with the smooth draw on. */
+@compute @workgroup_size(16, 16)
+fn cacheBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  let L = u.a.w;
+  let o = slotOrigin(u.r.x, li);
+  let cx = o.x + i32(wid.x);
+  let cy = o.y + i32(wid.y);
+  if (!inWin(L, cx * 16, cy * 16)) { return; }
+  if (li == 0u) {
+    ensurePages(CACHE_ID + L, cx, cy, 1u, u.d.x);
+    wCp = pageOf(CACHE_ID + L, cx, cy, 0u);
+  }
+  if (li < 9u) { wPg[li] = pageOf(L, cx - 1 + i32(li % 3u), cy - 1 + i32(li / 3u), 0u); }
+  let cp = workgroupUniformLoad(&wCp);
+  if (cp >= NOT_LOADED) { return; }
+  bOrg = vec2<i32>(cx - 1, cy - 1);
+  bChunk = vec2<i32>(cx, cy);
+  bFill(L, cx, cy, li);
+  sCp = cp;
+  let base = cp * PW;
+  // (round 14) the chunk's inputs unchanged: no cache pass and no exception bake. Off a rim, everything the chunk's
+  // cache and exceptions are made of is its 18 x 18 columns as the bake reads them (drawn or not, every record, the
+  // bottoms): hashed (two independent 32-bit sums), compared with the hash kept in the cache page (words 0-1; word 2 tells
+  // the exception bake that follows). A fresh page's header is zero and the hash is never 0. Rim chunks always bake.
+  var ha = 0u;
+  var hb = 0u;
+  for (var q = li; q < 324u; q += 256u) {
+    let X = sOrg.x + i32(q % 18u);
+    let Y = sOrg.y + i32(q / 18u);
+    let n = sN[q];
+    var a = ((q + 1u) * 0x9e3779b1u) ^ (n * 0x85ebca6bu) ^ (bitcast<u32>(sB[q]) * 0xc2b2ae35u);
+    var b = ((q + 7u) * 0x27d4eb2du) ^ (n * 0x165667b1u) ^ (bitcast<u32>(sB[q]) * 0x7feb352du);
+    for (var j = 0u; j < n; j++) {
+      let r = bRec(L, X, Y, j);
+      a = (a ^ r.x ^ (r.y << 24u)) * 0x2c1b3c6du;
+      a ^= a >> 15u;
+      b = (b ^ (r.x * 0x9e3779b1u) ^ r.y) * 0x297a2d39u;
+      b ^= b >> 13u;
+    }
+    ha += a;
+    hb += b;
+  }
+  let hA = wgScan(li, ha).y | 1u;
+  let hB = wgScan(li, hb).y;
+  if (li == 0u) {
+    let same = !chunkRim(L, cx, cy) && pgLoad(base) == hA && pgLoad(base + 1u) == hB;
+    pgStore(base, hA);
+    pgStore(base + 1u, hB);
+    pgStore(base + 2u, select(0u, 1u, same));
+    wflag = select(0u, 1u, same);
+  }
+  if (workgroupUniformLoad(&wflag) == 1u) { return; }
+  // the cluster tables: a line has at most (its breakpoints) / 2 clusters of more than one, so each line's place is
+  // sized by that bound (a scan), the pages for them made, then each line walked once, writing (one call site of the
+  // walk; the count kept is the walk's)
+  var bound = 0u;
+  for (var q = li; q < 289u; q += 256u) { bound += lineBound(L, cx * 16 + i32(q % 17u), cy * 16 + i32(q / 17u)); }
+  let sc = wgScan(li, bound);
+  if (li == 0u) {
+    var need = 1u;
+    if (sc.y > CIV0) { need = 2u + (sc.y - CIV0 - 1u) / CIVP; }
+    ensurePages(CACHE_ID + L, cx, cy, need, u.d.x);
+  }
+  storageBarrier();
+  workgroupBarrier();
+  var first = sc.x;
+  for (var q = li; q < 289u; q += 256u) {
+    let CX = cx * 16 + i32(q % 17u);
+    let CY = cy * 16 + i32(q / 17u);
+    let c = walkLine(L, CX, CY, true, first);
+    pgStore(base + CLOFF + q, first | (c << 20u));
+    first += lineBound(L, CX, CY);
+  }
+  storageBarrier();
+  workgroupBarrier();
+  for (var q = li; q < 289u; q += 256u) {
+    let lx = i32(q % 17u);
+    let ly = i32(q / 17u);
+    let CX = cx * 16 + lx;
+    let CY = cy * 16 + ly;
+    let lb = base + CHDR + q * CLW;
+    let kid = rimP(L, CX, CY);
+    for (var s = 0u; s < 4u; s++) {
+      let X = CX - 1 + i32(s & 1u);
+      let Y = CY - 1 + i32(s >> 1u);
+      var raw = NONE_Z;
+      var z = NONE_Z;
+      var bot = NONE_Z;
+      let n = bCount(L, X, Y);
+      if (n > 0u) {
+        raw = bitcast<f32>(bRec(L, X, Y, n - 1u).x);
+        // (a parent's rim line holds the child's clusters: never a template vertex, the mask leaves rim lines out)
+        var zq = raw;
+        if (kid) { zq = toKid(L, raw); }
+        let c = clusterAt(CX, CY, zq);
+        z = c.z;
+        bot = c.x;
+        if (kid) { bot = NONE_Z; }
+      }
+      pgStore(lb + s, bitcast<u32>(raw));
+      pgStore(lb + 4u + s * 4u, bitcast<u32>(0.0));
+      pgStore(lb + 4u + s * 4u + 1u, bitcast<u32>(0.0));
+      pgStore(lb + 4u + s * 4u + 2u, bitcast<u32>(z));
+      pgStore(lb + 4u + s * 4u + 3u, 0u);
+      wCB[q * 4u + s] = bot;
+    }
+  }
+  workgroupBarrier();
+  // the classify step: one thread a column
+  let X = cx * 16 + i32(lid.x);
+  let Y = cy * 16 + i32(lid.y);
+  var mw = 0u;
+  if (simpleCol(L, X, Y)) {
+    let n = bCount(L, X, Y);
+    mw = (bRec(L, X, Y, n - 1u).y & 255u) << 8u;
+    let zb = bBot(L, X, Y);
+    var cap = true;
+    for (var c = 0u; c < 4u; c++) {
+      let qx = lid.x + (c & 1u);
+      let qy = lid.y + (c >> 1u);
+      if (rimP(L, X + i32(c & 1u), Y + i32(c >> 1u)) || rimC(L, X + i32(c & 1u), Y + i32(c >> 1u)) || !(wCB[(qy * 17u + qx) * 4u + 3u - c] > zb)) { cap = false; }
+    }
+    if (cap) { mw |= 1u; }
+    for (var dir = 0u; dir < 2u; dir++) {
+      if (wallTmpl(L, X, Y, dir)) {
+        let BX = X + select(0, 1, dir == 0u);
+        let BY = Y + select(1, 0, dir == 0u);
+        let nb = bCount(L, BX, BY);
+        let tb = bRec(L, BX, BY, nb - 1u);
+        var m = (mw >> 8u) & 255u;
+        if (bitcast<f32>(tb.x) > lastTop(L, X, Y)) { m = tb.y & 255u; }
+        mw |= (2u << dir) | (m << (16u + 8u * dir));
+      }
+    }
+  }
+  pgStore(base + CMASK + colIn(X, Y), mw);
+}
+
+/** a smooth exception triangle written at index at + t (write; count: nothing) */
+fn putS(write: bool, at: u32, t: u32, w0: u32, z0: f32, z1: f32, z2: f32) {
+  if (write) { putTri(at + t, w0, z0, z1, z2); }
+}
+/** a cap's placed height at corner c of column (X, Y) (on a rim line of the child: the child's identity) */
+fn capZ(L: u32, X: i32, Y: i32, c: u32, z: f32, kid: bool) -> f32 {
+  let CX = X + i32(c & 1u);
+  let CY = Y + i32(c >> 1u);
+  if (kid) { return placeAt(CX, CY, toKid(L, z)); }
+  return placeAt(CX, CY, z);
+}
+/** (boxmesh.ts dropCapPairs) whether a cap half of column (X, Y) at height z is kept: the caps of the column whose three
+ *  placed corners are the same as its own form a run (consecutive: they share corner c0's cluster); kept iff none of
+ *  the run lies above it and an even number below. Half 0: corners (0, 1, 3); half 1: (0, 3, 2). The down cap (at zb)
+ *  takes part unless the column's down cap is a fan's. */
+fn capKept(L: u32, X: i32, Y: i32, n: u32, zb: f32, downIn: bool, j0: i32, z: f32, half: u32, rp: vec4<bool>) -> bool {
+  let c1 = select(3u, 1u, half == 0u);
+  let c2 = select(2u, 3u, half == 0u);
+  let r1 = select(rp.w, rp.y, half == 0u);
+  let r2 = select(rp.z, rp.w, half == 0u);
+  // corner 0's cluster bounds (in its identity's units)
+  var z0 = z;
+  if (rp.x) { z0 = toKid(L, z); }
+  let cl = clusterAt(X, Y, z0);
+  if (cl.x == cl.y) { return true; }
+  let p1 = capZ(L, X, Y, c1, z, r1);
+  let p2 = capZ(L, X, Y, c2, z, r2);
+  var above = 0u;
+  var below = 0u;
+  // the other caps (the down cap at index -1, then each record boundary between solid and air), outward from this one
+  // (j0) both ways while they lie in corner 0's cluster: a run is consecutive caps
+  for (var dir = -1; dir <= 1; dir += 2) {
+    var j = j0 + dir;
+    loop {
+      if (j < -1 || j >= i32(n)) { break; }
+      var h = 0.0;
+      var isCap = true;
+      if (j < 0) {
+        isCap = downIn;
+        h = zb;
+      } else {
+        let r = bRec(L, X, Y, u32(j));
+        var up = MAT_AIR;
+        if (u32(j) + 1u < n) { up = bRec(L, X, Y, u32(j) + 1u).y; }
+        isCap = matSolid(r.y) != matSolid(up);
+        h = bitcast<f32>(r.x);
+      }
+      var h0 = h;
+      if (rp.x) { h0 = toKid(L, h); }
+      if (h0 < cl.x || h0 > cl.y) { break; }
+      if (isCap && capZ(L, X, Y, c1, h, r1) == p1 && capZ(L, X, Y, c2, h, r2) == p2) {
+        if (dir > 0) { above++; } else { below++; }
+      }
+      continuing {
+        j += dir;
+      }
+    }
+  }
+  return above == 0u && (below & 1u) == 0u;
+}
+/** (round 14) a column's smooth exceptions: emitCol's faces less what the template draws (the top cap where the mask's
+ *  cap bit is set, the wall piece [lo, hi] of an edge the template draws), each vertex at its placed height, triangles
+ *  with two corners in one cluster skipped, coincident cap pairs dropped (capKept). Counted and hashed, or written. */
+fn emitColS(L: u32, X: i32, Y: i32, write: bool, at: u32, mw: u32, mwL: u32, mwD: u32) -> u32 {
+  let n = bCount(L, X, Y);
+  if (n == 0u) { return 0u; }
+  let lxy = u32(X & 15) | (u32(Y & 15) << 4u);
+  let zb = bBot(L, X, Y);
+  var t = 0u;
+  let rp = vec4<bool>(rimP(L, X, Y), rimP(L, X + 1, Y), rimP(L, X, Y + 1), rimP(L, X + 1, Y + 1));
+  let rz = vec4<u32>(select(0u, 1u, rp.x), select(0u, 1u, rp.y), select(0u, 1u, rp.z), select(0u, 1u, rp.w));
+  let f013 = (rz.x << 25u) | (rz.y << 26u) | (rz.w << 27u);
+  let f032 = (rz.x << 25u) | (rz.w << 26u) | (rz.z << 27u);
+  // the down cap: a fan's (one z, unplaced: bFill made fans only where the collapse leaves the bottom where it is) or the
+  // column's own two triangles
+  let r0 = bRec(L, X, Y, 0u);
+  var fanS = 0u;
+  if (matSolid(r0.y)) {
+    let lx = u32(X & 15);
+    let ly = u32(Y & 15);
+    if (sBlk[16] != 0u) {
+      if (lx == 0u && ly == 0u) { fanS = 16u; } else { fanS = 99u; }
+    } else if (sBlk[(ly / 4u) * 4u + lx / 4u] != 0u) {
+      if ((lx & 3u) == 0u && (ly & 3u) == 0u) { fanS = 4u; } else { fanS = 99u; }
+    }
+  }
+  let downIn = matSolid(r0.y) && fanS == 0u;
+  // caps (the down cap first, then each record boundary)
+  for (var j = -1; j < i32(n); j++) {
+    var z = 0.0;
+    var kind = 4u;
+    var mat = 0u;
+    if (j < 0) {
+      if (!downIn) { continue; }
+      z = zb;
+      kind = 5u;
+      mat = r0.y;
+    } else {
+      let r = bRec(L, X, Y, u32(j));
+      var up = MAT_AIR;
+      if (u32(j) + 1u < n) { up = bRec(L, X, Y, u32(j) + 1u).y; }
+      let s0 = matSolid(r.y);
+      if (s0 == matSolid(up)) { continue; }
+      // (the template draws a simple column's top cap)
+      if (s0 && u32(j) + 1u == n && (mw & 1u) != 0u) { continue; }
+      z = bitcast<f32>(r.x);
+      kind = select(5u, 4u, s0);
+      mat = select(up, r.y, s0);
+    }
+    let w = lxy | (kind << 8u) | ((mat & 255u) << 11u);
+    let p0 = capZ(L, X, Y, 0u, z, rp.x);
+    let p1 = capZ(L, X, Y, 1u, z, rp.y);
+    let p2 = capZ(L, X, Y, 2u, z, rp.z);
+    let p3 = capZ(L, X, Y, 3u, z, rp.w);
+    // (one call site of capKept: the two halves (0, 1, 3) and (0, 3, 2))
+    for (var hf = 0u; hf < 2u; hf++) {
+      if (capKept(L, X, Y, n, zb, downIn, j, z, hf, rp)) {
+        if (hf == 0u) {
+          putS(write, at, t, w | (0u << 19u) | (1u << 21u) | (3u << 23u) | f013, p0, p1, p3);
+        } else {
+          putS(write, at, t, w | (0u << 19u) | (3u << 21u) | (2u << 23u) | f032, p0, p3, p2);
+        }
+        t++;
+      }
+    }
+  }
+  if (fanS != 0u && fanS != 99u) {
+    let lx = u32(X & 15);
+    let ly = u32(Y & 15);
+    let w = lxy | (6u << 8u) | ((r0.y & 255u) << 11u);
+    let c = (lx + fanS / 2u) | ((ly + fanS / 2u) << 5u);
+    for (var i = 0u; i < 4u * fanS; i++) {
+      let w2 = c | (fanPt(lx, ly, fanS, i) << 10u);
+      let w3 = fanPt(lx, ly, fanS, (i + 1u) % (4u * fanS));
+      if (write) { putTriRaw(at + t + i, w, bitcast<u32>(zb), w2, w3); }
+    }
+    t += 4u * fanS;
+  }
+  // walls, as emitCol, less the template's piece
+  for (var d = 0u; d < 4u; d++) {
+    var off = vec2<i32>(1, 0);
+    var cA = 1u;
+    var cB = 3u;
+    if (d == 1u) {
+      off = vec2<i32>(-1, 0);
+      cA = 0u;
+      cB = 2u;
+    } else if (d == 2u) {
+      off = vec2<i32>(0, 1);
+      cA = 2u;
+      cB = 3u;
+    } else if (d == 3u) {
+      off = vec2<i32>(0, -1);
+      cA = 0u;
+      cB = 1u;
+    }
+    let NX = X + off.x;
+    let NY = Y + off.y;
+    let nn = bCount(L, NX, NY);
+    var nb = 0.0;
+    if (nn > 0u) { nb = bBot(L, NX, NY); }
+    let AX = X + i32(cA & 1u);
+    let AY = Y + i32(cA >> 1u);
+    let BX = X + i32(cB & 1u);
+    let BY = Y + i32(cB >> 1u);
+    // the template's piece of this side: the edge's owner is the column on its low side
+    var tLo = 1.0;
+    var tHi = 0.0;
+    if (nn > 0u) {
+      // (the owner's mask bit: +x own bit 1, -x the column before's bit 1, +y own bit 2, -y the column below's bit 2)
+      var owner = mw;
+      if (d == 1u) { owner = mwL; } else if (d == 3u) { owner = mwD; }
+      if (((owner >> select(2u, 1u, d < 2u)) & 1u) != 0u) {
+        let a = lastTop(L, X, Y);
+        let b = lastTop(L, NX, NY);
+        tLo = min(a, b);
+        tHi = max(a, b);
+      }
+    }
+    let mA = rimMode(L, AX, AY);
+    let mB = rimMode(L, BX, BY);
+    let fA = select(0u, 1u, mA == 1u);
+    let fB = select(0u, 1u, mB == 1u);
+    var obs = array<vec4<f32>, 2>(vec4<f32>(3e38), vec4<f32>(3e38));
+    for (var s2 = 0u; s2 < 2u; s2++) {
+      let m = select(mA, mB, s2 == 1u);
+      if (m == 0u) { continue; }
+      let up = m == 1u;
+      let kk = select(1, i32(u.a.x), up);
+      obs[s2] = rimOther(select(L, L + 1u, up), select(AX, BX, s2 == 1u) * kk, select(AY, BY, s2 == 1u) * kk);
+    }
+    var lo = zb;
+    for (var j = 0u; j < n; j++) {
+      let r = bRec(L, X, Y, j);
+      let hi = bitcast<f32>(r.x);
+      if (matSolid(r.y)) {
+        let w = lxy | (d << 8u) | ((r.y & 255u) << 11u);
+        var cur = lo;
+        var jn = 0u;
+        var nlo = nb;
+        loop {
+          if (cur >= hi) { break; }
+          var a = 3e38;
+          var b = 3e38;
+          loop {
+            if (jn >= nn) { break; }
+            let q = bRec(L, NX, NY, jn);
+            let qt = bitcast<f32>(q.x);
+            let qlo = nlo;
+            nlo = qt;
+            jn++;
+            if (matSolid(q.y) && qt > cur) {
+              a = qlo;
+              b = qt;
+              break;
+            }
+          }
+          let p0 = cur;
+          let p1 = min(a, hi);
+          if (p1 > p0 && !(p0 == tLo && p1 == tHi)) {
+            let eA = select(p1, toKid(L, p1), mA == 1u);
+            let eB = select(p1, toKid(L, p1), mB == 1u);
+            var za = select(p0, toKid(L, p0), mA == 1u);
+            var zc = select(p0, toKid(L, p0), mB == 1u);
+            // (placed heights of the strip's current vertices; one placement a step after the first two)
+            var pa = placeAt(AX, AY, za);
+            var pc = placeAt(BX, BY, zc);
+            loop {
+              if (za >= eA && zc >= eB) { break; }
+              var nx = array<f32, 2>(0.0, 0.0);
+              for (var s2 = 0u; s2 < 2u; s2++) {
+                let sb = s2 == 1u;
+                let m = select(mA, mB, sb);
+                let lx = select(AX, BX, sb);
+                let ly = select(AY, BY, sb);
+                let z = select(za, zc, sb);
+                var r2 = 0.0;
+                if (m == 0u) {
+                  r2 = nextBp(L, lx, ly, z);
+                } else {
+                  let up = m == 1u;
+                  let kk = select(1, i32(u.a.x), up);
+                  r2 = nextBpRim(select(L, L + 1u, up), lx * kk, ly * kk, z, obs[s2]);
+                }
+                nx[s2] = min(r2, select(eA, eB, sb));
+              }
+              let na = nx[0];
+              let nc = nx[1];
+              let onA = za < eA && (sideOwn(L, mA, na) <= sideOwn(L, mB, nc) || zc >= eB);
+              let pn = placeAt(select(BX, AX, onA), select(BY, AY, onA), select(nc, na, onA));
+              if (onA) {
+                if (pn != pa) {
+                  putS(write, at, t, w | (cA << 19u) | (cB << 21u) | (cA << 23u) | (fA << 25u) | (fB << 26u) | (fA << 27u), pa, pc, pn);
+                  t++;
+                }
+                za = na;
+                pa = pn;
+              } else {
+                if (pn != pc) {
+                  putS(write, at, t, w | (cA << 19u) | (cB << 21u) | (cB << 23u) | (fA << 25u) | (fB << 26u) | (fB << 27u), pa, pc, pn);
+                  t++;
+                }
+                zc = nc;
+                pc = pn;
+              }
+            }
+          }
+          cur = max(cur, b);
+        }
+      }
+      lo = hi;
+    }
+  }
+  return t;
+}
+
 /** (over a slot's chunks) a chunk's faces: counted per column, the chunk's face pages sized, then written (one call
  *  site of emitCol: the D3D11 compiler inlines every call) */
 @compute @workgroup_size(16, 16)
@@ -2490,9 +3220,34 @@ fn faceBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id)
   workgroupBarrier();
   bOrg = vec2<i32>(cx - 1, cy - 1);
   bChunk = vec2<i32>(cx, cy);
-  bFill(L, cx, cy, li);
   let X = cx * 16 + i32(lid.x);
   let Y = cy * 16 + i32(lid.y);
+  // (round 14, the smooth draw) the chunk's cache page (the cache pass ran over these chunks just before): the cluster
+  // tables (bFill's fans need them) and the column's template mask; no page (the pool refused it, counted): no bake
+  var mw = 0u;
+  var mwL = 0u;
+  var mwD = 0u;
+  if (SMOOTH) {
+    // (the cache pass found the chunk's inputs unchanged (word 2): its exceptions stand as baked)
+    if (li == 0u) {
+      wCp = pageOf(CACHE_ID + L, cx, cy, 0u);
+      wflag = 1u;
+      if (wCp < NOT_LOADED) { wflag = pgLoad(wCp * PW + 2u); }
+    }
+    let cp = workgroupUniformLoad(&wCp);
+    if (workgroupUniformLoad(&wflag) == 1u) { return; }
+    sCp = cp;
+    mw = pgLoad(cp * PW + CMASK + colIn(X, Y));
+    // the template's bits of the column's -x and -y walls: the mask words of the edges' owners (the column on the low
+    // side, maybe in the chunk before), as the cache pass wrote them (one function, wallTmpl, decides them)
+    var pL = cp;
+    if (lid.x == 0u) { pL = pageOf(CACHE_ID + L, cx - 1, cy, 0u); }
+    if (pL < NOT_LOADED) { mwL = pgLoad(pL * PW + CMASK + colIn(X - 1, Y)); }
+    var pD = cp;
+    if (lid.y == 0u) { pD = pageOf(CACHE_ID + L, cx, cy - 1, 0u); }
+    if (pD < NOT_LOADED) { mwD = pgLoad(pD * PW + CMASK + colIn(X, Y - 1)); }
+  }
+  bFill(L, cx, cy, li);
   var n = 0u;
   var at = 0u;
   for (var ps = 0u; ps < 2u; ps++) {
@@ -2518,14 +3273,18 @@ fn faceBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id)
       if (li < 8u) { wFp[li] = pageOf(FACE_ID + L, cx, cy, li); }
       workgroupBarrier();
     }
-    if (ps == 0u || n > 0u) { n = emitCol(L, X, Y, ps == 1u, at); }
+    if (SMOOTH) {
+      if (ps == 0u || n > 0u) { n = emitColS(L, X, Y, ps == 1u, at, mw, mwL, mwD); }
+    } else if (ps == 0u || n > 0u) {
+      n = emitCol(L, X, Y, ps == 1u, at);
+    }
   }
 }
 
 /** the draw's list of face pages: dir[L] their count, entries (page, chunk key) from 16 + (L * cap + i) * 2 */
 @compute @workgroup_size(1)
 fn dirClear() {
-  for (var L = 0u; L < 8u; L++) { atomicStore(&dir[L], 0u); }
+  for (var L = 0u; L < 16u; L++) { atomicStore(&dir[L], 0u); }
 }
 @compute @workgroup_size(64)
 fn dirBuild(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -2534,6 +3293,20 @@ fn dirBuild(@builtin(global_invocation_id) gid: vec3<u32>) {
   let k1 = atomicLoad(&tab[s * 4u + 1u]);
   if (k1 >= BUSY) { return; }
   let lid = k1 & 0xffu;
+  // (round 14) the smooth draw's cache pages: the template's instances, a second list per level (dir[8 + L], entries
+  // from 16 + ((8 + L) * cap + i) * 2)
+  if (lid >= CACHE_ID && lid < CACHE_ID + 8u) {
+    // (a chunk's first cache page only: pages cz 1, 2, ... hold the rest of a long cluster table)
+    if ((k1 >> 8u) != 0u) { return; }
+    let p = atomicLoad(&tab[s * 4u + 2u]);
+    if (p >= NOT_LOADED) { return; }
+    let L = lid - CACHE_ID;
+    let i = atomicAdd(&dir[8u + L], 1u);
+    let e = 16u + ((8u + L) * u.r.y + i) * 2u;
+    atomicStore(&dir[e], p);
+    atomicStore(&dir[e + 1u], atomicLoad(&tab[s * 4u]));
+    return;
+  }
   if (lid < FACE_ID || lid >= FACE_ID + 8u) { return; }
   let L = lid - FACE_ID;
   let p = atomicLoad(&tab[s * 4u + 2u]);
@@ -2551,6 +3324,11 @@ fn dirFinish() {
     dargs[L * 4u + 1u] = atomicLoad(&dir[L]);
     dargs[L * 4u + 2u] = 0u;
     dargs[L * 4u + 3u] = 0u;
+    // (round 14) the template: an instance a cache page, 14 triangle slots a column
+    dargs[(8u + L) * 4u] = 256u * 14u * 3u;
+    dargs[(8u + L) * 4u + 1u] = atomicLoad(&dir[8u + L]);
+    dargs[(8u + L) * 4u + 2u] = 0u;
+    dargs[(8u + L) * 4u + 3u] = 0u;
   }
 }
 /** a bake slot (u.e.y) from up to three region slots (u.e.x: s0 | s1 << 8 | s2 << 16, 255 none): the union of their
