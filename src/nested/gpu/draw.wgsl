@@ -170,27 +170,7 @@ fn vs(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VOu
   return o;
 }
 
-// ---- (round 14, NS-107) the smooth draw: the template over the vertex cache, the exceptions as baked ----------------
-// (docs/design/NESTED_SCALES.md "The smooth draw: template, cache, exceptions".) The template is the same 14 triangle
-// slots a column for every chunk of every level (an instance a cache page, 256 x 14 x 3 vertices); a vertex reads the
-// column's mask word and the cache (a cap corner one slot, a wall vertex the raw heights of the edge's two corner lines
-// and one slot), never a column page. A slot the mask leaves off, or a step onto an equal height, is degenerate (no
-// pixels). The exceptions are the face pages (nest.wgsl faceBake with SMOOTH), drawn as the boxes are, z already placed.
-const CHDR: u32 = 4u;
-const CLW: u32 = 20u;
-const CMASK: u32 = 5784u;
-const TSLOTS: u32 = 14u;
-
-struct TCorner {
-  ok: bool,
-  lp: vec3<f32>,
-  mat: u32,
-  kind: u32,
-  /** (capture) the corner line and slot this vertex reads */
-  line: u32,
-  /** (step C) the slot's vertex normal (octahedral word) */
-  nrm: u32,
-}
+// ---- the smooth draw's vertex output (round 14; round 18 deleted the template, wall and exception draws: git keeps them)
 /** (step C) a vertex normal from its word (nest.wgsl octEnc) */
 fn octDec(w: u32) -> vec3<f32> {
   let p = unpack2x16snorm(w);
@@ -198,158 +178,6 @@ fn octDec(w: u32) -> vec3<f32> {
   if (n.z < 0.0) { n = vec3<f32>((1.0 - abs(n.yx)) * select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xy >= vec2<f32>(0.0)), n.z); }
   return normalize(n);
 }
-/** the cache words of corner line (lx, ly) of a cache page */
-fn tLine(page: u32, lx: u32, ly: u32) -> u32 { return page * PW + CHDR + (ly * 17u + lx) * CLW; }
-/** the placed position of slot s of a corner line, local units of the level (the line at (ox + lx, oy + ly)) */
-fn tPos(lb: u32, s: u32, x: i32, y: i32) -> vec3<f32> {
-  let b = lb + 4u + s * 4u;
-  return vec3<f32>(f32(x) + bitcast<f32>(pgLoad(b)), f32(y) + bitcast<f32>(pgLoad(b + 1u)), bitcast<f32>(pgLoad(b + 2u)));
-}
-/** a wall list entry: one of the line's slots q clamped to [lo, hi] (a clamped slot IS the lower or higher column's
- *  identity on the line: its slot) */
-fn tClamp(r: f32, q: u32, lo: f32, loS: u32, hi: f32, hiS: u32) -> vec2<f32> {
-  if (r <= lo) { return vec2<f32>(lo, f32(loS)); }
-  if (r >= hi) { return vec2<f32>(hi, f32(hiS)); }
-  return vec2<f32>(r, f32(q));
-}
-/** (round 15, NS-117) the chunk's wall list (nest.wgsl CWALL: a word a wall with pixels, column | dir << 8; its count in
- *  header word 3) and the walls a draw instance */
-const CWALL: u32 = 6401u;
-const WALL_B: u32 = 32u;
-/** the level's wall block `inst` (nest.wgsl wallDir): (cache list index, the wall's index in its chunk's list) */
-fn tWallItem(inst: u32, k: u32) -> vec2<u32> {
-  let L = u32(d.lvl.w);
-  let w = dir[16u + 32u * d.misc2.x + 8u + L * 16u * d.misc2.x + inst];
-  return vec2<u32>(w >> 4u, (w & 15u) * WALL_B + k);
-}
-/** vertex v of a cap triangle: cache list entry `inst`, triangle tri (column tri / 2, half tri % 2) */
-fn tCap(inst: u32, tri: u32, v0: u32) -> TCorner {
-  return tCorner(inst, (tri / 2u) * TSLOTS + tri % 2u, v0);
-}
-/** vertex v of wall triangle `tri` (wall tri / 6, step tri % 6) of wall block `inst`; none past the chunk's list */
-fn tWall(inst: u32, tri: u32, v0: u32) -> TCorner {
-  let it = tWallItem(inst, tri / 6u);
-  let L = u32(d.lvl.w);
-  let page = dir[16u + ((8u + L) * d.misc2.x + it.x) * 2u];
-  if (it.y >= pgLoad(page * PW + 3u)) { return TCorner(false, vec3<f32>(0.0), 0u, 0u, 0u, 0u); }
-  let w = pgLoad(page * PW + CWALL + it.y);
-  return tCorner(it.x, (w & 255u) * TSLOTS + 2u + (w >> 8u) * 6u + tri % 6u, v0);
-}
-/** vertex v of template triangle slot `tri` (column tri / 14, part tri % 14) of cache page `inst` of the level's list
- *  (boxmesh.ts templateTris, the same rule). Round 15 draws only the slots tCap and tWall pick. */
-fn tCorner(inst: u32, tri: u32, v0: u32) -> TCorner {
-  var c = TCorner(false, vec3<f32>(0.0), 0u, 0u, 0u, 0u);
-  let L = u32(d.lvl.w);
-  let e = 16u + ((8u + L) * d.misc2.x + inst) * 2u;
-  let page = dir[e];
-  let key = dir[e + 1u];
-  let col = tri / TSLOTS;
-  let part = tri % TSLOTS;
-  let lx = col & 15u;
-  let ly = col >> 4u;
-  let mw = pgLoad(page * PW + CMASK + col);
-  let ox = i32(key & 0xffffu) * 16 - d.lvl.x;
-  let oy = i32(key >> 16u) * 16 - d.lvl.y;
-  if (part < 2u) {
-    if ((mw & 1u) == 0u) { return c; }
-    // part 0: corners (0, 1, 3), part 1: (0, 3, 2); corner cc's line (lx + (cc & 1), ly + (cc >> 1)), the column's slot
-    // on it 3 - cc
-    var cc = 0u;
-    if (v0 == 1u) { cc = select(3u, 1u, part == 0u); } else if (v0 == 2u) { cc = select(2u, 3u, part == 0u); }
-    let qx = lx + (cc & 1u);
-    let qy = ly + (cc >> 1u);
-    c.lp = tPos(tLine(page, qx, qy), 3u - cc, ox + i32(qx), oy + i32(qy));
-    c.nrm = pgLoad(tLine(page, qx, qy) + 4u + (3u - cc) * 4u + 3u);
-    c.ok = true;
-    c.mat = (mw >> 8u) & 255u;
-    c.kind = 4u;
-    c.line = ((qy * 17u + qx) << 2u) | (3u - cc);
-    return c;
-  }
-  let dr = (part - 2u) / 6u;
-  let st = (part - 2u) % 6u;
-  if (((mw >> (1u + dr)) & 1u) == 0u) { return c; }
-  // the edge's corner lines P (lower along the edge) and Q, and the slots of this column (C) and the neighbour (B) on
-  // each (slotOf(X, Y, CX, CY) = X - CX + 1 + 2 (Y - CY + 1)); the two other slots of each line
-  var px = lx + 1u;
-  var py = ly;
-  var sCP = 2u;
-  var sBP = 3u;
-  var sCQ = 0u;
-  var sBQ = 1u;
-  var oP = vec2<u32>(0u, 1u);
-  var oQ = vec2<u32>(2u, 3u);
-  if (dr == 1u) {
-    px = lx;
-    py = ly + 1u;
-    sCP = 1u;
-    sBP = 3u;
-    sCQ = 0u;
-    sBQ = 2u;
-    oP = vec2<u32>(0u, 2u);
-    oQ = vec2<u32>(1u, 3u);
-  }
-  let bP = tLine(page, px, py);
-  let bQ = tLine(page, lx + 1u, ly + 1u);
-  let rP = vec4<f32>(bitcast<f32>(pgLoad(bP)), bitcast<f32>(pgLoad(bP + 1u)), bitcast<f32>(pgLoad(bP + 2u)), bitcast<f32>(pgLoad(bP + 3u)));
-  let rQ = vec4<f32>(bitcast<f32>(pgLoad(bQ)), bitcast<f32>(pgLoad(bQ + 1u)), bitcast<f32>(pgLoad(bQ + 2u)), bitcast<f32>(pgLoad(bQ + 3u)));
-  let tC = rP[sCP];
-  let tB = rP[sBP];
-  let lo = min(tC, tB);
-  let hi = max(tC, tB);
-  let aIsC = tC > tB;
-  let loP = select(sCP, sBP, aIsC);
-  let hiP = select(sBP, sCP, aIsC);
-  let loQ = select(sCQ, sBQ, aIsC);
-  let hiQ = select(sBQ, sCQ, aIsC);
-  // each line's list [lo, a, b, hi] (height, slot)
-  let a0 = tClamp(rP[oP.x], oP.x, lo, loP, hi, hiP);
-  let a1 = tClamp(rP[oP.y], oP.y, lo, loP, hi, hiP);
-  let b0 = tClamp(rQ[oQ.x], oQ.x, lo, loQ, hi, hiQ);
-  let b1 = tClamp(rQ[oQ.y], oQ.y, lo, loQ, hi, hiQ);
-  var pl = array<vec2<f32>, 4>(vec2<f32>(lo, f32(loP)), select(a0, a1, a1.x < a0.x), select(a1, a0, a1.x < a0.x), vec2<f32>(hi, f32(hiP)));
-  var ql = array<vec2<f32>, 4>(vec2<f32>(lo, f32(loQ)), select(b0, b1, b1.x < b0.x), select(b1, b0, b1.x < b0.x), vec2<f32>(hi, f32(hiQ)));
-  // the zip from the bottom, the side whose next height is lower first, ties to P: to step st
-  var i = 0u;
-  var j = 0u;
-  for (var s = 0u; s < st; s++) {
-    if (i < 3u && (j == 3u || pl[i + 1u].x <= ql[j + 1u].x)) { i++; } else { j++; }
-  }
-  let onP = i < 3u && (j == 3u || pl[i + 1u].x <= ql[j + 1u].x);
-  // the triangle (P_i, Q_j, P_i+1) or (P_i, Q_j, Q_j+1), wound by the wall's out direction: (P, Q, up) faces +x on
-  // edge +x and -y on edge +y
-  var v = v0;
-  let flip = select(!aIsC, aIsC, dr == 1u);
-  if (flip && v != 0u) { v = 3u - v; }
-  var useP = true;
-  var idx = i;
-  if (v == 1u) {
-    useP = false;
-    idx = j;
-  } else if (v == 2u) {
-    if (onP) { idx = i + 1u; } else {
-      useP = false;
-      idx = j + 1u;
-    }
-  }
-  var s = 0u;
-  if (useP) {
-    s = u32(pl[idx].y);
-    c.lp = tPos(bP, s, ox + i32(px), oy + i32(py));
-    c.line = ((py * 17u + px) << 2u) | s;
-    c.nrm = pgLoad(bP + 4u + s * 4u + 3u);
-  } else {
-    s = u32(ql[idx].y);
-    c.lp = tPos(bQ, s, ox + i32(lx + 1u), oy + i32(ly + 1u));
-    c.line = (((ly + 1u) * 17u + lx + 1u) << 2u) | s;
-    c.nrm = pgLoad(bQ + 4u + s * 4u + 3u);
-  }
-  c.ok = true;
-  c.mat = (mw >> (16u + 8u * dr)) & 255u;
-  c.kind = select(select(1u, 0u, aIsC), select(3u, 2u, aIsC), dr == 1u);
-  return c;
-}
-
 struct VOutS {
   @builtin(position) pos: vec4<f32>,
   /** the level's local units (the face normal by derivatives) */
@@ -387,56 +215,8 @@ fn smoothOut(lp: vec3<f32>, kid: bool, mat: u32) -> VOutS {
   o.vn = vec3<f32>(0.0);
   return o;
 }
-@vertex
-fn vsS(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VOutS {
-  let c = corner(inst, vv / 3u, vv % 3u);
-  if (!c.ok) {
-    var o: VOutS;
-    o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
-    return o;
-  }
-  return smoothOut(c.lp, c.kid, c.mat);
-}
-/** (round 15, NS-117) the exceptions in blocks of EX_B triangles (nest.wgsl exDir): an instance a block, so a face page's
- *  empty slots cost no vertex (vsS instanced a whole page, 3 x TPP vertices, whatever its count) */
-const EX_B: u32 = 128u;
+/** the sheet list (nest.wgsl sheetDir): 8 counts from 16 + 16 x cap, then per level EX_PB x cap entries of 2 words */
 const EX_PB: u32 = 48u;
-fn exCorner(inst: u32, tri: u32, v: u32) -> Corner {
-  let L = u32(d.lvl.w);
-  let cap = d.misc2.x;
-  let w = dir[16u + 32u * cap + 8u + 128u * cap + 8u + L * EX_PB * cap + inst];
-  return corner(w >> 5u, (w & 31u) * EX_B + tri, v);
-}
-@vertex
-fn vsSB(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VOutS {
-  let c = exCorner(inst, vv / 3u, vv % 3u);
-  if (!c.ok) {
-    var o: VOutS;
-    o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
-    return o;
-  }
-  return smoothOut(c.lp, c.kid, c.mat);
-}
-fn tOut(c: TCorner) -> VOutS {
-  if (!c.ok) {
-    var o: VOutS;
-    o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
-    return o;
-  }
-  var o = smoothOut(c.lp, false, c.mat);
-  o.vn = octDec(c.nrm);
-  return o;
-}
-/** (round 15, NS-117) the template's caps: an instance a cache page, 2 triangles a column */
-@vertex
-fn vsTC(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VOutS {
-  return tOut(tCap(inst, vv / 3u, vv % 3u));
-}
-/** (round 15, NS-117) the template's walls: an instance a block of WALL_B walls with pixels, 6 triangles a wall */
-@vertex
-fn vsTW(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VOutS {
-  return tOut(tWall(inst, vv / 3u, vv % 3u));
-}
 // ---- (round 16) the sheet draw (nest.wgsl sheetBake; boxmesh.ts sheetMesh): an instance a sheet of a chunk, 2 triangles
 // a column (its surface of that sheet on its four corners' clusters) and 32 zipper triangles (a child's window edge: the
 // parent column's surface of that sheet closed against the child's lines between the parent's corners). Reads only the
@@ -476,7 +256,7 @@ fn sheetVert(inst: u32, t: u32, v0: u32) -> SV {
   var o = SV(false, vec3<f32>(0.0), false, 0u, 0u);
   let cap = d.misc2.x;
   let L = u32(d.lvl.w);
-  let e = 16u + 32u * cap + 8u + 128u * cap + 8u + L * EX_PB * cap + inst * 2u;
+  let e = 16u + 16u * cap + 8u + L * EX_PB * cap + inst * 2u;
   let w0 = dir[e];
   let p0 = dir[e + 1u];
   let sb = (w0 & 0xffffffu) * PW + (w0 >> 24u) * SPW;
@@ -623,33 +403,6 @@ fn fsS(v: VOutS) -> FOut {
   o.info = vec4<f32>(1.0, f32(d.lvl.w) / 8.0, select(0.0, 1.0, coarse), 1.0);
   return o;
 }
-/** (test only) the template's triangles as the draw places them: three vec4 a slot (local x, y, z; w 1 when the mask
- *  draws the slot and its three vertices are distinct points, else 0). Round 15: the caps' slots (misc2.y cache pages x
- *  512), then the walls' (misc2.z blocks x WALL_B x 6), as vsTC and vsTW place them. */
-@compute @workgroup_size(64)
-fn captureT(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
-  let i = gid.x + gid.y * nw.x * 64u;
-  let nc = d.misc2.y * 512u;
-  let per = WALL_B * 6u;
-  if (i >= nc + d.misc2.z * per) { return; }
-  var t0: TCorner;
-  var t1: TCorner;
-  var t2: TCorner;
-  if (i < nc) {
-    t0 = tCap(i / 512u, i % 512u, 0u);
-    t1 = tCap(i / 512u, i % 512u, 1u);
-    t2 = tCap(i / 512u, i % 512u, 2u);
-  } else {
-    let j = i - nc;
-    t0 = tWall(j / per, j % per, 0u);
-    t1 = tWall(j / per, j % per, 1u);
-    t2 = tWall(j / per, j % per, 2u);
-  }
-  let ok = t0.ok && any(t0.lp != t1.lp) && any(t1.lp != t2.lp) && any(t0.lp != t2.lp);
-  capOut[i * 3u] = vec4<f32>(t0.lp, select(0.0, 1.0, ok));
-  capOut[i * 3u + 1u] = vec4<f32>(t1.lp, select(0.0, 1.0, ok));
-  capOut[i * 3u + 2u] = vec4<f32>(t2.lp, select(0.0, 1.0, ok));
-}
 
 // ---- the watertight check's capture (test only): every triangle the draw would place, in local units ---------------
 // three vec4 a triangle slot: x, y, z local, w 1 when drawn (0 for an empty slot)
@@ -663,16 +416,6 @@ fn capture(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroup
   for (var v = 0u; v < 3u; v++) {
     let c = corner(inst, i % TPP, v);
     // (w 2: a rim vertex, z in the child's units; round 11)
-    capOut[i * 3u + v] = vec4<f32>(c.lp, select(0.0, select(1.0, 2.0, c.kid), c.ok));
-  }
-}
-/** (round 15, test only) the smooth exceptions as vsSB draws them: misc2.w blocks of EX_B slots */
-@compute @workgroup_size(64)
-fn captureSB(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
-  let i = gid.x + gid.y * nw.x * 64u;
-  if (i / EX_B >= d.misc2.w) { return; }
-  for (var v = 0u; v < 3u; v++) {
-    let c = exCorner(i / EX_B, i % EX_B, v);
     capOut[i * 3u + v] = vec4<f32>(c.lp, select(0.0, select(1.0, 2.0, c.kid), c.ok));
   }
 }

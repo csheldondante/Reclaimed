@@ -1,9 +1,8 @@
-// Nested scales lab (round 14, NS-107, tests only): the GPU smooth draw against the reference (boxmesh.ts). A small chain
-// of its own (root 64, level 1 64 wide, level 2 32 wide, so the plain-code reference runs in a second), carves across
-// the level 2 rim and inside it; then every triangle the GPU draws (template + exceptions, read back by the draw's
-// capture) is compared with the reference's collapse mesh after dropCapPairs, per level, as a multiset of triangles of
-// placed points (local units; a parent's rim vertex in the child's units, flagged). Down caps on the bottom lattice are
-// left out on both sides (the GPU bakes fans where the reference has two triangles a column; same rim edges).
+// Nested scales lab (tests only): the GPU smooth draw against the reference (boxmesh.ts). A small chain of its own (root
+// 64, level 1 64 wide, level 2 32 wide, so the plain-code reference runs in a second), carves across the level 2 rim and
+// inside it; then every triangle the GPU draws (the sheets, read back by the draw's capture) is compared with the
+// reference's, per level, as a multiset of triangles of placed points (local units; a parent's rim vertex in the child's
+// units, flagged).
 import { GpuNest } from './gpu/nest';
 import { Renderer } from './render';
 // (Round 16: the sheet draw against boxmesh.ts sheetMesh, triangle for triangle; a parent's zipper triangles are drawn by

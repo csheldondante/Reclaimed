@@ -193,8 +193,14 @@ export class App {
       this.buttons.get('tint')!.classList.toggle('on', this.render.tint);
     });
     this.buttons.get('tint')!.classList.toggle('on', this.render.tint);
-    // (round 14, NS-107) the smooth draw is a URL switch only (?smooth=1), no page toggle: in a deeply dug world its bakes
-    // can still run past the driver's timeout (NS-116), so it does not meet the watertight gate on every pose set yet
+    // (round 18) the smooth draw's toggle, default off (?smooth=1 on). The switch is an op (setSmooth): every live window
+    // baked again in that frame's submits before the draw, and refused whole while the pool cannot hold it (retried each
+    // frame), so the old draw stays on screen until the new one is baked: no frame shows a half-baked draw
+    add('smooth', 'Smooth', () => {
+      this.wantSmooth = !this.wantSmooth;
+      this.buttons.get('smooth')!.classList.toggle('on', this.wantSmooth);
+    });
+    this.buttons.get('smooth')!.classList.toggle('on', this.wantSmooth);
     this.setMode(this.mode);
     const c = this.canvas;
     c.addEventListener('pointerdown', (e) => {
@@ -490,8 +496,37 @@ export class App {
   /** (round 14, NS-107) the smooth draw wanted (?smooth=1, the Smooth button); switched by an op, retried while the pool
    *  grows */
   wantSmooth = false;
+  /** (round 18) the switch's state in words ('' when the drawn draw is the wanted one) */
+  smoothText = '';
+  /** (round 18, measurement) ms after the page opened: the first frame drawn, the first drawn with the sheets */
+  firstFrameAt = 0;
+  firstSheetAt = 0;
+  /** (round 18) chunk rows a frame of a switch's whole-window bake (boxes or sheets drawn until it is done) */
+  switchRows = 2;
+  /** (round 18) the smooth switch, a step a frame between ops: both pipelines made asynchronously (the old draw drawn
+   *  meanwhile), then a few chunk rows baked a frame; the drawn draw flips when every live window is baked */
+  private smoothStep(): void {
+    if (this.frozen) return;
+    if (this.wantSmooth === this.nest.smooth && !this.nest.switching) {
+      this.smoothText = '';
+      return;
+    }
+    if (this.wantSmooth && !this.render.prepareSheets()) {
+      this.nest.prepareSheets();
+      this.smoothText = `smooth: compiling the sheet draw (${(performance.now() - (this.compileAt ||= performance.now())).toFixed(0)} ms so far)`;
+      return;
+    }
+    if (!this.nest.settled) return;
+    this.nest.stepSmooth(this.wantSmooth, this.switchRows);
+    this.smoothText = this.nest.smoothStatus;
+  }
+  private compileAt = 0;
+  /** between ops and not switching the smooth draw: a level op, an edit or a shrink may run */
+  private get free(): boolean {
+    return this.nest.settled && !this.nest.switching;
+  }
   private frame(): void {
-    if (this.wantSmooth !== this.nest.smooth && !this.frozen) this.nest.setSmooth(this.wantSmooth);
+    this.smoothStep();
     const t = performance.now();
     const dt = Math.min(0.1, (t - this.last) / 1000);
     this.frames.push(t - this.last);
@@ -550,10 +585,11 @@ export class App {
     // at most one op in flight: an op runs only once the pool's header has come back after the last one (its pages
     // known exactly, so the next reserve is exact and no op piles up behind another)
     // (levels hold still during a stroke: its snapshot is of the levels open when it began)
-    if (!this.frozen && this.nest.settled && !this.strokeOn) this.levels();
+    // (round 18: and not while the smooth switch bakes its rows: the levels hold still)
+    if (!this.frozen && this.free && !this.strokeOn) this.levels();
     // give pool pages back (NS-67): when the pool holds a good margin more than a shrink would leave, a step a frame
     // (at most 4 a second) between ops, never in a frame that started another op or during a stroke
-    if (this.shrinkOn && !this.frozen && this.nest.settled && !this.strokeOn && !this.sculptAt && t - this.shrinkAt > 250) {
+    if (this.shrinkOn && !this.frozen && this.free && !this.strokeOn && !this.sculptAt && t - this.shrinkAt > 250) {
       if (!this.shrinking && this.nest.cap > this.nest.shrinkTarget() + 256) this.shrinking = true;
       if (this.shrinking) {
         this.shrinking = this.nest.shrink();
@@ -562,7 +598,7 @@ export class App {
       }
     }
     const ndc = this.sculptAt ? [(this.sculptAt.x / this.canvas.clientWidth) * 2 - 1, 1 - (this.sculptAt.y / this.canvas.clientHeight) * 2] : [0, 0];
-    const qd = this.nest.settled ? this.queue.shift() : undefined;
+    const qd = this.free ? this.queue.shift() : undefined;
     if (qd) ndc.splice(0, 2, qd.nx, qd.ny);
     if (this.placeReq) this.nest.placeEye(this.placeReq.x, this.placeReq.y, this.placeReq.d, this.placeReq.z);
     // cruise: the camera pass moves the eye along the heading and follows the ground (no readback); the speed limit is
@@ -582,7 +618,7 @@ export class App {
     // a stroke (carve, add): the whole ball at the first frame (a tap), then an edit each time the finger moved
     const strokeEdit = this.strokeOn && !!this.sculptAt && (this.strokeFirst || this.strokeMoved);
     this.ringShow();
-    const held = this.sculptAt && this.nest.settled && (!this.strokeOn || strokeEdit);
+    const held = this.sculptAt && this.free && (!this.strokeOn || strokeEdit);
     const op = qd?.op ?? (held ? (this.mode as Op) : null);
     if (op) {
       const ballOp = op === 'carve' || op === 'add';
@@ -596,6 +632,11 @@ export class App {
       if (!ok && qd) this.queue.unshift(qd);
     }
     if (!this.benchPause) this.render.draw(this.drawList());
+    if (!this.firstFrameAt) this.firstFrameAt = performance.now();
+    if (!this.firstSheetAt && this.nest.smooth) {
+      this.firstSheetAt = performance.now();
+      console.log(`[smooth] first frame ${this.firstFrameAt.toFixed(0)} ms, first sheet frame ${this.firstSheetAt.toFixed(0)} ms; compile: sheet pass ${this.nest.compileMs.toFixed(0)} ms, sheet draw ${this.render.compileMs.toFixed(0)} ms; switch ${JSON.stringify(this.nest.switchLog)}`);
+    }
     this.post?.();
     this.text();
     requestAnimationFrame(() => this.frame());
@@ -623,6 +664,9 @@ export class App {
     if (this.lifts) lines.push(`The camera was lifted out of solid ${this.lifts} times.`);
     if (st.refused || st.mismatch || st.tableFull) lines.push(`Error: ${st.refused} pages refused, ${st.mismatch} blocks mismatched, table full ${st.tableFull} times.`);
     if (st.error) lines.push(`Memory: ${st.error}`);
+    // (round 18) the smooth switch's state while the wanted draw is not the drawn one, then the boot timings
+    if (this.smoothText) lines.push(this.smoothText);
+    if (this.firstSheetAt) lines.push(`first frame ${this.firstFrameAt.toFixed(0)} ms, first sheet frame ${this.firstSheetAt.toFixed(0)} ms after the page opened`);
     this.info.textContent = lines.join('\n');
     if (this.speedText) this.speedText.textContent = `${this.cruiseWps.toFixed(2)} w/s`;
     if (this.cruiseOn) document.getElementById('cruise')!.textContent = this.cruiseText();

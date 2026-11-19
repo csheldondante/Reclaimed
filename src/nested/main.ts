@@ -51,7 +51,7 @@ async function main(): Promise<void> {
     // sandbox with the smooth draw on through the watertight suite (closure at 8 eyes, rim lines, 40 poses) and the pit,
     // cave and shaft poses. ?smooth=only runs this section alone; ?smooth=0 skips it.
     const smoothSection = async (res: { pass: boolean; name: string; detail: string }[], withSandbox: boolean) => {
-      log.textContent += '\nThe smooth draw (round 14)\n\n';
+      log.textContent += '\nThe smooth draw (round 16: the sheets)\n\n';
       // (the GPU against the reference last: a second pool of its own beside the sandbox's)
       const reference = async () => {
         const { smoothAgainstReference } = await import('./smoothref');
@@ -84,7 +84,7 @@ async function main(): Promise<void> {
         // (round 17, NS-127) with the discriminator: a pose with holes is checked again after every window is baked again
         const pit = await pitAndCave(api, { taps: 4, rebake: true, log: (s) => console.log(`[suite] smooth ${s}`) });
         for (const c of [
-          { name: 'smooth: screen: no hole pixels in the pit, cave and shaft poses, also after a cruise, a demote and the pool\'s shrinks', pass: pit.total === 0, detail: `${pit.total} hole pixels over ${pit.poses} poses` },
+          { name: 'smooth: screen: no hole pixels in the pit, cave and shaft poses (settled), also after a cruise, a demote and the pool\'s shrinks', pass: pit.total === 0, detail: `${pit.total} hole pixels over ${pit.poses} poses; 1 frame after each teleport (information, NS-127): ${pit.firstFrame}` },
           { name: 'smooth: coverage after the pit, cave, shafts, a cruise, a demote and shrinks', pass: pit.coverage === 0, detail: `${pit.coverage} faults` },
         ]) {
           res.push(c);
@@ -189,7 +189,7 @@ async function main(): Promise<void> {
       const { pitAndCave } = await import('./suite');
       const pit = await pitAndCave(api, { taps: 4, log: (s) => console.log(`[suite] ${s}`) });
       for (const c of [
-        { name: 'screen: no hole pixels where ground is expected in the pit, cave and shaft poses (round 8), also after a cruise, a demote and the pool\'s shrinks', pass: pit.total === 0, detail: `${pit.total} hole pixels over ${pit.poses} poses` },
+        { name: 'screen: no hole pixels where ground is expected in the pit, cave and shaft poses (round 8; settled), also after a cruise, a demote and the pool\'s shrinks', pass: pit.total === 0, detail: `${pit.total} hole pixels over ${pit.poses} poses; 1 frame after each teleport (information): ${pit.firstFrame}` },
         { name: 'coverage: every column in view drawn by exactly one level (no stale caps, none missing) after the pit, cave, shafts, a cruise, a demote and shrinks', pass: pit.coverage === 0, detail: `${pit.coverage} faults` },
       ]) {
         res.push(c);

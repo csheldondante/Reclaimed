@@ -1038,6 +1038,32 @@ the solid below the next air gap down." "Why make those [skirts, outer ring] if 
   (c) one 1-frame case in two runs before the levels were held still in the diagnosis (403,094 / 409,920 pixels, L2 at
   the eye, gone after the forced bake but with level ops between: undecided; not seen again in the held-still runs).
 
+**As built (round 18; current state).**
+- *One smooth path.* The sheets (round 16) are the smooth draw; the round 13-15 path is deleted (nest.wgsl cacheBake,
+  emitColS, the template, wall list and exception bake; draw.wgsl vsS / vsSB / vsTC / vsTW / captureT / captureSB;
+  boxmesh.ts collapse / collapseCols / dropCapPairs / smoothCache / templateMask / templateTris / smoothSplit and their
+  tests; GpuNest skip 'cache', chunkTimes). Git keeps them. nest.wgsl 4,113 -> 3,319 lines, draw.wgsl 738 -> 481. The
+  draw directory is the box face lists (16 + 16 cap words) then the sheet lists (sheetDir); draw args 0-7 boxes, 8-15
+  sheets.
+- *The switch (the "Smooth" button, default off, `?smooth=1` on).* An op spread over frames (GpuNest.stepSmooth, the app
+  a step a frame between ops): (1) both pipelines made asynchronously (createComputePipelineAsync / createRender-
+  PipelineAsync; the page says "compiling ... ms so far"); (2) every live window's chunk rows baked for the wanted draw,
+  2 rows a frame, each frame reserving its own worst case ("waiting for memory (need N, pool M, device D)" when it does
+  not fit; "cannot switch on this device" and no more retries when it never can); levels, edits and shrinks hold still
+  meanwhile; (3) the flip: the drawn draw changes only when every row is baked, then the old draw's pages are let go
+  (switching on: the face pages, release mode 9; off: the sheet pages, mode 8). So no frame draws a half-baked draw and
+  only one draw's pages are kept. The bake bound asks for the draw being baked only (round 16-17 asked face pages on top
+  of sheet pages). Tests and the reference still switch at once (setSmooth).
+- *Unused shaders do not compile.* A pipeline compiles only its entry point's call tree; with smooth on the page makes
+  only sheetBake, vsSheet / fsS beyond the boot pipelines. What the owner waited for on the phone is the sheet pass's
+  own compile (the numbers are in DEVLOG round 18).
+- *Screen checks, orchestrator decision awaiting the owner (NS-127 / NS-135).* The pit, cave and shaft poses count hole
+  pixels on the SETTLED view: the level ops the pose triggered finished (no promote, slide, demote or refused op for 10
+  frames, none in flight), then 3 still frames. The count 1 frame after the teleport is reported as information, not a
+  failure: with only a coarse level open, a narrow deep shaft is pinched shut by the owner's accepted collapse rule, and
+  a teleported eye sits under that sheet until the finer level opens. If the owner wants the 1-frame view hole-free,
+  the answer is in the promote timing, not in the sheets.
+
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

@@ -27394,3 +27394,37 @@ staircase of carved / uncarved cells collapses into alternating teeth and altern
 colour already follows the lighting normal (matColor takes fsS's n.z after the crease rule); the per-cell switch seen at
 rims is the material itself. The rims show flat facets beside creases (the crease rule's face-normal fallback on the
 teeth), so by the owner's rule the next step is per-corner normals by smoothing group, computed in the bake: not built.
+
+## 2026-11-19 — Nested scales lab, round 18 deliverable A: the sheets are the smooth draw; the switch shown and spread over frames
+
+**Why.** One smooth path (the owner's sheets), the old one deleted; the owner's phone test of `?smooth=1` ("sheets never
+seems to load ... are a bunch of unused shaders compiling?"); the shaft checks' 1-frame count decided (NS-127 / NS-135).
+
+**Deleted** (git keeps it): the round 13-15 cache pass, template, wall list, exception bake and their draws, captures,
+reference (boxmesh.ts collapse ... smoothSplit) and tests. nest.wgsl 4,113 -> 3,319 lines, draw.wgsl 738 -> 481. The
+directory and draw args shrink to boxes + sheets. A deletion slip (one emitColS call left) made the module fail to
+compile and cost a 20-minute browser run that drew nothing; test/gpu/nested-compile.test.ts now compiles both modules on
+Dawn in 3 s and should run before any browser check.
+
+**Unused shaders: no.** A pipeline compiles only its entry point's call tree; with smooth on the page adds sheetBake and
+vsSheet / fsS. The wait is the sheet pass itself (scripts/nested-smoothboot.mjs, fresh world, `?smooth=1`, desktop
+Chrome D3D11): first box frame 95-1,083 ms; sheet pass pipeline 26.9-29.9 s, sheet draw pipeline 22.2-24.8 s (both
+asynchronous and made together at boot; made alone on an idle page: draw 0.25 s, then the pass 5.7 s; Dawn D3D12 in
+Node: sheetBake 2.3 s, faceBake 3.1 s, derive 2.4 s); first sheet frame 28.2-30.2 s. Not cached across page loads
+(the box pipelines are). Memory is not the limit at `maxbuf` 512 or 256: the switch asked 1,024 pages (2 a chunk, 512
+chunks, maxCz 0) and the sheets hold 1,023; pool 2,240 of 21,396-171,196. The whole-window sheet bake: 166-176 ms wall
+over 16 frames (2 rows a frame, 32 rows). On a phone the compile is the likely "never": NS-136 (split the kernel).
+
+**The switch** (NESTED_SCALES.md "As built (round 18)"): asynchronous pipelines, then 2 chunk rows a frame, each frame
+reserving its own worst case, levels and edits held still, the flip only when all rows are baked, then the old draw's
+pages let go (face pages when switching on: they were kept stale before, and the bound asked for them on top of the
+sheets'). The page shows "compiling (ms)", "waiting for memory (need, pool, device)", "baking sheets (row r of R, level
+m)", or "cannot switch on this device" (no more retries). The Smooth button is back, default off.
+
+**Screen checks** (orchestrator decision awaiting the owner): the pit, cave and shaft poses gate the settled view (level
+ops finished, 3 still frames); the 1-frame count is information.
+
+**End gate A.** Unit tests: nested 59 of 59 (repo-wide 4 failures in flags / transfers / writing lints, none from this
+round). `?selftest=1&smooth=only` 11 of 11 (235 s). Full `?selftest=1` smooth on 45 of 45 (670 s; settled 0 hole pixels
+over 162 poses, 1 frame after each teleport 128,032 as information); smooth off (`smooth=0`) 36 of 36 (433 s).
+`nested-shaft --smooth 1`: passed, 0 settled over 36 poses (1-frame 408,884 information), coverage 0.

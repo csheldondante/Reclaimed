@@ -5,7 +5,7 @@
 // with a repeated vertex, each level closed by itself, and no T-junction across a rim line.
 import { describe, expect, it } from 'vitest';
 import { AIR, type Part } from '../../src/nested/oracle';
-import { asCapture, boxMesh, closure, collapse, collapseCols, dropCapPairs, identity, place, random, rimJunctionsRef, sheetClosure, sheetMesh, smoothSplit, type MeshLevel, type MeshScene, type Placement } from '../../src/nested/boxmesh';
+import { asCapture, boxMesh, closure, identity, place, random, rimJunctionsRef, sheetClosure, sheetMesh, type MeshLevel, type MeshScene, type Placement } from '../../src/nested/boxmesh';
 import { manifold } from '../../src/nested/watertight';
 
 const STONE = 1;
@@ -52,7 +52,6 @@ function rng(seed: number) {
 const q = (v: number, step = 0.25) => Math.round(v / step) * step;
 const one = (f: (x: number, y: number) => Part, n = 20, k = 8): MeshScene => ({ k, levels: [level(0, 0, 0, n, 0, f)] });
 
-const N = 20;
 const scenes: Record<string, () => MeshScene> = {
   gentle: () => one((x, y) => part(10 + 0.9 * Math.sin(x / 6) + 0.7 * Math.cos(y / 5), STONE)),
   slope: () => one((x, y) => part(0.7 * x + 0.3 * y, STONE)),
@@ -180,7 +179,8 @@ const sheetScenes: Record<string, () => MeshScene> = {
   },
 };
 
-const placements: Record<string, Placement> = { boxes: identity, 'collapse T=2': collapse(2), 'collapse T=0.5': collapse(0.5), 'collapse T=inf': collapse(Infinity), 'random 1': random(1), 'random 2': random(2), 'random 3': random(3) };
+// (round 18: the round 11-15 collapse placements, their GPU twin and the template split are gone with the old smooth path)
+const placements: Record<string, Placement> = { boxes: identity, 'random 1': random(1), 'random 2': random(2), 'random 3': random(3) };
 
 describe('nested scales: the box mesh and the smooth draw step 1', () => {
   for (const [sn, make] of Object.entries(scenes))
@@ -214,86 +214,6 @@ describe('nested scales: the box mesh and the smooth draw step 1', () => {
       console.log(`[boxmesh] ${sn}\n  ${rows.join('\n  ')}`);
     });
 
-  // (round 12, NS-102) the collapse as the GPU would compute it (from the columns round a corner line, no mesh) agrees
-  // with the mesh's, and dropping coincident cap pairs keeps every level exactly closed and leaves no coincident pair
-  for (const [sn, make] of Object.entries(scenes))
-    it(`${sn}: collapse from the columns = from the mesh; coincident cap pairs dropped, still closed`, () => {
-      const scene = make();
-      const mesh = boxMesh(scene);
-      const rows: string[] = [];
-      for (const T of [2, 0.5, Infinity]) {
-        const a = place(mesh, collapse(T), scene);
-        const b = place(mesh, collapseCols(mesh, T), scene);
-        // the same merges (vertex for vertex), the same heights (f32 sums against f64)
-        expect(b.pos.length, `${sn} T=${T} merged vertices`).toBe(a.pos.length);
-        let worst = 0;
-        mesh.ids.forEach((v, i) => {
-          const pa = a.pos[a.of[i]];
-          const pb = b.pos[b.of[i]];
-          worst = Math.max(worst, Math.abs(pa[2] - pb[2]) / Math.max(1, Math.abs(pa[2])));
-        });
-        expect(worst, `${sn} T=${T} heights`).toBeLessThan(1e-5);
-        expect(b.dropped).toBe(a.dropped);
-        // (round 15) the cave floor (height 3) never rises toward the surface above the back wall (30)
-        if (sn === 'cave under a high surface') mesh.ids.forEach((v, i) => {
-          if (v.z === 3) expect(b.pos[b.of[i]][2], `${sn} T=${T} floor vertex`).toBeLessThanOrEqual(6);
-        });
-        const before = closure(b);
-        const d = dropCapPairs(mesh, b);
-        for (let L = 0; L < scene.levels.length; L++) {
-          const c = closure(d, (s) => mesh.tris[s].L === L);
-          expect(c.odd, `${sn} T=${T} L${L} odd edges`).toBe(0);
-          expect(c.unbalanced, `${sn} T=${T} L${L} unbalanced`).toBe(0);
-          expect(c.repeated).toBe(0);
-          // (round 15, measured, NS-122) at T unlimited the walls facing outside the window collapse too, and at each
-          // window corner a top cap lands on a fan's down cap (kept out of the pair rule): 4 coincident pairs a level;
-          // the spiral step leaves 4 at T = 2. Closure (odd, unbalanced, rim) holds everywhere.
-          expect(c.coincident, `${sn} T=${T} L${L} coincident left`).toBeLessThanOrEqual(T === Infinity || sn === 'spiral step round a corner' ? 4 : 0);
-        }
-        const after = closure(d);
-        expect(Math.abs(after.volume - before.volume)).toBeLessThan(1e-6 * Math.max(1, Math.abs(before.volume)));
-        rows.push(`T=${T}: ${before.tris} tris, coincident ${before.coincident} -> ${after.coincident} (${d.pairs} pairs dropped), ${after.tris} left; zero-area ${after.zeroArea}`);
-      }
-      console.log(`[pairs] ${sn}\n  ${rows.join('\n  ')}`);
-    });
-
-  // (round 13) the smooth draw's split: a fixed template expanded from the vertex cache + exceptions baked by the box
-  // rule = the collapse mesh after dropCapPairs, triangle for triangle by identity; the union exactly closed per level,
-  // no T-junction across a rim
-  for (const [sn, make] of Object.entries(scenes))
-    it(`${sn}: template + exceptions = the collapse mesh after the pair rule, closed`, () => {
-      const scene = make();
-      const rows: string[] = [];
-      for (const T of [2, 0.5, Infinity]) {
-        const s = smoothSplit(scene, T);
-        expect(s.unknown, `${sn} T=${T} template identities the box mesh lacks`).toBe(0);
-        expect(s.missing, `${sn} T=${T} reference triangles neither part draws`).toBe(0);
-        expect(s.extra, `${sn} T=${T} triangles drawn that the reference lacks`).toBe(0);
-        for (let L = 0; L < scene.levels.length; L++) {
-          const c = closure(s.union, (i) => s.lv[i] === L);
-          expect(c.odd, `${sn} T=${T} L${L} odd edges`).toBe(0);
-          expect(c.unbalanced, `${sn} T=${T} L${L} unbalanced`).toBe(0);
-          expect(c.repeated).toBe(0);
-          expect(c.coincident, `${sn} T=${T} L${L} coincident`).toBeLessThanOrEqual(T === Infinity || sn === 'spiral step round a corner' ? 4 : 0);
-        }
-        if (scene.levels.length > 1) expect(rimJunctionsRef(s.unionIds).junctions, `${sn} T=${T} rim junctions`).toBe(0);
-        // gentle terrain: two visible template triangles a column; exceptions only on the window's edge ring (its walls
-        // face air outside the window) and bottoms
-        // (at T unlimited the window's edge ring collapses toward its bottoms, NS-122: measured, not asserted)
-        if (sn === 'gentle' && T !== Infinity) {
-          const st = s.stats[0];
-          expect(st.templateVisible / st.drawn).toBeCloseTo(2, 1);
-          expect(st.exceptionCells).toBeLessThanOrEqual(4 * N - 4);
-          expect(st.exceptionTris - st.exceptionBottomTris).toBeLessThanOrEqual(2 * (4 * N - 4) * 2);
-        }
-        for (const st of s.stats)
-          rows.push(
-            `T=${T} L${st.L}: ${st.drawn} drawn, ${st.simple} simple; template ${st.templateVisible} visible of ${st.templateSlots} slots (${(st.templateVisible / st.drawn).toFixed(2)} a column, caps ${(st.templateCaps / st.drawn).toFixed(2)}); exceptions ${st.exceptionTris} tris (${st.exceptionBottomTris} bottoms), ${st.exceptionCells} cells (${((100 * st.exceptionCells) / st.drawn).toFixed(1)} %)`,
-          );
-      }
-      console.log(`[split] ${sn}\n  ${rows.join('\n  ')}`);
-    });
-
   // (round 16) the owner's sheet form: quads only, every wall collapsed, level edges stitched by shared vertices. Exact
   // closure by identity: every directed edge cancelled except along the root window's edge (open by design); no
   // repeated vertex, no coincident pair
@@ -315,25 +235,4 @@ describe('nested scales: the box mesh and the smooth draw step 1', () => {
           m.stats.map((s) => `L${s.L} ${s.drawn} cols, ${(s.surfaces / s.drawn).toFixed(2)} surfaces a column, degenerate ${s.degenerate}, pairs ${s.pairs}, layers gone ${s.layersGone}, fan ${s.fan}`).join('; '),
       );
     });
-
-  it('collapse: triangles a column on gentle terrain, and what one-column features lose', () => {
-    const report = (sn: string, T: number) => {
-      const scene = scenes[sn]();
-      const mesh = boxMesh(scene);
-      const b = closure(place(mesh, identity, scene));
-      const m = place(mesh, collapse(T), scene);
-      const c = closure(m);
-      const tops = m.src.filter((s) => mesh.tris[s].kind === 4).length;
-      return { sn, T, boxTris: b.tris / mesh.drawn[0], tris: c.tris / mesh.drawn[0], topCaps: tops / mesh.drawn[0], volumeLost: b.volume - c.volume, coincident: c.coincident };
-    };
-    const g = report('gentle', 2);
-    // (about 2 visible triangles a column on top, as agreed; the down caps under the ground are the other 2)
-    expect(g.topCaps).toBeCloseTo(2, 0);
-    for (const sn of Object.keys(scenes)) if (scenes[sn]().levels.length === 1) console.log(`[collapse] ${JSON.stringify(report(sn, 2))}`);
-    // one-column features: a 0.5 high pillar, a 0.6 high one-column tunnel, a 0.5 bubble collapse; a 7 high pillar and
-    // a 2 deep pit do not
-    const pill = report('one-column pillars and pits', 2);
-    const tun = report('one-column tunnels', 2);
-    console.log(`[collapse] thin features: pillars/pits volume change ${pill.volumeLost.toFixed(3)}; one-column tunnels ${tun.volumeLost.toFixed(3)} (negative: air filled)`);
-  });
 });

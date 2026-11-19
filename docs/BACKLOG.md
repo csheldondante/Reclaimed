@@ -480,7 +480,9 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   walk (sBound runs twice a line plus sWalk; the bound could come from the walk's own count), the normals' merge walk.
   Then the r16 stills: fix the poses (scripts/nested-r16-stills.mjs puts the camera inside the 3 m tunnel; aim at the
   features at the level they were carved), make the phone set, and restore the Smooth toggle only after the full gate.
-- NS-127 (round 17 step 1: DIAGNOSED, the check still fails; see NESTED_SCALES.md "As built (round 17)") 168 / 128,032
+- NS-127 (round 18: the pit, cave and shaft checks gate the SETTLED view; the 1-frame count is reported as
+  information: an orchestrator decision awaiting the owner's ruling)
+  (round 17 step 1: DIAGNOSED, the check still fails; see NESTED_SCALES.md "As built (round 17)") 168 / 128,032
   hole pixels in two full selftests (round 16: 192,048), all at the 1-frame check after the teleport into the shaft
   across the rim; no missed bake left there (a forced bake changes 0 chunks). Two causes: the camera lifting the eye over
   a few frames (gone after 3 still frames, nothing baked), and GEOMETRY: level 0 alone round an eye at the bottom of a
@@ -510,7 +512,20 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
 - NS-134 (test, round 17) The stills' level-edge pose still misses the edge (r17-level-edge-grazing*: the eye 1-4 m
   from a slope that fills the frame); place it from the child's window edge and the ground on both sides, aim along it.
   The lip pose shows the added balls as a floating slab beside the raised block, not a lip on it.
-- NS-135 (test/bug, round 17) `nested-shaft --smooth 1` fails: 408,884 hole pixels at the 1-frame check after the
+- NS-136 (perf, round 18; the owner's "sheets never load" on the phone) The sheet pass's pipeline (sheetBake) takes
+  27-30 s to create at boot in desktop Chrome (D3D11), every page load (not cached across loads, unlike the box
+  pipelines); 5.7 s when made alone on an idle page; 2.3 s on Dawn D3D12 in Node. The sheet draw's pipeline alone
+  0.25 s. A phone is likely slower still. Now asynchronous with the boxes drawn and the wait shown on the page; the fix
+  is the kernel's size: split sheetBake into smaller passes (walk, edge placement, normals, sheet words) or cut the
+  inlined walk, and find why Chrome does not cache it.
+- NS-137 (limit, round 18) A smooth switch holds levels, edits and shrinks still while it bakes (2 chunk rows a frame:
+  16 frames, ~170 ms wall on a fresh world, longer when dug). A wish changed mid-switch abandons it; the rows it baked
+  stay in the pool until the next flip lets that draw's pages go.
+- NS-138 (hack, round 18) scripts/nested-dug.mjs still names the deleted path's modes ('cache only', skip 'ex',
+  chunkTimes): inert now. Rewrite it for the sheets or delete it.
+- NS-135 (round 18: the check now gates the settled view; the 1-frame count is information, orchestrator decision
+  awaiting the owner, NESTED_SCALES.md "As built (round 18)")
+  (test/bug, round 17) `nested-shaft --smooth 1` fails: 408,884 hole pixels at the 1-frame check after the
   teleport to the shaft across the rim, L2 at the eye, 0 settled. Run it with pitAndCave's `rebake` diagnosis (held
   still, forced bake, chunk diff); likely the camera lifting the eye out of what the finer level made solid.
 - NS-130 (limit, round 17) The region rule's partner bakes go in one submit band (rim chunks only, at most a window's

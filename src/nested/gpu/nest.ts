@@ -24,10 +24,9 @@ export const TPP = 3135;
 /** the material table (store.wgsl matSolid): air is a material, the default above every column */
 export const MAT_AIR = 0;
 export const MAX_LEVELS = 8;
-/** the draw's directory (nest.wgsl dirBuild): 16 counts, the face and cache page lists (two a level, a cap each), then
- *  (round 15, NS-117, nest.wgsl wallDir) the smooth walls' block counts (8) and blocks (16 a page a level), then
- *  (nest.wgsl exDir) the face pages' blocks of 128 triangles (8 counts, 25 a page a level) */
-const dirWords = (cap: number) => 16 + 2 * MAX_LEVELS * cap * 2 + 8 + MAX_LEVELS * 16 * cap + 8 + MAX_LEVELS * 48 * cap;
+/** the draw's directory (nest.wgsl dirBuild): 16 counts, the face page lists (a level a cap of 2-word entries), then
+ *  (nest.wgsl sheetDir) the sheet counts (8) and lists (EX_PB = 48 words a page a level) */
+const dirWords = (cap: number) => 16 + MAX_LEVELS * cap * 2 + 8 + MAX_LEVELS * 48 * cap;
 const UB = 256;
 const USLOTS = 256;
 /** reg: 16 header words, 64 slots of 12 (0-31 the plan's, 32-39 the CPU's, 40-63 the bakes') */
@@ -172,7 +171,7 @@ export class GpuNest {
   private pipes: Record<string, GPUComputePipeline> = {};
   private pipeLayout!: GPUPipelineLayout;
   private module!: GPUShaderModule;
-  /** (round 14, NS-107) the smooth draw: every bake also runs the cache pass and bakes the exceptions placed (setSmooth) */
+  /** the smooth draw (setSmooth): every bake runs the sheet pass instead of the box faces (round 16) */
   smooth = false;
   private enc: GPUCommandEncoder | null = null;
   private pass: GPUComputePassEncoder | null = null;
@@ -209,10 +208,9 @@ export class GpuNest {
     this.scr = device.createBuffer({ label: 'nest scratch', size: Math.max(160 * 160 * 8, TCAP * 4) * 4, usage: S }); // (the melt's box; the table's compaction)
     this.reg = device.createBuffer({ label: 'nest regions', size: REG_WORDS * 4, usage: S });
     this.args = device.createBuffer({ label: 'nest dispatch args', size: SLOTS * 16, usage: S | GPUBufferUsage.INDIRECT });
-    // (round 14: levels 0-7 the faces, 8-15 the smooth draw's template over the cache pages; round 15: 8-15 its caps,
-    // 16-23 its wall blocks, 24-31 its exceptions in blocks)
-    this.drawArgs = device.createBuffer({ label: 'nest draw args', size: 4 * MAX_LEVELS * 16, usage: S | GPUBufferUsage.INDIRECT });
-    device.queue.writeBuffer(this.drawArgs, 0, new Uint32Array(4 * MAX_LEVELS * 4));
+    // (levels 0-7 the box faces, 8-15 the sheets; round 18: the round 14-15 template, wall and exception args are gone)
+    this.drawArgs = device.createBuffer({ label: 'nest draw args', size: 2 * MAX_LEVELS * 16, usage: S | GPUBufferUsage.INDIRECT });
+    device.queue.writeBuffer(this.drawArgs, 0, new Uint32Array(2 * MAX_LEVELS * 4));
     this.cam = device.createBuffer({ label: 'nest camera', size: 1024 * 4, usage: S });
     this.ubuf = device.createBuffer({ label: 'nest uniforms', size: UB * USLOTS, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     // the table starts empty (key1 = EMPTY)
@@ -236,8 +234,7 @@ export class GpuNest {
     // (round 12, NS-103) the bake of chunks that touch a rim line: the rim rule's code compiled in (nest.wgsl BAKE_RIM)
     this.pipes.faceBakeRim = device.createComputePipeline({ label: 'nest faceBake (rim chunks)', layout: pl, compute: { module, entryPoint: 'faceBake', constants: { BAKE_RIM: 1 } } });
     this.pipes.faceBakeOne = device.createComputePipeline({ label: 'nest faceBake (round 11: one bake)', layout: pl, compute: { module, entryPoint: 'faceBake', constants: { BAKE_RIM: 1, BAKE_SPLIT: 0 } } });
-    // (round 14, NS-107) the smooth draw: the cache pass (rim lines seen everywhere) and the exception bakes, made when it
-    // is first switched on (smooth off compiles and runs nothing of it)
+    // (the sheet pass is made when the smooth draw is first switched on: smooth off compiles and runs nothing of it)
     this.pipeLayout = pl;
     this.module = module;
     for (const e of ['plan', 'dilate']) this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: ppl, compute: { module, entryPoint: e } });
@@ -637,19 +634,17 @@ export class GpuNest {
       // (an edit: the bound's bands, the last taking every row after it; else the window's rows, a band each)
       const last = rowsPer ? Math.min(rowsPer.n, Math.ceil(nrows0 / per)) : 0;
       const nrows = last || Math.ceil(nrows0 / per);
-      if (this.smooth) {
-        // (round 14, NS-107) the cache pass over the same chunks first (the vertex cache and the template mask), then
-        // the exceptions placed by the same cluster function; the next dispatch sees the cache (WebGPU: a usage scope
-        // a dispatch)
+      // (round 18: during a switch, the draw being baked)
+      if (this.bakeTarget ?? this.smooth) {
         this.smoothPipes();
-        // (round 15, NS-116) one chunk row of the slot a submit (u.e.z = row + 1; the kernels' other rows return at
-        // once): no single submit is long enough for the driver's timeout, whatever the region. All in the same op, so
-        // no frame draws between the rows (the draw is submitted after the op). nrows: the slot's rows when the CPU
-        // knows them, else the level's window rows (a GPU region lies inside it).
+        // (round 15, NS-116) bands of chunk rows a submit (u.e.z = band + 1; the kernel's other rows return at once): no
+        // single submit is long enough for the driver's timeout, whatever the region. All in the same op, so no frame
+        // draws between the bands (the draw is submitted after the op). nrows: the slot's rows when the CPU knows them,
+        // else the level's window rows (a GPU region lies inside it).
         for (let b = 0; b < nrows; b++) {
           const off = this.uni(({ a, r, e }) => ((a[3] = L), (r[0] = s), (e[0] = mode), (e[1] = per | (last << 16)), (e[2] = nrows > 1 ? b + 1 : 0), (e[3] = this.rimOff)));
-          // (round 16: the sheet pass alone, the owner's sheets; measurement only: skip 'cache', the result then wrong)
-          if (!this.skip.has('cache')) this.runIndirect('sheetBake', off, s);
+          // (measurement only: skip 'sheet' leaves the sheet pass out, the result then wrong)
+          if (!this.skip.has('sheet')) this.runIndirect('sheetBake', off, s);
           if (nrows > 1) this.submit(false);
         }
         return;
@@ -733,28 +728,149 @@ export class GpuNest {
     if (this.skip.has('pack')) return;
     this.runIndirect('pack', this.uni(({ a, r }) => ((a[3] = L), (r[0] = slot))), slot);
   }
-  /** pages a bake may take over `chunks` chunks that have no faces yet: face pages, stacked as deep as any so far (and
-   *  with the smooth draw on, a cache page each) */
-  private bakeBound(chunks: number): number {
-    // (round 16: the sheet draw's cache and sheet pages, stacked as deep as any page so far)
-    // (page 0, at least one sheet page, and as deep as any page stack so far: maxCz)
-    return chunks * (this.facePages() + (this.smooth ? 2 + this.stats.maxCz : 0));
+  /** pages a bake may take over `chunks` chunks that have none of the draw's pages yet. Boxes: face pages, stacked as
+   *  deep as any so far. Sheets (round 18: the draw being baked, not both: a sheet bake makes no face pages; round 16-17
+   *  asked for both, the face pages' stack on top of the sheets'): page 0, at least one sheet page, and as deep as any
+   *  column page stack so far (maxCz). */
+  private bakeBound(chunks: number, sheets = this.bakeTarget ?? this.smooth): number {
+    return chunks * (sheets ? 2 + this.stats.maxCz : this.facePages());
   }
-  /** (round 14) the smooth draw's pipelines, made the first time it is switched on (round 16: the sheet pass) */
+  /** (round 18) the draw the bakes make while a switch is under way (null: the drawn one, `smooth`) */
+  private bakeTarget: boolean | null = null;
+  /** (round 18) the sheet pass's pipeline: made asynchronously the first time the smooth draw is wanted (boxes drawn
+   *  meanwhile); compileMs its creation time */
+  private sheetCompile: Promise<void> | null = null;
+  compileMs = 0;
+  private compileAt = 0;
+  /** (round 18) whether the sheet pass is ready; starts its asynchronous creation when not */
+  prepareSheets(): boolean {
+    if (this.pipes.sheetBake) return true;
+    if (!this.sheetCompile) {
+      this.compileAt = performance.now();
+      this.sheetCompile = this.device
+        .createComputePipelineAsync({ label: 'nest sheetBake', layout: this.pipeLayout, compute: { module: this.module, entryPoint: 'sheetBake', constants: { BAKE_RIM: 1 } } })
+        .then((p) => {
+          this.pipes.sheetBake = p;
+          this.compileMs = performance.now() - this.compileAt;
+        });
+    }
+    return false;
+  }
+  /** ms since the sheet pass's creation started (while it compiles) */
+  get compilingMs(): number {
+    return this.sheetCompile && !this.pipes.sheetBake ? performance.now() - this.compileAt : 0;
+  }
+  /** (tests) the sheet pass made at once */
   private smoothPipes(): void {
     if (this.pipes.sheetBake) return;
-    const mk = (label: string, entryPoint: string, constants: Record<string, number>) =>
-      this.device.createComputePipeline({ label, layout: this.pipeLayout, compute: { module: this.module, entryPoint, constants } });
-    this.pipes.sheetBake = mk('nest sheetBake', 'sheetBake', { BAKE_RIM: 1 });
+    this.pipes.sheetBake = this.device.createComputePipeline({ label: 'nest sheetBake', layout: this.pipeLayout, compute: { module: this.module, entryPoint: 'sheetBake', constants: { BAKE_RIM: 1 } } });
   }
-  /** (round 14, NS-107) the smooth draw on or off: every live level's whole window baked again (on: its cache pages and
-   *  placed exceptions; off: the cache pages let go, boxes). An op like any other: refused (false) while the pool cannot
-   *  hold it yet. */
+  /** (round 18) a switch of the drawn draw under way: every live window's chunk rows baked for the wanted draw, a few a
+   *  frame; the drawn one flips when the last row is baked. Levels, edits and shrinks hold still meanwhile (the app
+   *  checks `switching`), so the rows baked first are not stale at the flip. */
+  private job: { on: boolean; rows: { m: number; y: number }[]; i: number; t0: number } | null = null;
+  get switching(): boolean {
+    return this.job !== null;
+  }
+  /** (round 18) the switch's state in words, for the page ('' when the drawn draw is the wanted one) */
+  smoothStatus = '';
+  /** (round 18) the wanted draw that can never fit this device (no retry until the wish changes) */
+  private cannot: boolean | null = null;
+  /** (round 18, measurement) each switch: pages asked, wall time from its first row to the flip, frames, rows */
+  readonly switchLog: { on: boolean; pages: number; ms: number; frames: number; rows: number }[] = [];
+  private switchPages = 0;
+  private switchFrames = 0;
+  /** (round 18) one frame of the switch to `on`: compile (asynchronous), reserve, bake up to `rowsPerFrame` chunk rows
+   *  of the wanted draw, flip when done. Call only between ops (settled). The old draw stays drawn throughout. */
+  stepSmooth(on: boolean, rowsPerFrame: number): void {
+    // (the wish changed mid-switch: the drawn draw was never touched; the pages baked so far are let go at the next
+    // flip's release or stay as the drawn draw's own)
+    if (this.job && this.job.on !== on) this.job = null;
+    if (!this.job && on === this.smooth) {
+      this.smoothStatus = '';
+      this.cannot = null;
+      return;
+    }
+    if (this.cannot === on) return;
+    if (on && !this.prepareSheets()) {
+      this.smoothStatus = `smooth: compiling the sheet pass (${this.compilingMs.toFixed(0)} ms so far)`;
+      return;
+    }
+    if (!this.job) {
+      const rows: { m: number; y: number }[] = [];
+      for (let m = 0; m < this.live; m++) {
+        const w = this.wins[m]!;
+        for (let y = w.gy / 16; y < (w.gy + w.n) / 16; y++) rows.push({ m, y });
+      }
+      this.job = { on, rows, i: 0, t0: performance.now() };
+      this.switchPages = 0;
+      this.switchFrames = 0;
+    }
+    const job = this.job;
+    this.switchFrames++;
+    const batch = job.rows.slice(job.i, job.i + rowsPerFrame);
+    let chunks = 0;
+    for (const r of batch) chunks += this.wins[r.m]!.n / 16;
+    const pages = this.bakeBound(chunks, on);
+    if (!this.reserve(pages)) {
+      const need = this.stats.used + pages;
+      if (need > this.stats.maxPages) {
+        this.cannot = on;
+        this.job = null;
+        this.smoothStatus = `smooth: cannot switch on this device: needs ${need} pages, the device can hold ${this.stats.maxPages}`;
+      } else this.smoothStatus = `smooth: waiting for memory (need ${need} pages, the pool holds ${this.cap}, the device can hold ${this.stats.maxPages})`;
+      return;
+    }
+    this.switchPages += pages;
+    this.bakeTarget = on;
+    if (on) this.smoothPipes();
+    for (const r of batch) {
+      const w = this.wins[r.m]!;
+      this.bakeRects(r.m, [{ x0: w.gx / 16, y0: r.y, x1: (w.gx + w.n) / 16, y1: r.y + 1 }], 0, false);
+      this.mergeFrees();
+      this.submit(false);
+      this.timeRow(r.m, r.y);
+    }
+    this.bakeTarget = null;
+    job.i += batch.length;
+    const last = batch[batch.length - 1];
+    this.smoothStatus = `smooth: baking ${on ? 'sheets' : 'boxes'} (row ${job.i} of ${job.rows.length}, level ${last.m})`;
+    if (job.i < job.rows.length) {
+      // (every row was submitted already: the pool's header read back for this frame's reserve, so the next frame's
+      // step sees the pool settled)
+      this.readStats();
+      return;
+    }
+    this.finishSwitch(on);
+    this.switchLog.push({ on, pages: this.switchPages, ms: performance.now() - job.t0, frames: this.switchFrames, rows: job.rows.length });
+    this.job = null;
+    this.smoothStatus = '';
+  }
+  /** the flip: the old draw's pages let go (on: the face pages, which the sheet draw never reads and the switch back
+   *  bakes again anyway; off: the sheet pass's cache and sheet pages), then the new draw's directory */
+  private finishSwitch(on: boolean): void {
+    this.smooth = on;
+    for (let m = 0; m < this.live; m++) this.run('release', this.uni(({ a, e }) => ((a[2] = on ? 9 : 8), (a[3] = m), e.set([0, 0, 0, 0]))), TCAP / 64);
+    this.mergeFrees();
+    this.directory();
+    this.mergeFrees();
+    this.submit();
+    this.trace?.(this, `smooth ${on}`);
+  }
+  /** the smooth draw switched at once (tests and the reference: the whole switch in one call). Refused (false) while
+   *  the pool cannot hold it yet. */
+  setSmooth(on: boolean): boolean {
+    if (on === this.smooth && !this.job) return true;
+    this.job = null;
+    if (on) this.smoothPipes();
+    let rows = 0;
+    for (let m = 0; m < this.live; m++) rows += this.wins[m]!.n / 16;
+    this.stepSmooth(on, rows);
+    return this.smooth === on;
+  }
   /** (measurement only, round 15, NS-116) each chunk row's GPU time of a whole-window bake (setSmooth), when set: the
    *  time from its submit (or the previous row's end) to its end */
   rowTimes: { L: number; y: number; x?: number; ms: number }[] | null = null;
-  /** (measurement only) with rowTimes: a chunk a submit */
-  chunkTimes = false;
   private lastDone = 0;
   private timeRow(L: number, y: number, x?: number): void {
     const rt = this.rowTimes;
@@ -783,47 +899,6 @@ export class GpuNest {
     this.directory();
     this.mergeFrees();
     this.submit();
-    return true;
-  }
-  setSmooth(on: boolean): boolean {
-    if (on === this.smooth) return true;
-    const live = this.live;
-    let chunks = 0;
-    for (let m = 0; m < live; m++) chunks += (this.wins[m]!.n / 16) ** 2;
-    const was = this.smooth;
-    this.smooth = on;
-    if (on && !this.reserve(this.bakeBound(chunks))) {
-      this.smooth = was;
-      return false;
-    }
-    if (!on) for (let m = 0; m < live; m++) this.run('release', this.uni(({ a, e }) => ((a[2] = 8), (a[3] = m), e.set([0, 0, 0, 0]))), TCAP / 64);
-    this.mergeFrees();
-    // (one submit a row of chunks: a whole dug window in one dispatch may run past the driver's timeout and lose the
-    // device; the CPU slot is written before each submit)
-    for (let m = 0; m < live; m++) {
-      const w = this.wins[m]!;
-      for (let y = w.gy / 16; y < (w.gy + w.n) / 16; y++) {
-        // (measurement only: chunkTimes, a chunk a submit, each timed)
-        if (this.chunkTimes) {
-          for (let x = w.gx / 16; x < (w.gx + w.n) / 16; x++) {
-            this.bakeRects(m, [{ x0: x, y0: y, x1: x + 1, y1: y + 1 }], 0, false);
-            this.mergeFrees();
-            this.submit(false);
-            this.timeRow(m, y, x);
-          }
-          continue;
-        }
-        // (every live level's whole window: the region rule's partner bakes are inside it)
-        this.bakeRects(m, [{ x0: w.gx / 16, y0: y, x1: (w.gx + w.n) / 16, y1: y + 1 }], 0, false);
-        this.mergeFrees();
-        this.submit(false);
-        this.timeRow(m, y);
-      }
-    }
-    this.directory();
-    this.mergeFrees();
-    this.submit();
-    this.trace?.(this, `smooth ${on}`);
     return true;
   }
 

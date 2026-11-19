@@ -109,8 +109,8 @@ type View = { yaw: number; pitch: number; eye: [number, number, number] };
  *  size (frac of the nearest distance), followed down along the aim; at each depth the view down, level all round and
  *  back up and out; then a cave carved sideways from the pit's floor and the view back out of its mouth; then the same
  *  poses again after a cruise away and back, and after a zoom out (demotes) and back. Hole pixels below the horizon. */
-export async function pitAndCave(api: Api, opt: { frac?: number; taps?: number; d0?: number; tx?: number; ty?: number; images?: boolean; log?: (s: string) => void; shaftsOnly?: boolean; diag?: boolean; rebake?: boolean; after?: boolean } = {}): Promise<{ total: number; lines: string[]; poses: number; worstViews: { name: string; n: number; view: View; img?: unknown }[]; coverage: number }> {
-  const a = api.app as unknown as Api['app'] & { brushFrac: number; queue: unknown[]; opLog: { what: string }[]; nest: { live: number; stats: Record<string, number> } };
+export async function pitAndCave(api: Api, opt: { frac?: number; taps?: number; d0?: number; tx?: number; ty?: number; images?: boolean; log?: (s: string) => void; shaftsOnly?: boolean; diag?: boolean; rebake?: boolean; after?: boolean } = {}): Promise<{ total: number; firstFrame: number; lines: string[]; poses: number; worstViews: { name: string; n: number; view: View; img?: unknown }[]; coverage: number }> {
+  const a = api.app as unknown as Api['app'] & { brushFrac: number; queue: unknown[]; opLog: { what: string; at: number }[]; nest: { live: number; stats: Record<string, number> } };
   const lines: string[] = [];
   const say = (s: string) => {
     lines.push(s);
@@ -120,6 +120,8 @@ export async function pitAndCave(api: Api, opt: { frac?: number; taps?: number; 
   const taps = opt.taps ?? 8;
   const views: { name: string; n: number; view: View; img?: unknown }[] = [];
   let total = 0;
+  /** (information, round 18) hole pixels 1 frame after each teleport, summed */
+  let firstFrame = 0;
   let poses = 0;
   const look = async (name: string, view: View) => {
     api.setView(view);
@@ -128,10 +130,22 @@ export async function pitAndCave(api: Api, opt: { frac?: number; taps?: number; 
     let at: [number, number][] = [];
     const per: number[] = [];
     let img: unknown = null;
-    for (const n of [1, 30]) {
-      await frames(api, n);
+    // (round 18, orchestrator decision awaiting the owner's ruling, NS-127 / NS-135) the gate counts the SETTLED view:
+    // the level ops the pose triggered have finished, then 3 still frames. The count 1 frame after the teleport is
+    // reported as information only: with only a coarse level open, a narrow deep shaft is pinched shut by the accepted
+    // collapse rule, and a teleported eye sits under that sheet until the finer level opens.
+    for (const n of [1, 0]) {
+      if (n) await frames(api, n);
+      else {
+        await settle(api, a);
+        await frames(api, 3);
+      }
       const h = await groundHoles(api, view.pitch, ground?.(view.yaw));
       per.push(h.n);
+      if (n) {
+        firstFrame += h.n;
+        continue;
+      }
       if (h.n > worst) {
         worst = h.n;
         at = h.at;
@@ -166,13 +180,13 @@ export async function pitAndCave(api: Api, opt: { frac?: number; taps?: number; 
         const t1 = await x.chunkTris();
         app.frozen = fz;
         const diff = [...new Set([...Object.keys(t0), ...Object.keys(t1)])].filter((key) => (t0[key] ?? 0) !== (t1[key] ?? 0));
-        say(`${name} (${n} frames): ${h.n} hole pixels; held still 3 frames, nothing baked: ${hStill.n}${hStill.n ? '' : ' (gone: a draw-side transient, not a bake)'}; after a forced bake of every window: ${h2.n}${h2.n ? ' (stays: geometry)' : hStill.n ? ' (gone: a missed bake region)' : ''}; wins ${winsAt}; ops before ${opsAt}; chunks the forced bake changed (${diff.length}): ${diff.slice(0, 40).map((key) => `${key} ${t0[key] ?? 0}->${t1[key] ?? 0}`).join('; ')}; eye per level ${JSON.stringify(pc)}; first hole ${JSON.stringify(h.at.slice(0, 3))} of ${h.w}x${h.h}; triangles round it:\n  ${dg.slice(0, 12).join('\n  ')}`);
+        say(`${name} (settled): ${h.n} hole pixels; held still 3 frames, nothing baked: ${hStill.n}${hStill.n ? '' : ' (gone: a draw-side transient, not a bake)'}; after a forced bake of every window: ${h2.n}${h2.n ? ' (stays: geometry)' : hStill.n ? ' (gone: a missed bake region)' : ''}; wins ${winsAt}; ops before ${opsAt}; chunks the forced bake changed (${diff.length}): ${diff.slice(0, 40).map((key) => `${key} ${t0[key] ?? 0}->${t1[key] ?? 0}`).join('; ')}; eye per level ${JSON.stringify(pc)}; first hole ${JSON.stringify(h.at.slice(0, 3))} of ${h.w}x${h.h}; triangles round it:\n  ${dg.slice(0, 12).join('\n  ')}`);
       }
     }
     poses++;
     total += worst;
     if (worst > 0) {
-      say(`${name}: ${per.join(' then ')} hole pixels (live ${api.state().live}, wins ${JSON.stringify((api.state() as unknown as { wins: unknown }).wins)}, eye ${view.eye.map((v) => v.toFixed(3)).join(', ')}, yaw ${view.yaw.toFixed(2)}, pitch ${view.pitch.toFixed(2)}) first at ${JSON.stringify(at.slice(0, 3))}`);
+      say(`${name}: ${per.join(' at 1 frame (information), settled ')} hole pixels (live ${api.state().live}, wins ${JSON.stringify((api.state() as unknown as { wins: unknown }).wins)}, eye ${view.eye.map((v) => v.toFixed(3)).join(', ')}, yaw ${view.yaw.toFixed(2)}, pitch ${view.pitch.toFixed(2)}) first at ${JSON.stringify(at.slice(0, 3))}`);
       views.push({ name, n: worst, view, img });
     }
   };
@@ -291,8 +305,8 @@ export async function pitAndCave(api: Api, opt: { frac?: number; taps?: number; 
   const shrinks = () => (api.state().stats as Record<string, number>).shrinks ?? 0;
   // after a cruise away and back
   if (opt.after === false) {
-    say(`shafts: ${total} hole pixels below the horizon over ${poses} poses; coverage faults ${covBad}`);
-    return { total, lines, poses, worstViews: views, coverage: covBad };
+    say(`shafts: ${total} hole pixels below the horizon over ${poses} poses, settled (1 frame after each teleport, information: ${firstFrame}); coverage faults ${covBad}`);
+    return { total, firstFrame, lines, poses, worstViews: views, coverage: covBad };
   }
   if (api.cruise) {
     api.setView({ yaw: 0.3, pitch: 1.0, tx, ty, d: 1.5 });
@@ -318,9 +332,33 @@ export async function pitAndCave(api: Api, opt: { frac?: number; taps?: number; 
   for (const s of shafts) await around(`post-shrink ${s.name}`, [s.eye[0], s.eye[1], -20], 0.3);
   await cover('back in the shaft after the demote and shrinks');
   views.sort((x, y) => y.n - x.n);
-  say(`pit and cave: ${total} hole pixels below the horizon over ${poses} poses; coverage faults ${covBad}`);
-  return { total, lines, poses, worstViews: views, coverage: covBad };
+  say(`pit and cave: ${total} hole pixels below the horizon over ${poses} poses, settled (1 frame after each teleport, information: ${firstFrame}); coverage faults ${covBad}`);
+  return { total, firstFrame, lines, poses, worstViews: views, coverage: covBad };
 }
+
+/** (round 18) wait until the level ops a pose triggered have finished: no promote, slide, demote or refused op for 10
+ *  frames running and none in flight (at most 600 frames) */
+const settle = async (api: Api, a: { opLog: { what: string; at: number }[]; nest: unknown }) => {
+  const app = a as unknown as { refusedAt?: number[]; nest: { settled: boolean } };
+  const sig = () => {
+    let last = 0;
+    for (let i = a.opLog.length - 1; i >= 0; i--)
+      if (a.opLog[i].what === 'promote' || a.opLog[i].what === 'slide' || a.opLog[i].what === 'demote') {
+        last = a.opLog[i].at;
+        break;
+      }
+    const r = app.refusedAt;
+    return `${last}:${r && r.length ? r[r.length - 1] : 0}`;
+  };
+  let s = sig();
+  let still = 0;
+  for (let i = 0; i < 600 && still < 10; i++) {
+    await frames(api, 1);
+    const t = sig();
+    still = t === s && app.nest.settled ? still + 1 : 0;
+    s = t;
+  }
+};
 
 const W = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const frames = async (api: Api, n: number) => {

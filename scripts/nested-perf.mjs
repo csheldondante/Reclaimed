@@ -119,7 +119,7 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
           await nested.benchEdit({ op: 'carve', radius: 0.5, amount: 0, at: { level: 1, x: (h[0] + 3) * 8 - w1.gx, y: (h[1] + 3) * 8 - w1.gy, z: (h[2] + 0.8 - zo) * 8 } });
         }
         a.nest.skip.clear();
-        if (mode.includes('no sheet')) a.nest.skip.add('cache');
+        if (mode.includes('no sheet')) a.nest.skip.add('sheet');
         if (mode.includes('no partners')) a.nest.skip.add('partner');
         if (mode.includes('one row')) a.nest.skip.add('bands');
         const at = { level: 1, x: (h[0] - 1 + (i % 12) * 0.3) * 8 - w1.gx, y: (h[1] + 1.5 + Math.floor(i / 12) * 0.4) * 8 - w1.gy, z: (h[2] + 0.8 - zo) * 8 };
