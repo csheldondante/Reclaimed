@@ -97,8 +97,13 @@ export class App {
   frameCount = 0;
 
   static async start(device: GPUDevice, q: URLSearchParams): Promise<App> {
+    // (round 19, NS-141: the page paints a line at once; the first frame's pipelines are made asynchronously, the line
+    // counting them; the rest after the first frame, ops waiting for them in words)
+    const info = document.getElementById('info')!;
+    info.textContent = 'loading: compiling the GPU programs';
     const app = new App(device, q);
     (window as unknown as { nested: unknown }).nested = app.api();
+    await app.boot(info);
     requestAnimationFrame(() => app.frame());
     if (q.get('fly') === '1') {
       const log = document.getElementById('log')!;
@@ -127,7 +132,7 @@ export class App {
     const ctx = this.canvas.getContext('webgpu');
     if (!ctx) throw new Error('This browser has WebGPU but would not give the page a WebGPU canvas.');
     // (the pool starts small and grows by need, ahead of the ops: NS-13)
-    this.nest = new GpuNest(device, this.k, Number(q.get('seed') ?? 7), 1024);
+    this.nest = new GpuNest(device, this.k, Number(q.get('seed') ?? 7), 1024, { asyncPipes: true });
     const lim = device.limits;
     this.limitsText = `${Math.round(Math.min(lim.maxBufferSize, lim.maxStorageBufferBindingSize) / 2 ** 20)} MB${q.has('maxbuf') ? `, clamped by ?maxbuf` : ''}`;
     this.render = new Renderer(device, ctx, this.nest);
@@ -137,9 +142,36 @@ export class App {
     this.shrinkOn = q.get('shrink') !== '0';
     if (q.has('yaw')) this.yaw = Number(q.get('yaw'));
     if (q.has('pitch')) this.pitch = Number(q.get('pitch'));
-    this.nest.root(this.rootN);
     this.wantSmooth = q.get('smooth') === '1';
-    this.place(Number(q.get('tx') ?? 128), Number(q.get('ty') ?? 128), Number(q.get('d') ?? 260));
+    this.q = q;
+  }
+  private q: URLSearchParams;
+  /** (round 19, NS-141) the pipelines the first frame uses (GpuNest.firstUse at the first frame), made before it */
+  static readonly BOOT = ['rootGen', 'pack', 'dilate', 'faceBake', 'faceBakeRim', 'tabOut', 'tabIn', 'dirClear', 'dirBuild', 'dirFinish', 'merge', 'camera'];
+  /** ms after the page opened: the first frame's pipelines made; every pipeline made */
+  bootAt = 0;
+  pipesAt = 0;
+  private pipesDone = false;
+  /** every pipeline of normal play made (tests wait for it) */
+  get pipesReady(): boolean {
+    return this.pipesDone;
+  }
+  private restAsked = false;
+  /** the first frame's pipelines made asynchronously (the line counts them), then the world started */
+  private async boot(info: HTMLElement): Promise<void> {
+    const t0 = performance.now();
+    const tick = setInterval(() => {
+      const made = App.BOOT.filter((n) => !this.nest.pipeStatus.pending.includes(n)).length;
+      info.textContent = `loading: compiling the GPU programs for the first frame, ${made} of ${App.BOOT.length} (${((performance.now() - t0) / 1000).toFixed(0)} s)`;
+    }, 250);
+    try {
+      await Promise.all([this.nest.makePipes(this.q.get('bootall') === '1' ? this.nest.bootPipes() : App.BOOT), this.render.ready]);
+    } finally {
+      clearInterval(tick);
+    }
+    this.bootAt = performance.now();
+    this.nest.root(this.rootN);
+    this.place(Number(this.q.get('tx') ?? 128), Number(this.q.get('ty') ?? 128), Number(this.q.get('d') ?? 260));
     this.bornAt[0] = this.nest.now();
     this.ui();
   }
@@ -511,6 +543,9 @@ export class App {
       this.smoothText = '';
       return;
     }
+    // (round 19: not before the first frame; then the sheet pipelines compile alongside the boot's others: Chrome makes
+    // asynchronous pipelines in parallel)
+    if (!this.restAsked) return;
     if (this.wantSmooth && !this.render.prepareSheets()) {
       this.nest.prepareSheets();
       this.smoothText = `smooth: compiling the sheet draw (${(performance.now() - (this.compileAt ||= performance.now())).toFixed(0)} ms so far)`;
@@ -523,7 +558,7 @@ export class App {
   private compileAt = 0;
   /** between ops and not switching the smooth draw: a level op, an edit or a shrink may run */
   private get free(): boolean {
-    return this.nest.settled && !this.nest.switching;
+    return this.pipesDone && this.nest.settled && !this.nest.switching;
   }
   private frame(): void {
     this.smoothStep();
@@ -633,6 +668,16 @@ export class App {
     }
     if (!this.benchPause) this.render.draw(this.drawList());
     if (!this.firstFrameAt) this.firstFrameAt = performance.now();
+    // (round 19, NS-141) after the first frame, every other pipeline made asynchronously; ops wait for them (free)
+    if (!this.restAsked) {
+      this.restAsked = true;
+      console.log(`[boot] pipelines used before the first frame: ${this.nest.firstUse.join(', ')}`);
+      void this.nest.makePipes(this.nest.bootPipes()).then(() => {
+        this.pipesDone = true;
+        this.pipesAt = performance.now();
+        console.log(`[boot] first frame ${this.firstFrameAt.toFixed(0)} ms (its pipelines made at ${this.bootAt.toFixed(0)} ms), every pipeline made at ${this.pipesAt.toFixed(0)} ms`);
+      });
+    }
     if (!this.firstSheetAt && this.nest.smooth) {
       this.firstSheetAt = performance.now();
       console.log(`[smooth] first frame ${this.firstFrameAt.toFixed(0)} ms, first sheet frame ${this.firstSheetAt.toFixed(0)} ms; compile: sheet pass ${this.nest.compileMs.toFixed(0)} ms, sheet draw ${this.render.compileMs.toFixed(0)} ms; switch ${JSON.stringify(this.nest.switchLog)}`);
@@ -661,6 +706,10 @@ export class App {
     if (this.sizeText) this.sizeText.textContent = App.metres(br);
     if (br < this.finestCell() && this.mode !== 'move' && this.mode !== 'orbit')
       lines.push(`The brush (${App.metres(br)}) is smaller than one column of the finest level (${App.metres(this.finestCell())}): it may change nothing. Move Size up or zoom out.`);
+    if (!this.pipesDone) {
+      const s = this.nest.pipeStatus;
+      lines.push(`Preparing: ${s.made} of ${s.total} GPU programs made; levels and brushes wait for them (compiling: ${s.pending.slice(0, 3).join(', ')}${s.pending.length > 3 ? ', ...' : ''}).`);
+    }
     if (this.lifts) lines.push(`The camera was lifted out of solid ${this.lifts} times.`);
     if (st.refused || st.mismatch || st.tableFull) lines.push(`Error: ${st.refused} pages refused, ${st.mismatch} blocks mismatched, table full ${st.tableFull} times.`);
     if (st.error) lines.push(`Memory: ${st.error}`);

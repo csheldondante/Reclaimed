@@ -539,12 +539,23 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   0.25 s. A phone is likely slower still. Now asynchronous with the boxes drawn and the wait shown on the page; the fix
   is the kernel's size: split sheetBake into smaller passes (walk, edge placement, normals, sheet words) or cut the
   inlined walk, and find why Chrome does not cache it.
-- NS-141 (perf, round 19; the owner: "it needs to be behind something that loads faster so the page doesn't appear
+- NS-141 `done` (round 19: staged asynchronous boot; cold first frame 22.3 -> 6.8-7.2 s, first sheet frame 25.7 -> 9.9-11.2
+  s, 2.9-4.0 s after the first frame; NESTED_SCALES.md "As built (round 19)") (perf, round 19; the owner: "it needs to be behind something that loads faster so the page doesn't appear
   frozen. I also don't want unnecessary compile time") Cold boot in desktop Chrome: the first frame is submitted at
   1.1 s but the GPU finishes it at 22.3 s, because the 28 pipelines GpuNest makes synchronously are compiled in the
   GPU process before it (Dawn D3D12 sum 21.0 s; faceBakeRim 4.8, faceBakeOne 4.7, faceBake 2.4, derive 1.8 s). Boot
   in stages: the first frame's pipelines first, the rest asynchronous with a status line; test-only and measurement
   pipelines (faceBakeOne, captures, hazard) on first use.
+- NS-142 (hack, round 19) App.BOOT, the first frame's pipelines, is a hand-kept list (read from GpuNest.firstUse's
+  log); a pipeline added to the first frame without it throws "used before it was made" at boot (loud, not silent).
+  Derive it: record first use per op kind in a test and fail when App.BOOT differs.
+- NS-143 (limit, round 19) The smooth draw on a cold desktop Chrome: first sheet frame 2.9-4.0 s after the first frame
+  (target 3 s): the sheet pass (2-3.7 s while the other pipelines compile beside it) is most of it. Phones not
+  measured. Cold first frame 6.8-7.2 s is faceBake + faceBakeRim (7.1 s Dawn together): with `?smooth=1` the boot could
+  skip the box bake entirely (start in sheets).
+- NS-144 (bug?, round 19) A reload's first frame in the headless runner takes 4.7-9.1 s (round 18 before the change:
+  8.1 s), longer than a cold load's submit in round 18; the pipelines are cached (75 ms). Not investigated: the
+  previous page's teardown or the runner.
 - NS-137 (limit, round 18) A smooth switch holds levels, edits and shrinks still while it bakes (2 chunk rows a frame:
   16 frames, ~170 ms wall on a fresh world, longer when dug). A wish changed mid-switch abandons it; the rows it baked
   stay in the pool until the next flip lets that draw's pages go.

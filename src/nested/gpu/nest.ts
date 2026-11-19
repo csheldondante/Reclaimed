@@ -64,6 +64,8 @@ export interface PoolOpts {
   segments?: number;
   /** grow at once when an op does not fit (the self-test); otherwise the op is refused and the pool grows ahead */
   syncGrow?: boolean;
+  /** (round 19, NS-141) the page: no pipeline made in the constructor; makePipes makes them asynchronously in stages */
+  asyncPipes?: boolean;
 }
 
 export interface Win {
@@ -169,8 +171,6 @@ export class GpuNest {
   /** (measurement only, round 11, NS-103) 1: the bake treats no line as a rim line (round 10's rims, the cost A/B) */
   rimOff = 0;
   private pipes: Record<string, GPUComputePipeline> = {};
-  private pipeLayout!: GPUPipelineLayout;
-  private module!: GPUShaderModule;
   /** the smooth draw (setSmooth): every bake runs the sheet pass instead of the box faces (round 16) */
   smooth = false;
   private enc: GPUCommandEncoder | null = null;
@@ -229,16 +229,19 @@ export class GpuNest {
     const pl = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
     const ppl = device.createPipelineLayout({ bindGroupLayouts: [this.planLayout] });
     const dpl = device.createPipelineLayout({ bindGroupLayouts: [this.dirLayout] });
-    for (const e of ['derive', 'restrictK', 'rootGen', 'zPick', 'release', 'resClear', 'merge', 'edit', 'meltSnap', 'meltApply', 'camera', 'pick', 'ball', 'pack', 'faceBake', 'snap', 'tabOut', 'tabIn', 'shrinkFree', 'shrinkMove', 'shrinkCopy'])
-      this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: pl, compute: { module, entryPoint: e } });
+    const spec = (name: string, layout: GPUPipelineLayout, entryPoint: string, constants?: Record<string, number>) => (this.specs[name] = { label: `nest ${name}`, layout, compute: { module, entryPoint, constants } });
+    for (const e of ['derive', 'restrictK', 'rootGen', 'zPick', 'release', 'resClear', 'merge', 'edit', 'meltSnap', 'meltApply', 'camera', 'pick', 'ball', 'pack', 'faceBake', 'snap', 'tabOut', 'tabIn', 'shrinkFree', 'shrinkMove', 'shrinkCopy']) spec(e, pl, e);
     // (round 12, NS-103) the bake of chunks that touch a rim line: the rim rule's code compiled in (nest.wgsl BAKE_RIM)
-    this.pipes.faceBakeRim = device.createComputePipeline({ label: 'nest faceBake (rim chunks)', layout: pl, compute: { module, entryPoint: 'faceBake', constants: { BAKE_RIM: 1 } } });
-    this.pipes.faceBakeOne = device.createComputePipeline({ label: 'nest faceBake (round 11: one bake)', layout: pl, compute: { module, entryPoint: 'faceBake', constants: { BAKE_RIM: 1, BAKE_SPLIT: 0 } } });
-    // (the sheet pass is made when the smooth draw is first switched on: smooth off compiles and runs nothing of it)
-    this.pipeLayout = pl;
-    this.module = module;
-    for (const e of ['plan', 'dilate']) this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: ppl, compute: { module, entryPoint: e } });
-    for (const e of ['dirClear', 'dirBuild', 'dirFinish']) this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: dpl, compute: { module, entryPoint: e } });
+    spec('faceBakeRim', pl, 'faceBake', { BAKE_RIM: 1 });
+    for (const e of ['plan', 'dilate']) spec(e, ppl, e);
+    for (const e of ['dirClear', 'dirBuild', 'dirFinish']) spec(e, dpl, e);
+    // (made on first use, never in normal play: the measurement's one bake, splitBake false; and the sheet pass, made
+    // asynchronously when the smooth draw is first wanted: smooth off compiles and runs nothing of it)
+    spec('faceBakeOne', pl, 'faceBake', { BAKE_RIM: 1, BAKE_SPLIT: 0 });
+    spec('sheetBake', pl, 'sheetBake', { BAKE_RIM: 1 });
+    // (round 19, NS-141) tests make every pipeline now; the page makes them asynchronously in stages (makePipes)
+    this.asyncPipes = opts.asyncPipes ?? false;
+    if (!this.asyncPipes) for (const name of this.bootPipes()) this.pipes[name] = device.createComputePipeline(this.specs[name]!);
     this.rebind();
   }
 
@@ -353,18 +356,63 @@ export class GpuNest {
     fill?.({ a, r, c, d, e });
     return off;
   }
+  // ---- (round 19, NS-141) pipelines made in stages -------------------------------------------------------------------
+  /** every pipeline's description (by name) */
+  private specs: Record<string, GPUComputePipelineDescriptor> = {};
+  /** pipelines made only on first use (never in normal play) or by their own switch (the sheet pass) */
+  private static readonly ON_USE = ['faceBakeOne', 'sheetBake'];
+  /** the page's mode: every pipeline made asynchronously (makePipes) before the ops that use it can run */
+  readonly asyncPipes: boolean;
+  private making = new Map<string, Promise<void>>();
+  /** the pipelines normal play makes (every one but ON_USE) */
+  bootPipes(): string[] {
+    return Object.keys(this.specs).filter((n) => !GpuNest.ON_USE.includes(n));
+  }
+  /** start making these pipelines asynchronously (those not made or being made), in order; resolves when all are made */
+  makePipes(names: string[]): Promise<void> {
+    return Promise.all(
+      names.map((name) => {
+        if (this.pipes[name]) return Promise.resolve();
+        let m = this.making.get(name);
+        if (!m) {
+          m = this.device.createComputePipelineAsync(this.specs[name]!).then((p) => {
+            this.pipes[name] = p;
+          });
+          this.making.set(name, m);
+        }
+        return m;
+      }),
+    ).then(() => undefined);
+  }
+  /** the boot pipelines made so far, of how many, and those still compiling */
+  get pipeStatus(): { made: number; total: number; pending: string[] } {
+    const all = this.bootPipes();
+    const pending = all.filter((n) => !this.pipes[n]);
+    return { made: all.length - pending.length, total: all.length, pending };
+  }
+  /** a pipeline by name: ON_USE ones made on first use (measurement only); any other must have been made before (the
+   *  page's stages; a miss is a boot-order fault, said in words) */
+  /** (measurement) the pipelines in the order of their first use */
+  readonly firstUse: string[] = [];
+  private pipe(entry: string): GPUComputePipeline {
+    const p = this.pipes[entry];
+    if (!this.firstUse.includes(entry)) this.firstUse.push(entry);
+    if (p) return p;
+    if (entry === 'faceBakeOne') return (this.pipes[entry] = this.device.createComputePipeline(this.specs[entry]!));
+    throw new Error(`nest: pipeline ${entry} used before it was made (NS-141 boot stages)`);
+  }
   private run(entry: string, off: number, x: number, y = 1): void {
     if (x <= 0 || y <= 0) return;
     const p = this.begin();
     this.counts.dispatches++;
-    p.setPipeline(this.pipes[entry]);
+    p.setPipeline(this.pipe(entry));
     p.setBindGroup(0, entry === 'plan' || entry === 'dilate' ? this.planBg : entry.startsWith('dir') ? this.dirBg : this.bg, [off]);
     p.dispatchWorkgroups(x, y);
   }
   private runIndirect(entry: string, off: number, slot: number): void {
     const p = this.begin();
     this.counts.dispatches++;
-    p.setPipeline(this.pipes[entry]);
+    p.setPipeline(this.pipe(entry));
     p.setBindGroup(0, this.bg, [off]);
     p.dispatchWorkgroupsIndirect(this.args, slot * 16);
   }
@@ -747,12 +795,9 @@ export class GpuNest {
     if (this.pipes.sheetBake) return true;
     if (!this.sheetCompile) {
       this.compileAt = performance.now();
-      this.sheetCompile = this.device
-        .createComputePipelineAsync({ label: 'nest sheetBake', layout: this.pipeLayout, compute: { module: this.module, entryPoint: 'sheetBake', constants: { BAKE_RIM: 1 } } })
-        .then((p) => {
-          this.pipes.sheetBake = p;
-          this.compileMs = performance.now() - this.compileAt;
-        });
+      this.sheetCompile = this.makePipes(['sheetBake']).then(() => {
+        this.compileMs = performance.now() - this.compileAt;
+      });
     }
     return false;
   }
@@ -763,7 +808,7 @@ export class GpuNest {
   /** (tests) the sheet pass made at once */
   private smoothPipes(): void {
     if (this.pipes.sheetBake) return;
-    this.pipes.sheetBake = this.device.createComputePipeline({ label: 'nest sheetBake', layout: this.pipeLayout, compute: { module: this.module, entryPoint: 'sheetBake', constants: { BAKE_RIM: 1 } } });
+    this.pipes.sheetBake = this.device.createComputePipeline(this.specs.sheetBake!);
   }
   /** (round 18) a switch of the drawn draw under way: every live window's chunk rows baked for the wanted draw, a few a
    *  frame; the drawn one flips when the last row is baked. Levels, edits and shrinks hold still meanwhile (the app

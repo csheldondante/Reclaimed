@@ -1106,6 +1106,29 @@ the solid below the next air gap down." "Why make those [skirts, outer ring] if 
 - *Compile gate (quick loop).* test/gpu/nested-compile.test.ts times every pipeline the page makes on Dawn and fails
   one over its budget (test/gpu/nested-compile-budgets.ts: about 1.5 x the round 19 time, floor 400 ms; the total
   too). Every builder runs it with the unit tests, before any browser check.
+- *Boot in stages (NS-141; the owner: "behind something that loads faster so the page doesn't appear frozen").* The
+  page writes a loading line before any GPU work. GpuNest in the page (`asyncPipes`) makes no pipeline in its
+  constructor: App.boot makes the first frame's twelve (App.BOOT: rootGen, pack, dilate, faceBake, faceBakeRim, tabOut,
+  tabIn, dirClear, dirBuild, dirFinish, merge, camera; from GpuNest.firstUse) and the box draw asynchronously, the
+  line counting them; then the world starts and draws. After the first frame every other pipeline is made
+  asynchronously; until then the HUD says "Preparing: n of N GPU programs made; levels and brushes wait for them" and
+  level ops, edits and shrinks wait (`free`); the smooth switch may start compiling then (Chrome makes asynchronous
+  pipelines in parallel). A pipeline used before it was made throws in words (a boot-order fault, never a hang). Made
+  on first use, never in normal play: faceBakeOne (the measurement's one bake, synchronous), the captures (tests), the
+  hazard checks (selftest); the sheet pipelines by the smooth switch. Tests construct GpuNest as before (every pipeline
+  at once). `?bootall=1` makes them all before the first frame (measurement).
+- *Boot gate (end gate, not the quick loop).* `scripts/nested-smoothboot.mjs` (fresh Chrome, `?smooth=1`, cold then
+  reloads) checks the first frame, every boot pipeline made and the first sheet frame against BOOT_BUDGET (11, 19,
+  16 s; about 1.5 x round 19's cold run). `--boot 1` reports when the GPU finished the first frame; `--split 1` the two
+  sheet pipelines alone.
+- *Pipelines (Dawn ms from the compile gate; first frame = made before it).* First frame: faceBakeRim 4,750, faceBake
+  2,392, camera 1,038, pack 438, rootGen 186, the box draw 73, tabIn 85, dilate 87, dirClear 75, dirBuild 66,
+  dirFinish 51, tabOut 47, merge 48. After it, first used by: derive 1,821 and zPick 118 (promote), restrictK 912,
+  plan 141, edit 382, ball 887, snap 140, resClear 177, release 56 (edits, strokes, slides), meltSnap 325 / meltApply
+  422 (melt), pick 441 (the pointer), shrinkFree / Move / Copy 48-65 (the pool's shrink). On use: sheetBake 646 and
+  the sheet draw 91 (smooth), faceBakeOne 4,674 (measurement), capture 37 / captureSheet 182 (tests). Chrome is
+  measured in aggregate (pipelines compile in parallel): cold first frame 6.8-7.2 s, every boot pipeline 12.8-14.3 s
+  (round 18: the 28 synchronous pipelines, GPU done with the first frame at 22.3 s).
 
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 

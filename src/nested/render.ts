@@ -18,7 +18,9 @@ export interface DrawLevel {
 }
 
 export class Renderer {
-  private pipe: GPURenderPipeline;
+  private pipe!: GPURenderPipeline;
+  /** (round 19) the box draw's pipeline made */
+  readonly ready: Promise<void>;
   private layout: GPUBindGroupLayout;
   private module: GPUShaderModule;
   private ubuf: GPUBuffer;
@@ -52,13 +54,16 @@ export class Renderer {
     });
     const module = (this.module = device.createShaderModule({ label: 'nest draw', code: `const TCAP: u32 = ${TCAP}u;\n${segWgsl(nest.S, nest.segP, true)}\n${storeWgsl}\n${drawWgsl}` }));
     const pl = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
-    this.pipe = device.createRenderPipeline({
+    // (round 19, NS-141: asynchronous; the app draws once `ready` resolves)
+    this.ready = device.createRenderPipelineAsync({
       label: 'nest draw boxes',
       layout: pl,
       vertex: { module, entryPoint: 'vs' },
       fragment: { module, entryPoint: 'fs', targets: [{ format: this.format }, { format: 'rgba8unorm' }] },
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' },
+    }).then((p) => {
+      this.pipe = p;
     });
     this.ubuf = device.createBuffer({ label: 'nest draw uniforms', size: DU * MAX_LEVELS, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.pl = pl;

@@ -98,8 +98,8 @@ async function main(): Promise<void> {
       if (q.get('wt') !== '0') {
         const { App } = await import('./app');
         await App.start(device, new URLSearchParams('k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140'));
-        const api = (window as unknown as { nested: { app: { frameCount: number } } }).nested;
-        while (api.app.frameCount < 60) await new Promise((r) => setTimeout(r, 50));
+        const api = (window as unknown as { nested: { app: { frameCount: number; pipesReady: boolean } } }).nested;
+        while (api.app.frameCount < 60 || !api.app.pipesReady) await new Promise((r) => setTimeout(r, 50));
         await new Promise((r) => setTimeout(r, 1500));
       }
       await smoothSection(res, q.get('wt') !== '0');
@@ -151,7 +151,7 @@ async function main(): Promise<void> {
       }
       await App.start(device, new URLSearchParams('k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140'));
       const api = (window as unknown as { nested: Parameters<typeof watertightSuite>[0] }).nested;
-      while (api.app.frameCount < 60) await new Promise((r) => setTimeout(r, 50));
+      while (api.app.frameCount < 60 || !(api.app as unknown as { pipesReady: boolean }).pipesReady) await new Promise((r) => setTimeout(r, 50));
       await new Promise((r) => setTimeout(r, 1500));
       {
         // (NS-86) the sandbox's coverage and the pool's books before the suite builds its scene

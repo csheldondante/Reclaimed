@@ -27504,3 +27504,25 @@ sheet pipelines queue behind them. NS-141.
 **Compile gate.** test/gpu/nested-compile.test.ts now times all 33 pipelines on Dawn against
 test/gpu/nested-compile-budgets.ts (1.5 x, floor 400 ms; total 21.0 s measured, budget 31.5 s). Biggest: faceBakeRim
 4,750, faceBakeOne (measurement only) 4,674, faceBake 2,392, derive 1,821, camera 1,038 ms.
+
+## 2026-11-19 — Nested scales lab, round 19: boot in stages, a boot gate (NS-141)
+
+**Why.** The owner: "I am ok with compiles taking time as a one time cost but it needs to be behind something that
+loads faster so the page doesn't appear frozen. I also don't want unnecessary compile time." Round 19 C found the
+cold wait is the 28 pipelines made synchronously at boot: Chrome compiles them in its GPU process before the first
+frame (submitted at 1.1 s, finished at 22.3 s), and the asynchronous sheet pipelines queue behind them.
+
+**What** (NESTED_SCALES.md "As built (round 19)"): a loading line before any GPU work; the first frame's 12 pipelines
+and the box draw made asynchronously (counted on the line); the rest after the first frame, asynchronously, ops
+waiting for them in words; the sheet pipelines compile beside them; test and measurement pipelines on first use.
+
+**Measured** (fresh desktop Chrome, `?smooth=1`; `nested-smoothboot`): cold first frame 6.8-7.2 s (was 22.3 s when the
+GPU finished it); every pipeline made 12.8-14.3 s; first sheet frame 9.9-11.2 s (round 18: 28.4 s, after round 19 C's
+kernel 25.7 s), 2.9-4.0 s after the first frame. Reloads: 4.7-7.0 s first frame (NS-144), pipelines cached (75 ms).
+With every pipeline made asynchronously before the first frame (`?bootall=1`) the first frame came at 7.4 s: Chrome
+compiles asynchronous pipelines in parallel, synchronous ones one by one. The boot gate (BOOT_BUDGET 11 / 19 / 16 s)
+passes cold and reload.
+
+**End gate of round 19** (the revert, C and the boot together): typecheck; nested unit tests 59 of 59; compile gate
+passed; `smooth=only` 11 of 11 (run on C's kernel); full selftest smooth on 45 of 45 (the stroke check back: depth
+2.46..3.00 for r 2.5), smooth off (`smooth=0`) 36 of 36; `nested-smoothboot` boot gate passed cold and reload.
