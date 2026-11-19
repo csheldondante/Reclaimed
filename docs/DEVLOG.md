@@ -27717,3 +27717,39 @@ the changed WGSL): the stills script, not a regression.
 passed (sheetBake 632 ms one quiet run; one run during another session's load measured 1,217 and two reruns passed;
 no budget raised); `smooth=only` 12 of 12 with the defaults (run before the barrier was added; with rimsnap off step 4 reads no cluster
 word, so the barrier changes nothing it checks) and with rimsnap=1 (after). Perf not measured this step.
+
+## 2026-11-19 — Nested scales lab, round 24, deliverable A: edge-aware enhance, behind `?edgeenh=1` (default off)
+
+**Why.** Round 23's stills: at levels finer than the brush's the rim is the parent's staircase of cells (8 child columns
+a stair) and tall dark spikes stand on the wall. The owner: continue on the snap; "the data should really all be in the
+columns". The fix the round 22 notes named: a child takes its height from the side of its parent's edge line it lies on.
+Design and numbers in docs/design/NESTED_SCALES.md "As built (round 24)".
+
+**Reference first** (oracle.ts enhanceTops / homeTop / enhancedCol; test/unit/nested-edgeenh.test.ts). A level-1 circle
+(r 10, centre 2 over the ground, rim slope 4.9), levels 2 and 3 open over it, rimsnap on: columns carved on the wrong
+side of the true circle 215 / 627 (levels 2 / 3) plain, 32 / 46 edge-aware; height error at the uncrossed corners near
+the rim, mean, level 2: 0.248 plain, 0.616 with a constant fill of the other side (the first try: a steep bowl's
+inside one parent column of slope too deep), 0.233 with the fill carried on linearly and clamped (built); level 3
+4.36 / 10.97 / 4.10. Drift: the zoom cycle (carve at 1, in to 3, out, in) 0, every column bit-equal; a restrict over all
+of level 3 moves level 2 by 2.7e-15 (parent = the mean of its home children, NS-181). The derived-level spike cause,
+reproduced on a k 8 hillside: one-sided samples round a slid corner, the "outside" member on another stair; 1 spike
+plain, 0 edge-aware there.
+
+**GPU.** derive: the stencil's top samples (wPEdge), the child's side, the 25 values filled (edgeFill), ONE PPM code run
+over two passes (plain, then edged), four block reductions (children inside, their sample sum, the home children's
+tops and bump weights), gSe on the top interval's z1 in the layer pass (both modes). restrictK: the per-child loop it
+had now also gathers the top's line, each child's top and side. Compile: a first version with a second PPM copy and a
+second child loop measured derive 3,852 ms and restrictK 1,438 (budgets 2,700 / 1,400) on a loaded machine; the same
+file measured 2,218 and 4,039 in two other runs, so the machine's noise is up to 2x; restructured: derive 2,316 / 2,328,
+restrictK 818 / 823 in two runs (before the change 1,985 / 661 the same hour).
+
+**Self-test with `edgeenh=1` (oracle section): 24 of 27.** Tunnel (0.167 parent units at the root after the depth-1
+tunnel, 1.34 at depth 2), blob (1.19e-2) and round edges fail. Diagnosed: the oracle's own restrict of the GPU's
+children gives the GPU's value exactly; two children's edge samples differ between GPU and oracle (opposite normals at
+the range edge: (1, 0) d 1.90 against (-1, 0) d -2.00), and the home rule turns one flipped sample into a parent height
+difference. NS-180: fix at the brush's sample, not here. With the defaults 27 of 27.
+
+**The look (local/nested/r24a-edgeenh0-* against r24a-edgeenh1-*, rimsnap=1 both, poses of round 23):** not right. The
+crater-low and closeup stills keep the far wall's staircase and the tall dark spikes, and the near rim gains a row of
+small brown spikes. Per the scope cut ("I don't want to waste too much time on the rendering") left behind its flag,
+default off (NS-179); B (crossing rims) and C (relaxation) logged, not built (NS-183, NS-184).

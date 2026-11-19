@@ -43,6 +43,8 @@ async function main(): Promise<void> {
     log.style.display = 'block';
     log.textContent = 'Self-test: the GPU passes against the oracle\n\n';
     const say = (c: { pass: boolean; name: string; detail: string }) => (log.textContent += `${c.pass ? 'PASS' : 'FAIL'}  ${c.name}\n      ${c.detail}\n`);
+    // (round 24) the sandboxes take the page's rim options (?rimsnap, ?edgeenh, ?relax) too
+    const rimQ = ['rimsnap', 'edgeenh', 'relax'].filter((p) => q.has(p)).map((p) => `&${p}=${q.get(p)}`).join('');
     // (bisecting: ?oracle=0 skips the oracle checks, ?wtscreen=0 the suite's screen checks, ?pit=0 the pit poses)
     // (NS-86, round 9) the workgroup reduction forms probed before and after the oracle checks: on the desktop's Intel Arc
     // the atomic forms go wrong after them (the reproduction); the forms the store uses must hold in both
@@ -97,7 +99,7 @@ async function main(): Promise<void> {
       const res: { pass: boolean; name: string; detail: string }[] = [];
       if (q.get('wt') !== '0') {
         const { App } = await import('./app');
-        await App.start(device, new URLSearchParams('k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140'));
+        await App.start(device, new URLSearchParams(`k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140${rimQ}`));
         const api = (window as unknown as { nested: { app: { frameCount: number; pipesReady: boolean } } }).nested;
         while (api.app.frameCount < 60 || !api.app.pipesReady) await new Promise((r) => setTimeout(r, 50));
         await new Promise((r) => setTimeout(r, 1500));
@@ -149,7 +151,7 @@ async function main(): Promise<void> {
         const { setTraceNew } = await import('./gpu/nest');
         setTraceNew(rootTracer((s) => console.log(`[suite] trace ${s}`)).fn);
       }
-      await App.start(device, new URLSearchParams('k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140'));
+      await App.start(device, new URLSearchParams(`k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140${rimQ}`));
       const api = (window as unknown as { nested: Parameters<typeof watertightSuite>[0] }).nested;
       while (api.app.frameCount < 60 || !(api.app as unknown as { pipesReady: boolean }).pipesReady) await new Promise((r) => setTimeout(r, 50));
       await new Promise((r) => setTimeout(r, 1500));

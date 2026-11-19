@@ -1317,6 +1317,49 @@ to a surface intersection within that cell and to give them the normal of the su
 - *Closure* is by vertex identity and unchanged; where a thin pocket's two surfaces choose different diagonals, the pair
   rule cancels other triangles (2-4 more in 4 of 26 scenes; NS-174).
 
+**As built (round 24; behind `?edgeenh=1`, on with `?rimsnap=1` unless `?edgeenh=0`, default off): edge-aware
+enhance.** The owner: "the data should really all be in the columns and as long as we fix popin I don't really care if
+it's perfect as long as it looks good." A finer level should follow its parent's edge line, not the parent's staircase
+of cells (NS-170). Reference: oracle.ts enhanceTops / homeTop / enhancedCol (Nest.edgeEnh); GPU: nest.wgsl derive
+(wPEdge, edgeFill, the home reductions, gSe) and restrictK (the same per-child loop gathers the top's line and sides).
+- *Which blocks.* Only a block whose parent's TOP interval carries an edge sample; every other block is bit-identical to
+  before (and with the flag off, everything is).
+- *Sides.* A parent cell of the 5 x 5 stencil is on the side its own top sample says (d > 0 inside), else on the side
+  the block parent's line puts its centre. A child is on the side its own enhanced sample says (edgeToChild, the bits
+  stored), else the parent's line at its centre.
+- *A child's top.* The limited PPM of the 5 x 5 tops with every cell on the other side replaced by the child's side's
+  surface carried on to it: from the nearest same-side cells (least squared distance, all ties averaged), linearly
+  where the next cell back is on that side too, clamped between that cell's top and the cell's own top (the rim is a
+  crease: the two surfaces meet, they do not cross). A constant fill was tried first: the inside of a steep bowl came
+  out one parent column of slope too deep (height error mean 0.62 against 0.25 plain at level 2).
+- *Parent = mean of its HOME children (the change to "parent = mean of its children").* Home: the side most of the
+  block's children lie on (which is the parent centre's side: the children are point-symmetric round it), a tie by the
+  sign of the sum of the children's samples. Enhance corrects only the home children to the parent's mean (the sin^2
+  bump over them); the others keep their side's surface. Restrict, where the restricted parent's top keeps a line,
+  takes the top as the mean of the home children's tops (sides from the children's own samples, which enhance wrote,
+  so both pick the same home), and every other bound as before. So restrict(enhance(P)) == P; block volume is not kept
+  where a line crosses (NS-181).
+- *Only the top moves.* The edge-aware top replaces the top interval's z1 alone, never under its z0; the gaps and
+  thicknesses below and a whole residual column's surface stay the plain ones. A top pulled under its z0 empties the
+  interval (pack drops it; NS-182).
+- *Drift (test/unit/nested-edgeenh.test.ts).* Carve at level 1, zoom in to 3, out, in again: 0 (every column bit-equal;
+  enhance is a function of the parent). A restrict over all of level 3 (an edit that changes nothing): level 2 moves
+  2.7e-15 level-1 units, level 1 1.8e-15.
+- *The reference.* A circle (r 10, centre 2 over the ground) carved at level 1: columns carved on the wrong side of the
+  true circle 215 at level 2 and 627 at level 3 with plain enhance; 32 and 46 edge-aware (2 and 28 more than a column
+  off); the snapped rim corners within 0.105 (level 2) and 0.253 (level 3) columns of the circle either way.
+- *The spikes on derived levels (r23a-crater-low, -closeup), cause.* Reproduced in the reference on a k 8 hillside
+  (spikes test): a slid corner whose members' samples are one-sided (two members carry samples from one parent block's
+  line, the other two none, from a block the samples do not reach) takes the "outside" member's height, which sits on
+  another stair of the inherited staircase. Edge-aware enhance removes it in that scene (0 spikes over 0.5 against 1).
+- *The look: NOT right yet (local/nested/r24a-edgeenh0-* against r24a-edgeenh1-*, rimsnap=1 both).* In the game the near
+  rim gains a row of small brown spikes, the far wall keeps its staircase and the tall dark spikes stay (NS-179). The
+  oracle self-test with the flag fails 3 of 27: GPU and oracle already write a few edge samples differently, and the
+  home rule turns a flipped sample into a height difference (NS-180). Default off; the owner cut the round's scope.
+- *Cost.* Compile: derive 2,316 / 2,328 ms against 1,985 before (budget 2,700), restrictK about 820 against 661 (1,400);
+  a first version with a second PPM copy measured 3,852 / 1,438 on a loaded machine, so the PPM runs in one loop over
+  two passes and restrictK gathers sides in the loop it already had. Carve and sheet pass not measured (NS-178).
+
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

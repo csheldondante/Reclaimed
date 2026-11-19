@@ -22,7 +22,10 @@ const K = 8;
 export async function smoothAgainstReference(device: GPUDevice, log: (s: string) => void = () => {}): Promise<RefResult[]> {
   const g = new GpuNest(device, K, 7, 256, { syncGrow: true });
   // (round 23) ?rimsnap=1 checks the snap against the reference too
-  g.rimSnap = new URLSearchParams(location.search).get('rimsnap') === '1';
+  const uq = new URLSearchParams(location.search);
+  g.rimSnap = uq.get('rimsnap') === '1';
+  // (round 24) edge-aware enhance with it (?edgeenh= overrides)
+  g.edgeEnh = uq.has('edgeenh') ? uq.get('edgeenh') === '1' : g.rimSnap;
   const canvas = document.createElement('canvas');
   canvas.width = 16;
   canvas.height = 16;

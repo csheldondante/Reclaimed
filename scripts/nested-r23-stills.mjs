@@ -15,7 +15,9 @@ await run({ name: 'r23-stills', kind: 'behaviour', size: '960x640', dpr: 1, echo
   page.on('console', (m) => {
     if (m.type() === 'error' || m.type() === 'warning') console.log(`[page ${m.type()}] ${m.text()}`);
   });
-  await page.goto(`https://localhost:${port}/nested.html?k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140&rimtop=${rimtop}&rimsnap=${rimsnap}`, { waitUntil: 'load' });
+  // (round 24: --q extra query, e.g. "edgeenh=0")
+  const extra = R.opt('q', '');
+  await page.goto(`https://localhost:${port}/nested.html?k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140&rimtop=${rimtop}&rimsnap=${rimsnap}${extra ? `&${extra}` : ''}`, { waitUntil: 'load' });
   // (NS-159: wait for the staged boot's pipelines, not only frames)
   await page.waitForFunction(() => window.nested && nested.app.frameCount > 60 && nested.app.pipesReady, { timeout: 180000, polling: 100 });
   await sleep(1500);

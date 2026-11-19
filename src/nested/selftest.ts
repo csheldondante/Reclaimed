@@ -40,11 +40,23 @@ function against(g: Cols, o: Level): number {
   for (const [key, c] of g) {
     const [x, y] = key.split(',').map(Number);
     const r = o.at(x, y)!;
-    if (c.mat.length !== r.mat.length || c.mat.some((v, i) => v !== r.mat[i])) return -1;
-    for (let i = 0; i < c.mat.length; i++) worst = Math.max(worst, Math.abs(c.z1[i] - r.z1[i]), i ? Math.abs(c.z0[i] - r.z0[i]) : 0);
+    const say = (w: string) => (worstAt = `${o.f.depth}:${key} ${w} gpu ${JSON.stringify({ ...c, edge: c.edge?.map((e) => e >>> 0) })} oracle ${JSON.stringify(r)}`);
+    if (c.mat.length !== r.mat.length || c.mat.some((v, i) => v !== r.mat[i])) {
+      say('structure');
+      return -1;
+    }
+    for (let i = 0; i < c.mat.length; i++) {
+      const d = Math.max(Math.abs(c.z1[i] - r.z1[i]), i ? Math.abs(c.z0[i] - r.z0[i]) : 0);
+      if (d > worst) {
+        worst = d;
+        say(`interval ${i}`);
+      }
+    }
   }
   return worst;
 }
+/** (round 24, diagnosis) where `against` found its worst (or the structure difference) */
+let worstAt = '';
 const frame = (L: number, w: Win, s: Snapshot): Frame => ({ depth: L, gx: w.gx, gy: w.gy, n: w.n, z0: s.zOrigin(L) });
 
 export async function selftest(device: GPUDevice, log: (c: Check) => void): Promise<Check[]> {
@@ -57,6 +69,9 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
   // a small pool on purpose: it must grow under load without loss (the self-test runs ops back to back, so it grows at
   // once instead of ahead)
   const g = new GpuNest(device, K, SEED, 16, { syncGrow: true });
+  // (round 24) ?edgeenh=1 (or ?rimsnap=1) checks edge-aware enhance on both sides
+  const uq = new URLSearchParams(location.search);
+  g.edgeEnh = uq.has('edgeenh') ? uq.get('edgeenh') === '1' : uq.get('rimsnap') === '1';
   // (every op here must run: a refusal is a failure, said in words)
   for (const op of ['edit', 'promote', 'slide'] as const) {
     const f = (g[op] as (...a: unknown[]) => boolean).bind(g);
@@ -71,6 +86,7 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
   const root = new Level({ depth: 0, gx: 0, gy: 0, n: ROOT, z0: 0 });
   for (let y = 0; y < ROOT; y++) for (let x = 0; x < ROOT; x++) root.set(x, y, s.column(0, x, y));
   const o = new Nest(root, K, SEED);
+  o.edgeEnh = g.edgeEnh;
   const sc = s.column(0, stripe.x, stripe.y);
   // (40 records at 24 a column page: two stacked pages)
   check('root: a column of 40 intervals spans two stacked column pages', sc.mat.length === 40 && s.page(0, stripe.x >> 4, stripe.y >> 4, 1) >= 0 && s.page(0, stripe.x >> 4, stripe.y >> 4, 2) < 0, `${sc.mat.length} intervals`);
@@ -236,7 +252,30 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
       const ms = (performance.now() - t0) / 9;
       s = await g.readAll();
       const removed = before - solidSum(levelCols(s, L, F));
-      const worst = Math.max(...[0, 1, 2].map((m) => against(levelCols(s, m, m === 0 ? { gx: 0, gy: 0, n: ROOT } : m === 1 ? F1 : F2), o.levels[m]) * K ** (L - m)));
+      const per = [0, 1, 2].map((m) => {
+        const w = against(levelCols(s, m, m === 0 ? { gx: 0, gy: 0, n: ROOT } : m === 1 ? F1 : F2), o.levels[m]) * K ** (L - m);
+        if (!(w >= 0 && w < TOL * 4)) {
+          console.error(`[selftest] tunnel depth ${L}, level ${m}: ${w} at ${worstAt}`);
+          // (round 24 diagnosis) the oracle's restrict of the GPU's own children there
+          const [kx, ky] = worstAt.split(' ')[0].split(':')[1].split(',').map(Number);
+          if (m < 2) {
+            const Fc = m === 0 ? F1 : F2;
+            const lc = new Level(frame(m + 1, Fc, s));
+            for (let y = Fc.gy; y < Fc.gy + Fc.n; y++) for (let x = Fc.gx; x < Fc.gx + Fc.n; x++) lc.set(x, y, s.column(m + 1, x, y));
+            const kids: string[] = [];
+            for (let b = 0; b < K; b++) for (let a = 0; a < K; a++) {
+              const c = lc.at(kx * K + a, ky * K + b)!;
+              const r = o.levels[m + 1].at(kx * K + a, ky * K + b)!;
+              const ge = (c.edge?.[c.mat.length - 1] ?? 0) >>> 0;
+              const oe = (r.edge?.[r.mat.length - 1] ?? 0) >>> 0;
+              if (ge !== oe || c.mat.length !== r.mat.length) kids.push(`#${b * K + a} gpu ${JSON.stringify(edgeDec(ge))} n ${c.mat.length} oracle ${JSON.stringify(edgeDec(oe))} n ${r.mat.length}`);
+            }
+            console.error(`[selftest] oracle restrict of the GPU children: ${JSON.stringify(o.restrictCell(lc, kx, ky))}; children top/edge/n ${kids.join(' ')}`);
+          }
+        }
+        return w;
+      });
+      const worst = per.some((w) => w < 0) ? -1 : Math.max(...per);
       const t = s.column(L, F.gx + 32, F.gy + 32);
       const gap = Math.max(...t.mat.map((_m, i) => (i ? t.z0[i] - t.z1[i - 1] : 0)));
       ok &&= worst >= 0 && worst < TOL * 4 && removed > 9 * 50 && removed < 9 * 113 * 1.1 && gap > 4;

@@ -3,6 +3,17 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-19 — nested scales round 24: continue on the snap; the data in the columns (`nested-scales`)
+
+The user, verbatim (through the coordinator), after the round 23 stills: continue on the snap rule; "the data should
+really all be in the columns and as long as we fix popin I don't really care if it's perfect as long as it looks
+good"; on a relaxation pass: "I almost wonder if there is some way to just do a relaxation step of the mesh before you
+display it but to keep the normals at creases?"; then the scope cut: "I don't want to waste too much time on the
+rendering".
+
+Consequence (round 24): edge-aware enhance built behind `?edgeenh=1` (on with `?rimsnap=1`), default off; the crossing
+rims and the relaxation step logged (BACKLOG NS-183, NS-184), not built.
+
 ## 2026-11-19 — nested scales round 23: the snap (`nested-scales`)
 
 The user, verbatim (through the coordinator): "is it not sufficient to just snap them to stay within some epsilon of

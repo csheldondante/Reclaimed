@@ -151,6 +151,9 @@ export class App {
     this.nest.rimTop = q.get('rimtop') === '1';
     // (round 23) ?rimsnap=1 the owner's snap (default off until the owner has seen the stills)
     this.nest.rimSnap = q.get('rimsnap') === '1';
+    // (round 24) ?edgeenh=1 edge-aware enhance (finer levels round, not the parent's staircase); on with ?rimsnap=1
+    // unless ?edgeenh=0; default off (the owner decides from the stills). A data option: set before the first derive.
+    this.nest.edgeEnh = q.has('edgeenh') ? q.get('edgeenh') === '1' : this.nest.rimSnap;
     this.render.bandsSplit = q.get('bands') === 'split';
     if (q.has('texbands')) this.render.texBands = Number(q.get('texbands'));
     // (round 21) the forest canopy from afar: ?canopy=0 off; ?canopyfade= its crossover footprint (world units a pixel)
