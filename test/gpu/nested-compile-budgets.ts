@@ -40,6 +40,9 @@ export const BUDGET_MS: Record<string, number> = {
   // (round 20) the textured draws and the sky, made after the first frame (first measured 214, 244, 34 ms: the floor)
   drawBoxesTex: 400,
   drawSheetsTex: 400,
+  // (round 31) the same with ?cliff=3's nested columns compiled in (CLIFF_V3; made only with ?cliff=3)
+  drawBoxesTexV3: 600,
+  drawSheetsTexV3: 600,
   drawSky: 400,
   capture: 400,
   captureSheet: 400,

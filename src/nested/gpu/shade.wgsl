@@ -329,6 +329,172 @@ fn shCol(si: ShadeIn, k: i32, steps: i32, drop: u32, sheet: bool) -> ShCol {
   return r;
 }
 
+// ---- (round 31, version 3, ?cliff=3; draw.wgsl CLIFF_V3 compiles it in) nested columns: a max-mip march -------------
+// Level 0: cells of a fixed world width (?cliffW=, default 16 m), tops as version 2 (the plane at the cell centre snapped
+// down to a half cell, less 0..2 drop hashed half cells). Level l + 1 halves the cell (2 x 2 children); a child's top is
+// its parent's less 0..2 drop of its own hashed half cells (no re-snap of the plane per level: that made a staircase per
+// level), so a parent bounds its descendants and coarse columns never move. The finest level D and its share are chosen
+// from the distance to the eye (dist x pxAng = a pixel), not from the pixel's derivatives, so neighbouring pixels agree:
+// level-0 cells over 2^D pixels at least ?cliffPx= (default 6); level D's drops, edge lines and tint grow in with the
+// fraction of the level (0 when it appears, full one level later). The march: step a level's cells while the ray is above
+// their tops; entering a cell below its top (or falling onto it) descends into its children (a max-mip heightfield trace);
+// leaving the parent goes back up. A hit at level D is the answer (side: the crossed face's axis; top: up). Bounds:
+// SC3_LCAP + 1 levels, SC3_ITER steps in all (descents and crossings), `steps` level-0 cells; else a miss.
+const SC3_LCAP: i32 = 5;
+const SC3_ITER: i32 = 40;
+/** level l's column top over cell rc (level-l cells from the start cell c0's corner), relative to the pixel, level-0 cells */
+fn sc3Top(l: i32, rc: vec2<i32>, c0: vec2<i32>, p0: vec2<f32>, gn: vec3<f32>, zAbs: f32, parent: f32, amp: f32, drop: u32) -> f32 {
+  let sz = ldexp(1.0, -l);
+  let a = (c0 << vec2<u32>(u32(l))) + rc;
+  let dz = f32(shH3(a.x, a.y, 5099 + l * 7919) % (2u * drop + 1u)) * 0.5 * sz;
+  if (l == 0) {
+    let ctr = vec2<f32>(rc) + vec2<f32>(0.5) - p0;
+    let hc = -(gn.x * ctr.x + gn.y * ctr.y) / gn.z;
+    return floor((zAbs + hc) * 2.0) * 0.5 - dz - zAbs;
+  }
+  return parent - amp * dz;
+}
+fn shCol3(si: ShadeIn, k: i32, steps: i32, drop: u32, pxAng: f32, pxT: f32) -> ShCol {
+  let ng = si.ng;
+  var r = ShCol(0.0, ng, 1.0, 1.0, false);
+  if (ng.z < -0.01) { return r; }
+  // a level-0 cell in pixels, by the distance alone
+  let cellPx = ldexp(1.0, k) / max(si.distW * pxAng, 1e-30);
+  let w = shSteep(ng, si.cliff) * clamp(log2(cellPx) - 1.6, 0.0, 1.0);
+  if (w <= 0.0) { return r; }
+  // the finest level and its share
+  let lf = clamp(log2(cellPx / max(pxT, 1.0)), 0.0, f32(SC3_LCAP));
+  let li = i32(floor(lf));
+  let fr = lf - f32(li);
+  let D = select(li, li + 1, fr > 0.0 && li < SC3_LCAP);
+  let ampD = select(1.0, fr, D > li);
+  let p = si.p;
+  let e = -p.s - k;
+  let sx0 = dbSplit(p.o.x, p.f.x, e);
+  let sy0 = dbSplit(p.o.y, p.f.y, e);
+  let c0 = vec2<i32>(sx0.c, sy0.c);
+  let p0 = vec2<f32>(sx0.t, sy0.t);
+  let zAbs = ldexp(p.zo + ldexp(p.f.z, -p.s), -k);
+  let gn = vec3<f32>(ng.xy, max(ng.z, 0.05));
+  let v = si.view;
+  let sx = select(-1, 1, v.x >= 0.0);
+  let sy = select(-1, 1, v.y >= 0.0);
+  let okx = abs(v.x) > 1e-6;
+  let oky = abs(v.y) > 1e-6;
+  var tops: array<f32, 6>;
+  var l = 0;
+  var rc = vec2<i32>(0);
+  tops[0] = sc3Top(0, rc, c0, p0, gn, zAbs, 0.0, 1.0, drop);
+  var t = 0.0;
+  var crossed = false;
+  var hit = false;
+  var hn = vec3<f32>(0.0, 0.0, 1.0);
+  var n0 = 0;
+  for (var it = 0; it < SC3_ITER; it++) {
+    let sz = ldexp(1.0, -l);
+    let T = tops[l];
+    let z = v.z * t;
+    let lo = vec2<f32>(rc) * sz;
+    let tx = select(1e30, (select(lo.x, lo.x + sz, v.x >= 0.0) - p0.x) / v.x, okx);
+    let ty = select(1e30, (select(lo.y, lo.y + sz, v.y >= 0.0) - p0.y) / v.y, oky);
+    let tExit = min(tx, ty);
+    var down = false;
+    if (z < T - 1e-4 * sz) {
+      // inside this cell's column: a hit at the finest level, else into the children
+      if (l >= D) {
+        hit = true;
+        if (!crossed) {
+          // (the start: back along the ray to the cell's top or the face it came through)
+          let bx = select(1e30, select(lo.x + sz - p0.x, p0.x - lo.x, v.x >= 0.0) / abs(v.x), okx);
+          let by = select(1e30, select(lo.y + sz - p0.y, p0.y - lo.y, v.y >= 0.0) / abs(v.y), oky);
+          let bt = select(1e30, T / -v.z, v.z < 0.0);
+          if (bt <= min(bx, by)) {
+            t = -bt;
+            hn = vec3<f32>(0.0, 0.0, 1.0);
+          } else if (bx < by) {
+            t = -bx;
+            hn = vec3<f32>(-f32(sx), 0.0, 0.0);
+          } else {
+            t = -by;
+            hn = vec3<f32>(0.0, -f32(sy), 0.0);
+          }
+        }
+        break;
+      }
+      down = true;
+    } else if (v.z < 0.0) {
+      // falling onto this cell's top inside it
+      let tt = t + (T - z) / v.z;
+      if (tt <= tExit) {
+        t = tt;
+        if (l >= D) {
+          hit = true;
+          hn = vec3<f32>(0.0, 0.0, 1.0);
+          break;
+        }
+        down = true;
+      }
+    }
+    if (down) {
+      let pp = p0 + v.xy * (t + 1e-4 * sz);
+      l += 1;
+      rc = clamp(vec2<i32>(floor(pp / (0.5 * sz))), rc * 2, rc * 2 + vec2<i32>(1));
+      tops[l] = sc3Top(l, rc, c0, p0, gn, zAbs, tops[l - 1], select(1.0, ampD, l == D), drop);
+      continue;
+    }
+    // across the face to the neighbour; up while it is outside the parent
+    t = tExit;
+    crossed = true;
+    var st = vec2<i32>(0);
+    if (tx < ty) {
+      st.x = sx;
+      hn = vec3<f32>(-f32(sx), 0.0, 0.0);
+    } else {
+      st.y = sy;
+      hn = vec3<f32>(0.0, -f32(sy), 0.0);
+    }
+    var nr = rc + st;
+    for (var u = 0; u < SC3_LCAP; u++) {
+      if (l == 0) { break; }
+      if (all((nr >> vec2<u32>(1u)) == (rc >> vec2<u32>(1u)))) { break; }
+      l -= 1;
+      rc = rc >> vec2<u32>(1u);
+      nr = rc + st;
+    }
+    rc = nr;
+    if (l == 0) {
+      n0 += 1;
+      if (n0 > steps) { break; }
+      tops[0] = sc3Top(0, rc, c0, p0, gn, zAbs, 0.0, 1.0, drop);
+    } else {
+      tops[l] = sc3Top(l, rc, c0, p0, gn, zAbs, tops[l - 1], select(1.0, ampD, l == D), drop);
+    }
+  }
+  if (!hit) {
+    r.miss = true;
+    return r;
+  }
+  // ---- the hit, as version 2, at the hit's level; the finest level's lines and tint grown in by its share
+  let sz = ldexp(1.0, -l);
+  let lpx = cellPx * sz;
+  let share = select(1.0, ampD, l == D && D > li);
+  let hp = p0 + v.xy * t;
+  let lw = max(0.04, 0.9 / lpx);
+  let fa = fract(select(hp.x, hp.y, abs(hn.x) > 0.5) / sz);
+  let edge = share * select(1.0 - smoothstep(0.5 * lw, lw, min(fa, 1.0 - fa)), 0.0, hn.z > 0.5);
+  let rim = select((1.0 - smoothstep(lw, lw + 0.08, (tops[l] - v.z * t) / sz)) * (1.0 - edge), 0.0, hn.z > 0.5);
+  let a = (c0 << vec2<u32>(u32(l))) + rc;
+  let ap = (c0 << vec2<u32>(u32(max(l - 1, 0)))) + (rc >> vec2<u32>(select(0u, 1u, l > 0)));
+  let jl = f32(shH3(a.x + 40503, a.y - 7919, 31 + l) & 1023u) / 1023.0;
+  let jp = f32(shH3(ap.x + 40503, ap.y - 7919, 31 + max(l - 1, 0)) & 1023u) / 1023.0;
+  let j = mix(jp, jl, share);
+  r.w = w;
+  r.n = hn;
+  r.tint = (0.80 + 0.32 * j) * (1.0 - 0.55 * edge) * (1.0 + 0.2 * rim);
+  r.ao = (1.0 - 0.6 * edge) * mix(1.0, 0.5, smoothstep(0.0, 1.0, abs(t)));
+  return r;
+}
+
 // ---- (round 31, look experiment, ?cliff=1) steep ground shaded as stacked faceted stone blocks, no new geometry --------
 // Where the geometric slope passes si.cliff (rise over run; faded in over T / 1.25 .. T x 1.25): the wall is split on a
 // grid of the DRAWN level's columns in plan (one column wide; ?cliffW= metres: a fixed world width instead, a power of two

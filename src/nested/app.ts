@@ -159,8 +159,13 @@ export class App {
     this.render.slide = q.get('slide') === '1';
     // (round 31, look experiment) ?cliff=1 steep ground as faceted blocks; ?cliffT= its slope threshold (rise over run)
     // (version 2) ?cliff=2 the ray-marched standing columns; ?cliffN= its cells at most (default 4)
-    this.render.cliff = q.get('cliff') === '1' || q.get('cliff') === '2';
-    this.render.cliffV = q.get('cliff') === '2' ? 2 : 1;
+    // (version 3) ?cliff=3 nested columns, compiled into the textured pipelines only then (draw.wgsl CLIFF_V3); ?cliffPx=
+    // its finest cells at least, pixels (default 6); its levels take ?cliffDrop= in each level's own cells
+    const cv = q.get('cliff');
+    this.render.cliff = cv === '1' || cv === '2' || cv === '3';
+    this.render.cliffV = cv === '3' ? 3 : cv === '2' ? 2 : 1;
+    this.render.cliffV3Built = cv === '3';
+    if (q.has('cliffPx')) this.render.cliffPx = Number(q.get('cliffPx'));
     if (q.has('cliffN')) this.render.cliffN = Number(q.get('cliffN'));
     if (q.has('cliffT')) this.render.cliffT = Number(q.get('cliffT'));
     // (version 2) ?cliffSmooth=1 tops within cliffT cells of each other joined by a smooth sheet; ?cliffDrop= the hashed drop
@@ -905,6 +910,8 @@ export class App {
       if (this.cruiseOn) speed = Math.max(speed, (1.5 * cs) / Math.max(1e-9, this.dNear));
     }
     this.nest.camIn.set([this.move[0], this.move[1], this.move[2], this.placeReq ? 1 : 0, this.yaw, this.pitch, W / H, speed, FOVY, ndc[0], ndc[1], dt]);
+    // (round 31, version 3) a pixel's size per unit of distance from the eye: the columns' finest level chosen by distance
+    this.render.pxAng = (2 * Math.tan(FOVY / 2)) / H;
     this.placeReq = null;
     this.move = [0, 0, 0];
     this.nest.camera();

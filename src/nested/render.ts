@@ -28,7 +28,7 @@ function texEntries(): GPUBindGroupLayoutEntry[] {
 }
 
 const DU = 256;
-const DU_SIZE = 176;
+const DU_SIZE = 192;
 /** a grid's model matrix: one root grid at the world origin today (identity); another grid would carry its rigid frame */
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
@@ -181,8 +181,15 @@ export class Renderer {
    *  `cliffCut` turns the cut on and off at run time (on by default when compiled in) */
   cliffCutBuilt = false;
   cliffCut = false;
-  /** (round 31) which look: 1 the shaded blocks (shCliff), 2 the ray-marched columns (shCol, ?cliff=2) */
-  cliffV: 1 | 2 = 1;
+  /** (round 31) which look: 1 the shaded blocks (shCliff), 2 the ray-marched columns (shCol, ?cliff=2), 3 the nested
+   *  columns (shCol3, ?cliff=3: only when the pipelines were made with it, cliffV3Built) */
+  cliffV: 1 | 2 | 3 = 1;
+  /** (version 3) ?cliff=3 at load: the textured pipelines made with version 3 compiled in (draw.wgsl CLIFF_V3) */
+  cliffV3Built = false;
+  /** (version 3) ?cliffPx= the finest level's cells at least, pixels (by distance; default 6) */
+  cliffPx = 6;
+  /** (version 3) a pixel's size per unit of distance from the eye (set by the app each frame from the field of view) */
+  pxAng = 0.001;
   /** (version 2) ?cliffN= the march's cells at most (default 4, 1-15) */
   cliffN = 4;
   /** (version 2) ?cliffSmooth=1: neighbouring columns whose tops differ by at most cliffT cells joined by a smooth sheet */
@@ -191,7 +198,10 @@ export class Renderer {
   cliffDrop = 1;
   /** the fragment constants of the textured pipelines */
   private texConsts(): Record<string, number> {
-    return this.cliffCutBuilt ? { CLIFF_CUT: 1 } : {};
+    const c: Record<string, number> = {};
+    if (this.cliffCutBuilt) c.CLIFF_CUT = 1;
+    if (this.cliffV3Built) c.CLIFF_V3 = 1;
+    return c;
   }
   private texPipes: { box: GPURenderPipeline; sheet: GPURenderPipeline; sky: GPURenderPipeline } | null = null;
   private texCompile: Promise<void> | null = null;
@@ -537,15 +547,17 @@ export class Renderer {
       // (misc2.y, round 22: the sheets' slide, ?slide= / "Round edges")
       // (misc2.z, round 31: ?cliff: bits 0-11 the slope threshold x 100, 0 off; 12-15 version 2's hashed drop, cells;
       // 16-23 the width code (0: a column of the level; else 128 + log2 of the width in shading units); 24-27 version 2's
-      // steps; 28 its smooth tops; 30 version 2; 31 the cut: draw.wgsl texOut)
+      // steps; 28 its smooth tops; 29 version 3 (with 30); 30 version 2; 31 the cut: draw.wgsl texOut)
       let cliffBits = 0;
       if (this.cliff) {
         const shadeUnitM = this.mpu / 2 ** this.shadeS;
         // (version 2: fixed world cells, 4 m by default)
-        const wm = this.cliffV === 2 && this.cliffW <= 0 ? 4 : this.cliffW;
+        // (version 3, bit 29 with bit 30: the nested columns, 16 m level 0 cells by default; only if compiled in)
+        const v3 = this.cliffV === 3 && this.cliffV3Built;
+        const wm = this.cliffW > 0 ? this.cliffW : this.cliffV === 2 ? 4 : v3 ? 16 : 0;
         const wc = wm > 0 ? 128 + Math.round(Math.log2(wm / shadeUnitM)) : 0;
         const drop = Math.min(15, Math.max(0, Math.round(this.cliffDrop))) << 12;
-        const v2 = this.cliffV === 2 ? (0x40000000 | (Math.min(15, Math.max(1, this.cliffN)) << 24) | (this.cliffSmooth ? 0x10000000 : 0)) : 0;
+        const v2 = this.cliffV === 2 || v3 ? (0x40000000 | (Math.min(15, Math.max(1, this.cliffN)) << 24) | (this.cliffSmooth ? 0x10000000 : 0) | (v3 ? 0x20000000 : 0)) : 0;
         cliffBits = (Math.min(4095, Math.max(1, Math.round(this.cliffT * 100))) | drop | (wc << 16) | v2 | (this.cliffCut ? 0x80000000 : 0)) >>> 0;
       }
       new Uint32Array(st, lv.depth * DU + 64, 4).set([this.nest.cap, this.slide ? 1 : 0, cliffBits, pages[lv.depth] ?? 0]);
@@ -556,6 +568,8 @@ export class Renderer {
       // (round 25) metres a world unit, the fog's distance (metres), the shading's scale
       // (round 27) w: ?tex=2's fine tile, log2 tiles a world unit (2 m tiles: 6 with 128 m root columns)
       new Float32Array(st, lv.depth * DU + 160, 4).set([this.mpu, this.fogM, this.shadeS, Math.round(Math.log2(this.mpu / TEX_TILE_M))]);
+      // (round 31, version 3) x a pixel's size per unit of distance (the level chosen by distance), y ?cliffPx=
+      new Float32Array(st, lv.depth * DU + 176, 4).set([this.pxAng, this.cliffPx, 0, 0]);
     }
     this.device.queue.writeBuffer(this.ubuf, 0, st);
   }

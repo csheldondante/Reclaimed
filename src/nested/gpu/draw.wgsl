@@ -22,6 +22,8 @@ struct DrawU {
   // z the textured shading's scale: its bands and materials in world units / 2^z (5 at 128 m: 4 m, near the 3.2 m root
   // column their constants were tuned at); (round 27) w: ?tex=2's fine tile, log2 tiles a world unit (6: 2 m tiles)
   geo: vec4<f32>,
+  // (round 31, version 3) x a pixel's size per unit of distance from the eye, y ?cliffPx= (the finest cells, pixels)
+  cl: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> d: DrawU;
@@ -629,6 +631,9 @@ fn levelS() -> i32 { return i32(d.lvl.w) * i32(round(log2(d.misc.w))); }
 // looks down (the stack top raised by up to a unit from 0.2 to 0.5 of the view's downward component). Compiled in only
 // when the pipelines are made with the override (?cliffcut=1 at load: render.ts); the cut itself is a run-time bit.
 override CLIFF_CUT: bool = false;
+/** (round 31, version 3) the nested columns (shade.wgsl shCol3) compiled in only when the pipelines are made with it
+ *  (?cliff=3 at load): it costs compile time the other looks must not pay */
+override CLIFF_V3: bool = false;
 /** the top of column (L, X, Y): the top of its highest solid record (local units); very low when none */
 fn cliffColTop(L: u32, X: i32, Y: i32) -> f32 {
   let n = recCount(L, X, Y);
@@ -688,7 +693,13 @@ fn texOut(q: vec3<f32>, zo: f32, ng: vec3<f32>, mat: u32, pxL: f32, toEye: vec3<
   if (((cz >> 30u) & 1u) != 0u) {
     // (version 2, ?cliff=2, bit 30: the marched columns, cells of 2^(wc - 128) shading units)
     if (si.cliff > 0.0) {
-      let col = shCol(si, wc - 128, i32((cz >> 24u) & 15u), (cz >> 12u) & 15u, ((cz >> 28u) & 1u) != 0u);
+      var col: ShCol;
+      if (CLIFF_V3 && ((cz >> 29u) & 1u) != 0u) {
+        // (version 3, bit 29: the nested columns; the finest level by distance: d.cl.x a pixel per unit of distance)
+        col = shCol3(si, wc - 128, i32((cz >> 24u) & 15u), (cz >> 12u) & 15u, d.cl.x, d.cl.y);
+      } else {
+        col = shCol(si, wc - 128, i32((cz >> 24u) & 15u), (cz >> 12u) & 15u, ((cz >> 28u) & 1u) != 0u);
+      }
       if (CLIFF_CUT && col.miss && (cz >> 31u) != 0u) { discard; }
       si.colW = col.w;
       si.colN = col.n;

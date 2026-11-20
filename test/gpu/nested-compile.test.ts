@@ -42,11 +42,11 @@ it('nested: both modules compile; every pipeline within its compile budget', asy
   const draw = await mod('draw', drawModuleCode(4, 64));
   expect(errs, errs.join('\n')).toEqual([]);
   for (const [name, entryPoint, constants] of COMPUTE) await timed(name, () => device.createComputePipelineAsync({ layout: 'auto', compute: { module: nest, entryPoint, constants } }));
-  const render = (vs: string, fs: string) => () =>
+  const render = (vs: string, fs: string, constants: Record<string, number> = {}) => () =>
     device.createRenderPipelineAsync({
       layout: 'auto',
       vertex: { module: draw, entryPoint: vs },
-      fragment: { module: draw, entryPoint: fs, targets: [{ format: 'bgra8unorm' }, { format: 'rgba8unorm' }] },
+      fragment: { module: draw, entryPoint: fs, constants, targets: [{ format: 'bgra8unorm' }, { format: 'rgba8unorm' }] },
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' },
     });
@@ -55,6 +55,9 @@ it('nested: both modules compile; every pipeline within its compile budget', asy
   // (round 20) the textured draws and the sky (made after the first frame)
   await timed('drawBoxesTex', render('vs', 'fsT'));
   await timed('drawSheetsTex', render('vsSheet', 'fsST'));
+  // (round 31) ?cliff=3: the textured draws with version 3's nested columns compiled in (made only then)
+  await timed('drawBoxesTexV3', render('vs', 'fsT', { CLIFF_V3: 1 }));
+  await timed('drawSheetsTexV3', render('vsSheet', 'fsST', { CLIFF_V3: 1 }));
   await timed('drawSky', () => device.createRenderPipelineAsync(skyDesc('auto', draw, 'bgra8unorm')));
   // (round 27) ?tex=2: the tiling textures' draws (made when first wanted) and their generator (after every boot pipeline)
   await timed('drawBoxesTex2', render('vs', 'fsT2'));
