@@ -118,17 +118,68 @@ struct VBox {
 }
 const CR5_TRI = array<u32, 6>(0u, 1u, 2u, 0u, 2u, 3u);
 
+// ---- (step B3) the box pass's cost where boxes overlap on screen (NS-292) --------------------------------------------
+/** (B3) back faces collapsed in the vertex stage when the eye is outside the box (the fragment stage discarded them) */
+override CR5_CULL: bool = true;
+/** (B3) the box's solid part below its floor L drawn first as plain faces (vsLow5 / fsLow5); the marched box from L */
+override CR5_LOW: bool = true;
+/** (B3) the box list read in a front-to-back order (the build's two diagonal lists, cliffbuild.wgsl crSort*) */
+override CR5_ORDER: bool = true;
+/** (B3) with CR5_LOW, the marched box's faces start at L instead of Lb (fewer fragments rasterized; but its vertices
+ *  move, so the interpolated entry point changes by rounding and pixels on column boundaries can flip) */
+override CR5_TRIM: bool = false;
+
+/** (B3) the box list entry for instance inst: with CR5_ORDER the diagonal list whose order is front to back for the
+ *  camera's forward direction (its quadrant in plan; a list read backwards for the opposite quadrant): a ray in that
+ *  quadrant crosses cells in nondecreasing (or nonincreasing) x and y, so a box that can hide another comes first.
+ *  Table tail: [n x n records][the unordered list, n x n][count][list by x + y, n x n][list by x - y, n x n] */
+fn cr5Entry(inst: u32) -> u32 {
+  let g = cr5Win();
+  let nn = u32(g.z * g.z);
+  let tail = CR_REC * nn;
+  if (!CR5_ORDER) { return crTab[tail + inst]; }
+  let cnt = crTab[tail + nn];
+  // (the camera's forward in the level's local frame: the view-projection's w row, the same for every instance)
+  let m = vpOf(CR_LV) * d.model;
+  let fw = vec2<f32>(m[0].w, m[1].w);
+  // (x + y ascending is front to back when forward has fx >= 0 and fy >= 0; x - y ascending when fx >= 0, fy <= 0)
+  let diagB = (fw.x >= 0.0) != (fw.y >= 0.0);
+  let rev = select(fw.x + fw.y < 0.0, fw.x - fw.y < 0.0, diagB);
+  let k = select(inst, cnt - 1u - min(inst, cnt - 1u), rev);
+  return crTab[tail + nn + 1u + select(0u, nn, diagB) + k];
+}
+/** (B3) the eye in the cell's frame (fine columns: x, y 0..64, z units / 16) and whether it is inside the box (Lb..Ht):
+ *  the same expressions as fsBox5's, so the vertex cull agrees with the fragment test */
+fn cr5Inside(eye: vec3<f32>, org: vec2<f32>, idx: u32) -> bool {
+  let eyeP = vec3<f32>((eye.xy - org) * 64.0, eye.z * 64.0);
+  let Lbf = f32(bitcast<i32>(crTab[idx * CR_REC + 6u])) / 16.0;
+  let Htf = f32(cr5Top(idx)) / 16.0;
+  return all(eyeP.xy > vec2<f32>(0.0)) && all(eyeP.xy < vec2<f32>(64.0)) && eyeP.z > Lbf && eyeP.z < Htf;
+}
+
 @vertex
 fn vsBox5(@builtin(vertex_index) vi: u32, @builtin(instance_index) inst: u32) -> VBox {
+  return cr5BoxVert(vi, inst, CR5_LOW && CR5_TRIM, false);
+}
+/** (B3) the box's solid part below its floor L: the four sides from Lb to L (36 vertices drawn, top and bottom collapsed) */
+@vertex
+fn vsLow5(@builtin(vertex_index) vi: u32, @builtin(instance_index) inst: u32) -> VBox {
+  return cr5BoxVert(vi, inst, false, true);
+}
+/** the box's vertex vi: the whole box (Lb..Ht), the marched part above L (fromL), or the solid part below L (low) */
+fn cr5BoxVert(vi: u32, inst: u32, fromL: bool, low: bool) -> VBox {
   var o: VBox;
   let g = cr5Win();
-  let ent = crTab[CR_REC * u32(g.z * g.z) + inst];
+  let ent = cr5Entry(inst);
   let lx = i32(ent & 0xffffu);
   let ly = i32(ent >> 16u);
   let idx = u32(ly * g.z + lx);
-  let H = cr5Top(idx);
-  // (from the box's bottom Lb, below L: its sides reach any lower neighbouring floor or sheet)
-  let L = bitcast<i32>(crTab[idx * CR_REC + 6u]);
+  let Lf = bitcast<i32>(crTab[idx * CR_REC + 2u]);
+  let Lb = bitcast<i32>(crTab[idx * CR_REC + 6u]);
+  // (from the box's bottom Lb, below L: its sides reach any lower neighbouring floor or sheet. B3: the marched part starts
+  // at L when the solid part is drawn on its own; that part ends at L)
+  let H = select(cr5Top(idx), Lf, low);
+  let L = select(Lb, Lf, fromL && !low);
   let f = vi / 6u;
   let k = CR5_TRI[vi % 6u];
   let u = f32(k == 1u || k == 2u);
@@ -149,6 +200,14 @@ fn vsBox5(@builtin(vertex_index) vi: u32, @builtin(instance_index) inst: u32) ->
   o.pos = vpOf(CR_LV) * (d.model * vec4<f32>(lp, 1.0));
   let eb = 32u + CR_LV * 24u;
   let eye = vec3<f32>(cam[eb + 16u], cam[eb + 17u], cam[eb + 18u]);
+  // (B3) a face the fragment stage would discard at every pixel is collapsed here: with the eye outside the box, a face
+  // turned away from it and the bottom (fsBox5: !inside && (!front || face 5)); the solid part's top and bottom always,
+  // and its faces when the eye is inside the box (fsBox5 discarded below L then)
+  if (CR5_CULL || low) {
+    let ins = cr5Inside(eye, org, idx);
+    let back = dot(NRM[f], eye - lp) <= 0.0;
+    if ((low && (f >= 4u || ins)) || (!ins && (back || f == 5u))) { o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0); }
+  }
   o.q = lp;
   o.toEye = eye - lp;
   o.dEye = length(o.toEye);
@@ -231,10 +290,107 @@ fn cr5Strata(pm: vec3<f32>, pxM: f32) -> f32 {
   return cr5Layer(z, 2.0, 0.75, 0x7101, pxM, 0.24) * cr5Layer(z, 0.6, 0.22, 0x7202, pxM, 0.10);
 }
 
+/** (B3) the shading of the box's side below L (the ground's own wall down to a lower neighbour: no march) */
+fn cr5Low(v: VBox) -> FOut {
+  let P = vec3<f32>((v.q.xy - v.org) * 64.0, v.q.z * 64.0);
+  let q0 = vec3<f32>(P.xy / 64.0 + v.org, P.z / 64.0);
+  let n0 = NRM[v.face];
+  // (B3: the distance from toEye, which interpolates exactly, not the interpolated dEye: a length interpolated over the
+  // triangle depends on the triangle, so the solid part's own faces shaded the texture detail differently close up)
+  let dE = length(v.toEye);
+  let c0 = cr5Shade(q0, v.zo, n0, 1u, d.cl.x * dE, v.toEye, dE, true, 0.8);
+  var o0: FOut;
+  o0.color = vec4<f32>(c0, 1.0);
+  o0.info = vec4<f32>(1.0, f32(d.lvl.w) / 8.0, 0.0, select(1.0, 0.5, u32(d.cl.z) == 12u));
+  return o0;
+}
+/** (B3) the solid part below L, drawn before the marched boxes: plain faces, no discard, so its depth is written early and
+ *  the marched fragments behind it can be rejected before their fragment stage */
+@fragment
+fn fsLow5(v: VBox) -> FOut {
+  return cr5Low(v);
+}
+
+/** a box fragment's march: code 0 nothing (discard), 1 the side below L (cr5Low), 2 marched (hk 0: a miss) */
+struct Cr5M {
+  code: u32,
+  hk: u32,
+  hp: vec3<f32>,
+  axis: u32,
+  dir: vec3<f32>,
+  steps: i32,
+  start: vec3<f32>,
+  eyeP: vec3<f32>,
+}
+
 @fragment
 fn fsBox5(v: VBox) -> FOut {
-  let r = cr5Cell(v.cell);
+  let m = cr5March(v);
+  if (m.code == 0u) { discard; }
+  // (B3: with the solid part drawn first, it already shaded this pixel at this depth: no second shading)
+  if (m.code == 1u) {
+    if (CR5_LOW && !CR5_TRIM) { discard; }
+    return cr5Low(v);
+  }
+  let steps = m.steps;
+  var hk = m.hk;
+  let hp = m.hp;
+  let dir = m.dir;
+  let axis = m.axis;
+  let eyeP = m.eyeP;
   let mat = (crTab[v.cell * CR_REC] >> 12u) & 15u;
+  // (?cliffDbg=12: march steps / CR5_CAP, flat, misses included; 13 the hit kind. The info target carries the steps in b
+  // (/255) and 0.5 in a, so a readback can count them: scripts/nested-rB2-stills.mjs)
+  if (u32(d.cl.z) == 12u || u32(d.cl.z) == 13u) {
+    var o: FOut;
+    let t = f32(steps) / f32(CR5_CAP);
+    o.color = vec4<f32>(select(vec3<f32>(t, 1.0 - abs(2.0 * t - 1.0), 1.0 - t), TINTS[hk], u32(d.cl.z) == 13u), 1.0);
+    o.info = vec4<f32>(1.0, f32(d.lvl.w) / 8.0, f32(steps) / 255.0, 0.5);
+    // (13: a miss is discarded as in the plain draw, so coplanar faces of neighbouring boxes do not fight)
+    if (hk == 0u && u32(d.cl.z) == 13u) { discard; }
+    return o;
+  }
+  if (hk == 0u) { discard; }
+  var nrm = vec3<f32>(0.0, 0.0, 1.0);
+  // (4: a sheet neighbour's edge wall, shaded as a column side)
+  if (hk == 4u) { hk = 1u; }
+  if (hk == 1u) { nrm = select(vec3<f32>(0.0, -sign(dir.y), 0.0), vec3<f32>(-sign(dir.x), 0.0, 0.0), axis == 0u); }
+  let q = vec3<f32>(hp.xy / 64.0 + v.org, hp.z / 64.0);
+  let toEye = (eyeP - hp) / 64.0;
+  let dE = length(toEye);
+  // the recess: darker the further the hit lies in from where the ray entered the box (plan distance, fine columns)
+  let ao = mix(1.0, 0.55, smoothstep(0.0, 32.0, length((hp - m.start).xy)));
+  let col = cr5Shade(q, v.zo, nrm, select(mat, 1u, hk == 1u), d.cl.x * dE, toEye, dE, hk == 1u, ao);
+  var o: FOut;
+  o.color = vec4<f32>(col, 1.0);
+  o.info = vec4<f32>(1.0, f32(d.lvl.w) / 8.0, 0.0, 1.0);
+  return o;
+}
+
+/** (B3, measurement only: render.cliffCount) the box pass's overdraw, added into an rgba16float target: CNT_ALL with no
+ *  depth test, every fragment rasterized in r and those past the front test in g; CNT_DEPTH against the depth so far,
+ *  the fragments that march in b and their march steps in a */
+@fragment
+fn fsBox5CntAll(v: VBox) -> @location(0) vec4<f32> {
+  let m = cr5March(v);
+  return vec4<f32>(1.0, select(1.0, 0.0, m.code == 0u), 0.0, 0.0);
+}
+@fragment
+fn fsBox5CntDepth(v: VBox) -> @location(0) vec4<f32> {
+  let m = cr5March(v);
+  return vec4<f32>(0.0, 0.0, select(0.0, 1.0, m.code == 2u), select(0.0, f32(m.steps), m.code == 2u));
+}
+
+/** (B3, measurement) the solid parts below L into the count pass's depth, adding nothing */
+@fragment
+fn fsLow5Cnt(v: VBox) -> @location(0) vec4<f32> {
+  return vec4<f32>(0.0);
+}
+
+fn cr5March(v: VBox) -> Cr5M {
+  var res: Cr5M;
+  res.code = 0u;
+  let r = cr5Cell(v.cell);
   let mm = bitcast<i32>(crTab[v.cell * CR_REC + 7u]);
   let g = cr5Win();
   let cx = g.x + i32(v.cell % u32(g.z));
@@ -251,21 +407,20 @@ fn fsBox5(v: VBox) -> FOut {
   let Htf = f32(cr5Top(v.cell)) / 16.0;
   let inside = all(eyeP.xy > vec2<f32>(0.0)) && all(eyeP.xy < vec2<f32>(64.0)) && eyeP.z > Lbf && eyeP.z < Htf;
   let front = dot(NRM[v.face], v.toEye) > 0.0;
-  if (!inside && (!front || v.face == 5u)) { discard; }
+  if (!inside && (!front || v.face == 5u)) { return res; }
   var p = select(P, eyeP, inside);
+  res.start = p;
+  res.eyeP = eyeP;
+  res.dir = dir;
   // the entry axis: 0 x, 1 y, 2 the top, 3 none (the eye inside)
   var axis = select(select(select(2u, 1u, v.face == 2u || v.face == 3u), 0u, v.face <= 1u), 3u, inside);
-  // (a side face entered below L: the ground's own wall down to a lower neighbour; the eye below L: inside the ground)
+  // (a side face entered below L: the ground's own wall down to a lower neighbour (cr5Low); the eye below L: inside the
+  // ground)
   if (p.z < Lf) {
-    if (inside) { discard; }
-    let q0 = vec3<f32>(P.xy / 64.0 + v.org, P.z / 64.0);
-    let n0 = NRM[v.face];
-    let c0 = cr5Shade(q0, v.zo, n0, 1u, d.cl.x * v.dEye, v.toEye, v.dEye, true, 0.8);
-    var o0: FOut;
-    o0.color = vec4<f32>(c0, 1.0);
-    o0.info = vec4<f32>(1.0, f32(d.lvl.w) / 8.0, 0.0, select(1.0, 0.5, u32(d.cl.z) == 12u));
-    return o0;
+    res.code = select(1u, 0u, inside);
+    return res;
   }
+  res.code = 2u;
   // the finest level wanted: its cells at least ?cliffPx= pixels (d.cl.y) at the distance reached along the ray (d.cl.x a
   // pixel per unit of distance), chosen again at every step
   let pxK = d.cl.x * 64.0 * max(d.cl.y, 0.25);
@@ -367,30 +522,9 @@ fn fsBox5(v: VBox) -> FOut {
     }
     hp = p;
   }
-  // (?cliffDbg=12: march steps / CR5_CAP, flat, misses included; 13 the hit kind. The info target carries the steps in b
-  // (/255) and 0.5 in a, so a readback can count them: scripts/nested-rB2-stills.mjs)
-  if (u32(d.cl.z) == 12u || u32(d.cl.z) == 13u) {
-    var o: FOut;
-    let t = f32(steps) / f32(CR5_CAP);
-    o.color = vec4<f32>(select(vec3<f32>(t, 1.0 - abs(2.0 * t - 1.0), 1.0 - t), TINTS[hk], u32(d.cl.z) == 13u), 1.0);
-    o.info = vec4<f32>(1.0, f32(d.lvl.w) / 8.0, f32(steps) / 255.0, 0.5);
-    // (13: a miss is discarded as in the plain draw, so coplanar faces of neighbouring boxes do not fight)
-    if (hk == 0u && u32(d.cl.z) == 13u) { discard; }
-    return o;
-  }
-  if (hk == 0u) { discard; }
-  var nrm = vec3<f32>(0.0, 0.0, 1.0);
-  // (4: a sheet neighbour's edge wall, shaded as a column side)
-  if (hk == 4u) { hk = 1u; }
-  if (hk == 1u) { nrm = select(vec3<f32>(0.0, -sign(dir.y), 0.0), vec3<f32>(-sign(dir.x), 0.0, 0.0), axis == 0u); }
-  let q = vec3<f32>(hp.xy / 64.0 + v.org, hp.z / 64.0);
-  let toEye = (eyeP - hp) / 64.0;
-  let dE = length(toEye);
-  // the recess: darker the further the hit lies in from where the ray entered the box (plan distance, fine columns)
-  let ao = mix(1.0, 0.55, smoothstep(0.0, 32.0, length((hp - select(P, eyeP, inside)).xy)));
-  let col = cr5Shade(q, v.zo, nrm, select(mat, 1u, hk == 1u), d.cl.x * dE, toEye, dE, hk == 1u, ao);
-  var o: FOut;
-  o.color = vec4<f32>(col, 1.0);
-  o.info = vec4<f32>(1.0, f32(d.lvl.w) / 8.0, 0.0, 1.0);
-  return o;
+  res.hk = hk;
+  res.hp = hp;
+  res.axis = axis;
+  res.steps = steps;
+  return res;
 }
