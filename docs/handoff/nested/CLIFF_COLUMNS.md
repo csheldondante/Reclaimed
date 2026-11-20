@@ -210,6 +210,34 @@ Round 32, the real thing:
   natural form), NOT cutting the walk short, capping detail by distance, or a fallback picture. The step cap
   stays only as a guard against a stalled frame and should essentially never be hit.
 
+- **Step B8 (commit 4e73bca9): notches tested coarse-first (`cr5MarchCF`).** Foot of wall: box pass 20.5 ->
+  4.5-5.0 ms, pixels at the step cap 38 % -> 0, steps 52.8 -> 8.9 mean. Near view: 10.5-11.2 -> 6.5-6.8 ms,
+  page frame back to 9.9-10.2. Notches still add 0.3-2.8 ms at the near view (baseline too noisy to say; NS-311:
+  the level loop re-tests coarser levels at each descent step). Notches finer than the pixel-chosen level are
+  no longer drawn (NS-313: a look change against "fractal down to pixel size"; to resolve under the new depth
+  rule). Old march kept for comparison (`CR5_NOTCH_B6`, NS-312). Stills `local/nested/rB8-*`. Holes 0.
+  NEXT (started or to start): the half-cell depth rule on 8x levels with depths 0..3, on the CPU first
+  (`cliffrule.ts` + pictures, three versions side by side), then the shader; then subdividing below 0.25 m;
+  then a reduced-resolution cliff pass if cost needs it.
+
+- **Step C0: rule v2, fractal subtraction, on the CPU** (`src/nested/exp/cliffrule2.ts`, `cliffview2.ts`,
+  `test/unit/nested-cliffrule2.test.ts`; pictures `local/nested/rC-<near|far|trench|above|close>-<A|B|C>.png`;
+  see "As built (round 32, step C0)" once the builder's commit lands). A = 8x levels with depths 0..3,
+  B = halving levels with depths 0..1, C = the v1 rule. Sent to the owner; NOT YET JUDGED. Findings:
+  - It does NOT keep material connected as specified: hundreds of small floating pieces (A main wall: 133
+    pieces / 941 voxels of 259k in a probe). Cause: cuts from x faces and from y faces have independent depths
+    and can enclose a cell at convex corners; the 2 m base staircase is all corners. Proposed fix (not built):
+    clamp cut depths so they never decrease toward the other face; align the base to the cuts.
+  - Not O(1) local: removal at a level needs the coarser level at up to 1 + 4*dMax neighbours, recursively.
+    A shader would need a coarse-to-fine window pass per pixel (about 600 lookups for A as specified, less with
+    the parent-plus-4-neighbours shortcut) or a different formulation. THIS IS THE MAIN RISK for the shader.
+  - CPU march cost: A 13-24 nodes per pixel mean (max 98), similar to v1; B a little more.
+  - Faults: smooth strips where sheet-cell sides show (subtraction stops at the split cell); flat floors and
+    ceilings of removed spans (the brief said never from tops or floors; the owner said "no smooth stone
+    surfaces at all": their call); the mean is not kept after subtraction.
+  - Owner decisions needed: A or B; whether floors/ceilings get subtraction too; whether floating crumbs matter
+    (they said gaps should be rendering only, so presumably yes: fix connectivity).
+
 ## Open decisions for the owner
 1. Threshold default: 2 or 4.
 2. Notches: port coarse ones to the shader, or drop (orchestrator's view from the CPU pictures: drop for now).
