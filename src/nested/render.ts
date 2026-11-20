@@ -29,11 +29,22 @@ export function cliffRuleCode(S: number, segP: number, lv: number, upl: number, 
 /** step A's default per-level amplitudes (cliffrule.ts defaultParams().ampL) */
 export const CLIFF_AMP_DEFAULT = [0, 256, 256, 256, 24, 16, 8];
 /** (step B2) the constants every cliff rule module is given: the 16 m level, units a local unit, the amplitudes */
-export function cliffRulePrefix(lv: number, upl: number, ampL: number[], wLevel = 3): string {
+export function cliffRulePrefix(lv: number, upl: number, ampL: number[], wLevel = 3, ov = false): string {
   if (ampL.length !== 7 || ampL.some((v) => !Number.isInteger(v) || v < 0 || v > 256)) throw new Error(`the cliff amplitudes need 7 integers 0..256: ${ampL.join(',')}`);
   if (!Number.isInteger(wLevel) || wLevel < 0 || wLevel > 6) throw new Error(`the cliff block level needs an integer 0..6: ${wLevel}`);
-  // (B6) the up / down block decision's level (cliffrule.ts wLevel: 3 = 2 m blocks, 5 = 0.5 m)
-  return `const CR_LV: u32 = ${lv}u;\nconst CR_UPL: f32 = ${upl.toFixed(1)};\nconst CR_AMPL = array<i32, 7>(${ampL.join(', ')});\nconst CR_WSH: u32 = ${6 - wLevel}u;\nconst CR_BS: i32 = ${64 >> wLevel};`;
+  const head = `const CR_LV: u32 = ${lv}u;\nconst CR_UPL: f32 = ${upl.toFixed(1)};\n`;
+  // (B6) the up / down block decision's level (cliffrule.ts wLevel: 3 = 2 m blocks, 5 = 0.5 m). With ov (the ?cliff=5 draw
+  // module) the amplitudes and the block level are pipeline overrides (these values their defaults), so one page can
+  // make pipelines for other settings (cliffbox.ts BoxOpt, measurement); the table build does not read them
+  if (!ov) return `${head}const CR_AMPL = array<i32, 7>(${ampL.join(', ')});\nconst CR_WSH: u32 = ${6 - wLevel}u;\nconst CR_BS: i32 = ${64 >> wLevel};`;
+  const a = ampL.map((v, i) => `override CR_A${i}: i32 = ${v};`).join('\n');
+  return `${head}${a}\nvar<private> CR_AMPL: array<i32, 7> = array<i32, 7>(${ampL.map((_, i) => `CR_A${i}`).join(', ')});\noverride CR_WSH: u32 = ${6 - wLevel}u;\noverride CR_BS: i32 = ${64 >> wLevel};`;
+}
+/** (B6) the ?cliff=5 draw module's overrides for amplitudes ampL and block level wLevel (cliffRulePrefix with ov) */
+export function cliffRuleOverrides(ampL: number[], wLevel: number): Record<string, number> {
+  const o: Record<string, number> = { CR_WSH: 6 - wLevel, CR_BS: 64 >> wLevel };
+  ampL.forEach((v, i) => (o[`CR_A${i}`] = v));
+  return o;
 }
 /** the depth of the 16 m level (the rule's coarse cells) for root columns of mpu metres and k children an axis */
 export function cliffRuleLevel(mpu: number, k: number): number {

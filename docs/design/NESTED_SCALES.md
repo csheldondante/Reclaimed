@@ -2076,6 +2076,22 @@ pixel), less work. Two pipeline overrides of cliff5.wgsl, both on (cliffbox.ts `
   finer levels' notches are evaluated at a coarse node's centre and can alias with distance; no WGSL-equals-TS test of
   the notches; notch floors are stone, not the ground material; the sheet pipeline declares the notch uniform without
   binding it (no sheet entry point uses it). Stills local/nested/rB6-*, rB6fine-T2-* (scripts/nested-rB6-notch.mjs).
+- *Measured* (scripts/nested-rB7-cost.mjs, one page; the draw module's amplitudes and block level are now pipeline
+  overrides, cliffRulePrefix `ov` / cliffRuleOverrides, so BoxOpt `amp` / `wLevel` switch them at run time; desktop
+  D3D11, 960 x 640, 2 interleaved rounds of 2.5 s; box pass GPU ms / page frame ms / march steps a box pixel mean, max,
+  pixels at the 96 cap):
+  - side2: default columns 3.60 / 9.9 / 8.6, 32, 0; fine columns 4.21 / 9.9 / 10.8, 61, 0; fine + notches 11.21 / 14.0
+    / 16.8, 80, 0; fine + notches T 0 11.93 / 14.5 / 16.8, 80, 0.
+  - foot: 2.54 / 9.8 / 4.4, 21, 0; 3.25 / 9.9 / 3.6, 28, 0; fine + notches 19.31 / 23.1 / 52.8, 102, 148,260 of 389,738
+    box pixels (38 %) at the cap; T 0 21.10 / 23.9, the same steps.
+  - The notches' cost is the walk through notch air: inside a notch the march steps node by node at the level of
+    detail (0.25 m nodes near the eye) for up to 4 cells of the notch's own level (32 m at 8 m), so near views hit the
+    cap (the cap's fallback draws a column or the floor). NS-307.
+  - T 0 with fine columns + notches (stills rB7-{side16,side2,foot}-fineN0): SPLIT 54,508 / 54,011 / 54,011 of 65,536;
+    holes 133 / 0 / 0.
+  - The thin bright vertical lines on the faces (NS-308): ?cliffDbg=13 (rB7-side2-def-kind, crops *-crop.png) shows them
+    as column-side hits (kind 1), not seams, misses or side walls: thin sunlit side faces, most likely where the face
+    steps back by a column (not confirmed with a normal debug).
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

@@ -16,7 +16,7 @@ import cliffRuleWgsl from './gpu/cliffrule.wgsl?raw';
 import cliffBuildWgsl from './gpu/cliffbuild.wgsl?raw';
 import cliff5Wgsl from './gpu/cliff5.wgsl?raw';
 import { SEG_BASE, TCAP, segWgsl, type GpuNest, type Win } from './gpu/nest';
-import { cliffRulePrefix, drawModuleCode } from './render';
+import { cliffRuleOverrides, cliffRulePrefix, drawModuleCode } from './render';
 
 /** words a cell in the table (cliffrule.wgsl CR_REC) */
 const REC = 12;
@@ -26,6 +26,9 @@ const ARGS_BYTES = (4 + 2 * 2048) * 4;
 export interface BoxOpt {
   cull: boolean;
   order: boolean;
+  /** (B6, measurement) the rule's amplitudes and block level as pipeline overrides (absent: the module's, from the URL) */
+  amp?: number[];
+  wLevel?: number;
 }
 /** (B6) the notch parameters' uniform (cliff5.wgsl Cr5NU: pct, dep as 2 vec4 each, then f) */
 const NOTCH_BYTES = 80;
@@ -54,7 +57,7 @@ export function cliffBuildCode(S: number, segP: number, lv: number, upl: number,
   return `const TCAP: u32 = ${TCAP}u;\n${segWgsl(S, segP, true)}\n${storeWgsl}\n${cliffRulePrefix(lv, upl, ampL, wLevel)}\n${cliffRuleWgsl}\n${cliffBuildWgsl}`;
 }
 export function cliffBoxCode(S: number, segP: number, lv: number, upl: number, ampL: number[], wLevel = 3): string {
-  return `${drawModuleCode(S, segP)}\n${cliffRulePrefix(lv, upl, ampL, wLevel)}\n${cliffRuleWgsl}\n${cliff5Wgsl}`;
+  return `${drawModuleCode(S, segP)}\n${cliffRulePrefix(lv, upl, ampL, wLevel, true)}\n${cliffRuleWgsl}\n${cliff5Wgsl}`;
 }
 
 export class CliffBox {
@@ -115,14 +118,14 @@ export class CliffBox {
     private nest: GpuNest,
     readonly lv: number,
     upl: number,
-    ampL: number[],
+    readonly ampL: number[],
     layout0: GPUBindGroupLayout,
     sheetDesc: GPURenderPipelineDescriptor,
     format: GPUTextureFormat,
     /** the draw's uniform buffer and its binding size (the boxes' own group 0 binds it with the level's offset) */
     private drawU: { buffer: GPUBuffer; size: number },
     /** (B6) the up / down block decision's level (?cliffWLv=, default 3: 2 m blocks) */
-    wLevel = 3,
+    readonly wLevel = 3,
   ) {
     const V = GPUShaderStage.VERTEX;
     const F = GPUShaderStage.FRAGMENT;
@@ -187,10 +190,14 @@ export class CliffBox {
     });
   }
   private optKey(): string {
-    return `${+this.opt.cull}${+this.opt.order}`;
+    const o = this.opt;
+    return `${+o.cull}${+o.order}${o.amp ? `a${o.amp.join(',')}` : ''}${o.wLevel !== undefined ? `w${o.wLevel}` : ''}`;
   }
   private constants(o: BoxOpt): Record<string, number> {
-    return { CR5_CULL: +o.cull, CR5_ORDER: +o.order };
+    const c: Record<string, number> = { CR5_CULL: +o.cull, CR5_ORDER: +o.order };
+    // (B6, measurement) the rule's amplitudes / block level for this pipeline
+    if (o.amp || o.wLevel !== undefined) Object.assign(c, cliffRuleOverrides(o.amp ?? this.ampL, o.wLevel ?? this.wLevel));
+    return c;
   }
   /** (B3) the box pipeline of one setting of `opt` */
   private makeVariant(o: BoxOpt): Promise<GPURenderPipeline> {

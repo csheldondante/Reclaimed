@@ -28688,3 +28688,17 @@ into cliffRulePrefix; the WGSL test's harness defines them). scripts/nested-rB6-
 (side2, side16, foot; default columns none / middle / many / every, fine columns none / fine; T 2). Cost not measured
 yet (NS-307). Open: NS-305..NS-310.
 
+## 2026-11-20 — Nested scales lab, round 32 (step B6, measurements): fine columns + notches cost, T 0, the bright lines
+
+**Why.** The owner's preferred look (fine columns, notches at every level, also at T 0) needs its cost and faults known.
+
+**What.** The ?cliff=5 draw module's amplitudes and block level became pipeline overrides (cliffRulePrefix `ov`,
+cliffRuleOverrides; BoxOpt `amp` / `wLevel`), so one page compares default and fine columns; look unchanged at the URL's
+settings. scripts/nested-rB7-cost.mjs.
+
+**Measured** (box pass GPU ms / frame ms; desktop D3D11). side2: default 3.60 / 9.9, fine 4.21 / 9.9, fine + notches
+11.21 / 14.0, the same at T 0 11.93 / 14.5. foot: 2.54 / 9.8, 3.25 / 9.9, 19.31 / 23.1, 21.10 / 23.9; at the foot with
+notches 38 % of box pixels reach the 96-step cap (none in the other settings). Cause: notch air is walked node by node at
+the level of detail (NS-307). T 0 fine + notches: SPLIT 54,508 / 54,011 / 54,011, holes 133 / 0 / 0 (side16 / side2 /
+foot). The thin bright vertical lines are column-side hits (?cliffDbg=13), not seams (NS-308). WGSL = TS test passes.
+

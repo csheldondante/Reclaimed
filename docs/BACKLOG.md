@@ -1039,11 +1039,14 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   column, its margin with the finer offsets as zero), not per column as cliffrule.ts does: finer levels' notches are
   evaluated at a coarse node's centre and may alias or shift with distance.
 - NS-306 (test, round 32 B6) No WGSL-equals-TS test of the notches (the B1 test covers the up / down rule only).
-- NS-307 (perf, round 32 B6) The notch test's cost: per solid node below H up to 6 levels x ~10 spans x 17 (the merge
-  rounds), and with notches on, all-up nodes below H descend to the level of detail (more march steps). Measure the box
-  pass and the 96-step cap.
+- NS-307 (perf, round 32 B6) The notches' cost (rB7, fine columns): box pass side2 4.2 -> 11.2 ms, foot 3.3 -> 19.3 ms
+  (frame 23 ms), 38 % of the foot's box pixels at the 96-step cap. The march walks notch air node by node at the level
+  of detail (0.25 m near the eye) for up to 4 cells of the notch's level; plus the per-node notch test (up to 6 levels x
+  ~10 spans x 17 merge calls) and all-up nodes below H descending. Candidate: cross a notch's air at its own level's
+  cells (its extent is known: the slot along the face, the depth by the margin).
 - NS-308 (look, round 32 B6) Thin bright vertical lines on column faces in ?cliff=5 (with and without notches, both
-  block levels); not explained yet.
+  block levels): ?cliffDbg=13 shows column-side hits (kind 1), not seams or misses; most likely sunlit side faces where
+  the face steps back by a column. Not confirmed with a normal debug.
 - NS-309 (look, round 32 B6) Notch floors (ledges) are shaded as stone, not the ground material; erosion is not ported.
 - NS-310 (hack, round 32 B6) The ?cliff=5 sheet pipeline's module declares the notch uniform (group 1 binding 1) that
   its layout does not have; valid only because no sheet entry point uses it.
