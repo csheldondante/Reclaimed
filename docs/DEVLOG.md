@@ -28358,3 +28358,31 @@ notes in the next commit: the doc edits missed that commit.)
 
 **Reading.** At side2 the wall reads as standing columns (too regular, thin, shaded faces near black); at side16 4 m
 cells are noise. Next: cell size (8, 16, by footprint), a fill on shaded faces, the miss discard. Limits NS-246, NS-247.
+
+## 2026-11-20 — Nested scales lab, round 31: version 3 parked; version 2 smooth tops (`?cliffSmooth=1`, `?cliffDrop=`)
+
+**Why.** Version 3 (nested levels) is parked on `exp/nested-cliff-levels` (7f0d8b9b) because it put the shader compile test
+over budget (boxes 429/400, sheets 404/400, field 644/550 ms) with stripes, black patches and a page hang still
+unexplained; the owner then said the nested levels look fine apart from aliasing and too little vertical noise, so it
+returns next. The owner on version 2: "the tops don't look smooth which is wrong right? Like they should be smooth if within
+n column widths of each other." The lab's rule is that neighbours within n cell widths are one smooth sheet; version 2
+gave every column a flat top and a hashed drop, so every pair of neighbours stepped.
+
+**What.** NESTED_SCALES.md "As built (round 31, version 2 smooth tops)": shade.wgsl scTops / scH (bilinear quadrants
+over shared centre, edge-midpoint and corner heights), the march's smooth branch in shCol (one loop, entry / middle /
+exit samples and 3 false-position steps per cell; a face only across an edge that is not joined), `?cliffDrop=` (the
+hashed drop at most, cells). Uniform word re-packed: threshold x 100 in bits 0-11, drop 12-15, smooth bit 28. The stills
+script keeps version 3's `--variants`, `--vbench` and `--quick` options.
+
+**Measured.** Compile (Dawn): a first cut with scF / scRoot helpers inlined scH about 11 times: boxes / sheets / field
+textured 515 / 515 / 590 ms (over); with one call site each, 314 / 281 / 295 ms (budgets 400 / 400 / 550). Frame time
+(headless desktop, frozen app, 3 s each, 3 rounds, page frame ms / GPU passes ms; cells 8 m): side16 off 9.83/3.14,
+9.90/3.23, 9.90/3.23; version 2 9.88/3.32, 9.89/3.36, 9.89/3.27; smooth 9.93/3.93, 9.92/3.89, 9.90/3.83. side2 off
+9.89/5.23, 9.92/5.27, 10.90/7.20; version 2 9.92/6.31, 9.85/5.48, 12.00/9.71; smooth 9.91/6.61, 9.83/6.35, 10.80/9.29
+(the third round was disturbed for all three states). Smooth costs about +0.6 ms GPU over version 2 at side16, ~+0.6 at
+side2 (rounds 1-2); the page frame stays at the 10 ms vsync.
+
+**Reading.** Stills local/nested/r31s-*. With smooth tops most of the steep wall goes back to the plain sheet: along the
+contour neighbours join, and only where the wall's slope passes n along a grid axis do faces stand, now as thin shards and
+slivers rather than columns. `?cliffDrop=4` brings more faces back (more columns pass the threshold by hash). An oval dark
+patch and thin black vertical slivers at side2 are not explained yet. Limits NS-248..NS-251.

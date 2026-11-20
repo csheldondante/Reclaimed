@@ -163,6 +163,10 @@ export class App {
     this.render.cliffV = q.get('cliff') === '2' ? 2 : 1;
     if (q.has('cliffN')) this.render.cliffN = Number(q.get('cliffN'));
     if (q.has('cliffT')) this.render.cliffT = Number(q.get('cliffT'));
+    // (version 2) ?cliffSmooth=1 tops within cliffT cells of each other joined by a smooth sheet; ?cliffDrop= the hashed drop
+    // at most, cells (default 1)
+    this.render.cliffSmooth = q.get('cliffSmooth') === '1';
+    if (q.has('cliffDrop')) this.render.cliffDrop = Number(q.get('cliffDrop'));
     // ?cliffW= a block's width in metres (default: one column of the drawn level); ?cliffcut=1 the skyline cut compiled
     // into the textured pipelines (set before they are made, after the first frame) and on
     if (q.has('cliffW')) this.render.cliffW = Number(q.get('cliffW'));

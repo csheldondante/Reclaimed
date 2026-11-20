@@ -78,13 +78,55 @@ struct ShCol {
   miss: bool,
 }
 /** a column's top relative to the pixel, cells: the plane (normal gn) at the cell centre ctr (cells from the pixel),
- *  snapped down to a half cell in absolute z (zAbs, cells), less 0..2 half cells by the cell's hash */
-fn shColTop(c: vec2<i32>, ctr: vec2<f32>, gn: vec3<f32>, zAbs: f32) -> f32 {
+ *  snapped down to a half cell in absolute z (zAbs, cells), less 0..2 drop half cells by the cell's hash (drop:
+ *  ?cliffDrop=, the most in cells, default 1) */
+fn shColTop(c: vec2<i32>, ctr: vec2<f32>, gn: vec3<f32>, zAbs: f32, drop: u32) -> f32 {
   let hc = -(gn.x * ctr.x + gn.y * ctr.y) / gn.z;
   let h = shH3(c.x, c.y, 5099);
-  return (floor((zAbs + hc) * 2.0) - f32(h % 3u)) * 0.5 - zAbs;
+  return (floor((zAbs + hc) * 2.0) - f32(h % (2u * drop + 1u))) * 0.5 - zAbs;
 }
-fn shCol(si: ShadeIn, k: i32, steps: i32) -> ShCol {
+// ---- (round 31, ?cliffSmooth=1) smooth tops: neighbouring columns whose tops differ by at most n cells (n = the
+// steepness threshold, ?cliffT=) are joined by one continuous sheet; only a larger difference stands as a face. Each
+// cell's top is four bilinear quadrants spanned by shared values: its own top at the centre; at each edge midpoint the mean
+// of the two tops if that edge is joined, else its own top (flat toward a face); at each corner the mean of the cells
+// joined to it round that corner (through joined edges). Two joined cells compute the same edge and corner values, so the
+// sheet is continuous across their edge (a linear ramp of tops comes out exactly linear); the normal is the quadrant's slope.
+/** the 3 x 3 column tops round cell ci (cells from the start cell c0), index (dx + 1) + 3 (dy + 1) */
+fn scTops(c0: vec2<i32>, ci: vec2<i32>, p0: vec2<f32>, gn: vec3<f32>, zAbs: f32, drop: u32) -> array<f32, 9> {
+  var t: array<f32, 9>;
+  for (var j = 0; j < 9; j++) {
+    let d = ci + vec2<i32>(j % 3 - 1, j / 3 - 1);
+    t[j] = shColTop(c0 + d, vec2<f32>(d) + vec2<f32>(0.5) - p0, gn, zAbs, drop);
+  }
+  return t;
+}
+/** the smooth top over the local point q (0..1 in the cell): x its height (cells, from the pixel), yz its gradient */
+fn scH(tp: array<f32, 9>, q: vec2<f32>, n: f32) -> vec3<f32> {
+  var t = tp;
+  let ix = select(-1, 1, q.x >= 0.5);
+  let iy = select(-1, 1, q.y >= 0.5);
+  let c = t[4];
+  let a = t[4 + ix];
+  let b = t[4 + 3 * iy];
+  let d = t[4 + ix + 3 * iy];
+  let jA = abs(c - a) <= n;
+  let jB = abs(c - b) <= n;
+  let jAD = abs(a - d) <= n;
+  let jBD = abs(b - d) <= n;
+  let ex = select(c, 0.5 * (c + a), jA);
+  let ey = select(c, 0.5 * (c + b), jB);
+  // the corner: the mean of the cells joined to this one round it
+  let inA = jA || (jB && jBD && jAD);
+  let inB = jB || (jA && jAD && jBD);
+  let inD = (jA && jAD) || (jB && jBD);
+  let cs = c + select(0.0, a, inA) + select(0.0, b, inB) + select(0.0, d, inD);
+  let cc = cs / (1.0 + select(0.0, 1.0, inA) + select(0.0, 1.0, inB) + select(0.0, 1.0, inD));
+  let s = clamp(abs(q.x - 0.5) * 2.0, 0.0, 1.0);
+  let u = clamp(abs(q.y - 0.5) * 2.0, 0.0, 1.0);
+  let h = mix(mix(c, ex, s), mix(ey, cc, s), u);
+  return vec3<f32>(h, mix(ex - c, cc - ey, u) * 2.0 * f32(ix), mix(ey - c, cc - ex, s) * 2.0 * f32(iy));
+}
+fn shCol(si: ShadeIn, k: i32, steps: i32, drop: u32, sheet: bool) -> ShCol {
   let ng = si.ng;
   var r = ShCol(0.0, ng, 1.0, 1.0, false);
   if (ng.z < -0.01) { return r; }
@@ -105,13 +147,112 @@ fn shCol(si: ShadeIn, k: i32, steps: i32) -> ShCol {
   let sy = select(-1, 1, v.y >= 0.0);
   let idx = 1.0 / max(abs(v.x), 1e-6);
   let idy = 1.0 / max(abs(v.y), 1e-6);
-  var T = shColTop(c0, vec2<f32>(0.5) - p0, gn, zAbs);
+  var T = shColTop(c0, vec2<f32>(0.5) - p0, gn, zAbs, drop);
   var ci = vec2<i32>(0);
   var hit = false;
   var hn = vec3<f32>(0.0, 0.0, 1.0);
   var th = 0.0;
   var zh = 0.0;
-  if (T > 0.0) {
+  // (a top hit: no edge lines; with smooth tops no per-cell tint either, the sheet runs across cells)
+  var isTop = false;
+  if (sheet) {
+    // One loop, one site each for scTops and scH (every inlined copy of them costs compile time). Per cell, the ray's
+    // height over the cell's sheet is sampled at entry, middle and exit; the first sign change is refined by 3
+    // false-position steps (a top hit). Under the sheet already at entry: a face (a top hit where the crossed edge is
+    // joined: there the sheets meet, so that is rounding). Else on to the next cell, `steps` crossings at most. The
+    // start cell first: if the pixel is under its sheet, the ray is taken back to where it entered that cell and the
+    // search runs from there to the pixel (under the sheet, so the entry is found).
+    let n = si.cliff;
+    let bx = select(1.0 - p0.x, p0.x, v.x >= 0.0) * idx;
+    let by = select(1.0 - p0.y, p0.y, v.y >= 0.0) * idy;
+    var tmx = select(p0.x, 1.0 - p0.x, v.x >= 0.0) * idx;
+    var tmy = select(p0.y, 1.0 - p0.y, v.y >= 0.0) * idy;
+    var t = 0.0;
+    var tp: array<f32, 9>;
+    var fresh = true;
+    var first = true;
+    var joined = true;
+    var hh = vec3<f32>(0.0, 0.0, 0.0);
+    var i = 0;
+    loop {
+      if (fresh) {
+        tp = scTops(c0, ci, p0, gn, zAbs, drop);
+        fresh = false;
+      }
+      let tx = select(min(tmx, tmy), 0.0, t < 0.0);
+      var a = t;
+      var b = tx;
+      var fa = 0.0;
+      var fb = 0.0;
+      var found = false;
+      var under = false;
+      for (var j = 0; j < 6; j++) {
+        if (j >= 3 && !found) { break; }
+        let x = select(mix(t, tx, 0.5 * f32(j)), a + (b - a) * fa / (fa - fb), j >= 3);
+        let h = scH(tp, p0 + v.xy * x - vec2<f32>(ci), n);
+        let fx = v.z * x - h.x;
+        if (j < 3 && found) { continue; }
+        if (fx >= 0.0) {
+          a = x;
+          fa = fx;
+        } else {
+          b = x;
+          fb = fx;
+          hh = h;
+          found = true;
+          if (j == 0) {
+            under = true;
+            break;
+          }
+        }
+      }
+      if (under) {
+        if (first) {
+          first = false;
+          t = -min(bx, by);
+          joined = abs(tp[4] - tp[select(4 - 3 * sy, 4 - sx, bx < by)]) <= n;
+          hn = select(vec3<f32>(0.0, -f32(sy), 0.0), vec3<f32>(-f32(sx), 0.0, 0.0), bx < by);
+          continue;
+        }
+        hit = true;
+        isTop = joined;
+        th = t;
+        break;
+      }
+      if (found) {
+        hit = true;
+        isTop = true;
+        th = b;
+        break;
+      }
+      first = false;
+      if (i >= steps) { break; }
+      i += 1;
+      var nb = 0;
+      t = tx;
+      if (tmx < tmy) {
+        ci.x += sx;
+        tmx += idx;
+        nb = 4 + sx;
+        hn = vec3<f32>(-f32(sx), 0.0, 0.0);
+      } else {
+        ci.y += sy;
+        tmy += idy;
+        nb = 4 + 3 * sy;
+        hn = vec3<f32>(0.0, -f32(sy), 0.0);
+      }
+      joined = abs(tp[4] - tp[nb]) <= n;
+      fresh = true;
+    }
+    if (hit) {
+      // the top's normal from the sheet's slope; a face's from its axis; T the sheet over the hit (for the rim)
+      T = hh.x;
+      zh = v.z * th;
+      if (isTop) {
+        hn = normalize(vec3<f32>(-hh.y, -hh.z, 1.0));
+      }
+    }
+  } else if (T > 0.0) {
     // inside the start column: back along the ray to its top or the face it came through
     let bx = select(1.0 - p0.x, p0.x, v.x >= 0.0) * idx;
     let by = select(1.0 - p0.y, p0.y, v.y >= 0.0) * idy;
@@ -157,7 +298,7 @@ fn shCol(si: ShadeIn, k: i32, steps: i32) -> ShCol {
         tmy += idy;
         hn = vec3<f32>(0.0, -f32(sy), 0.0);
       }
-      T = shColTop(c0 + ci, vec2<f32>(ci) + vec2<f32>(0.5) - p0, gn, zAbs);
+      T = shColTop(c0 + ci, vec2<f32>(ci) + vec2<f32>(0.5) - p0, gn, zAbs, drop);
       if (z < T) {
         hit = true;
         th = t;
@@ -175,11 +316,12 @@ fn shCol(si: ShadeIn, k: i32, steps: i32) -> ShCol {
   let hp = p0 + v.xy * th;
   let lw = max(0.04, 0.9 / cellPx);
   let fr = fract(select(hp.x, hp.y, abs(hn.x) > 0.5));
-  let edge = select(1.0 - smoothstep(0.5 * lw, lw, min(fr, 1.0 - fr)), 0.0, hn.z > 0.5);
-  let rim = select((1.0 - smoothstep(lw, lw + 0.08, T - zh)) * (1.0 - edge), 0.0, hn.z > 0.5);
+  let top = isTop || hn.z > 0.5;
+  let edge = select(1.0 - smoothstep(0.5 * lw, lw, min(fr, 1.0 - fr)), 0.0, top);
+  let rim = select((1.0 - smoothstep(lw, lw + 0.08, T - zh)) * (1.0 - edge), 0.0, top);
   let cc = c0 + ci;
   let hb = shH3(cc.x + 40503, cc.y - 7919, 31);
-  let j = f32(hb & 1023u) / 1023.0;
+  let j = select(f32(hb & 1023u) / 1023.0, 0.625, sheet && top);
   r.w = w;
   r.n = hn;
   r.tint = (0.80 + 0.32 * j) * (1.0 - 0.55 * edge) * (1.0 + 0.2 * rim);

@@ -889,6 +889,17 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   posts). A miss after `?cliffN` cells falls back to the smooth shading (columns stop abruptly).
 - NS-247 (limit, round 31) `?cliff=2` hits are lit by the existing sun and ambient only: no shadows between columns;
   faces away from the sun read near black (step b of round 31 looks at a fill).
+- NS-248 (hack, round 31) `?cliffSmooth=1` finds a top hit by sampling the ray's height over the sheet at a cell's
+  entry, middle and exit and refining the first sign change (3 false-position steps): a ray that dips under the sheet
+  and out again between two samples misses it (a grazing miss). A pixel under its own cell's sheet whose ray entered
+  through a joined edge is taken as a top hit at that edge (the neighbour's sheet is not searched).
+- NS-249 (limit, round 31) Smooth tops recompute 9 hashed tops per marched cell (6 of them shared with the previous
+  cell); the sheet is bilinear per quadrant, so its shading normal creases along the cell's centre lines and edges.
+- NS-250 (look, round 31) With smooth tops the hashed drops (1 cell by default) never exceed the threshold, so faces
+  appear only where the wall's own slope passes n along a grid axis: at side2 they are thin shards; an oval dark
+  patch and thin black vertical slivers remain unexplained (stills local/nested/r31s-side2-w16s1.png, -w8s1.png).
+- NS-251 (test, round 31) sheetBake (nest.wgsl, not touched this round) went over its 1000 ms compile budget on 3 of
+  6 runs (1020-1177 ms) while the round 31 draws stayed within: noise on this machine or a budget too tight.
 - NS-229 (perf, round 28) The boot gate's "every boot pipeline" is the first frame's pipelines and then derive's compile
   (7.6-9.1 s in Chrome, 2.4 s in Dawn), which grew with rounds 25 and 27; the 512 MB reload read 17,971 and 19,409 ms
   against 19,000 this round. Cut derive's compile (the generator and material code out of the layer pass's unrolled

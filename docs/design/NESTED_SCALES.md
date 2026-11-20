@@ -1721,6 +1721,22 @@ the crossed face's axis as normal, a top hit up; the start cell first (inside it
 Per-column tint, dark vertical edge lines, a lit rim under a side's top, darker deeper hits; a miss shades as version 0
 (or is discarded with `?cliffcut=1`). Stills local/nested/r31v2-side2-*, r31v2-side16-*: at side2 the lower wall reads
 as standing columns (regular square posts, shaded faces near black); at side16 the 4 m cells are a streaky noise.
+
+**As built (round 31, version 2 smooth tops): `?cliffSmooth=1` (default 0), `?cliffDrop=` (default 1).** The lab's rule:
+neighbouring columns whose tops differ by at most n cell widths (n = `?cliffT`, default 2) are one smooth sheet; only a
+larger difference stands as a face. shade.wgsl scTops / scH: each cell's top is four bilinear quadrants spanned by its own
+top (centre), the edge midpoints (mean of the two tops if joined, else its own top: flat toward a face) and the corners
+(mean of the cells joined to it round that corner through joined edges), so joined neighbours compute the same edge and
+corner values and the sheet is continuous; a linear ramp of tops comes out linear. Normal on a top = the quadrant's slope;
+no per-cell tint on tops. The march (one loop; one call site each for scTops and scH, because every inlined copy cost
+compile time: a first cut with helper calls took the textured draws to 515 ms): per cell the ray's height over the sheet
+is sampled at entry, middle and exit, the first sign change refined by 3 false-position steps (a top hit); under the
+sheet at entry = a face, unless the crossed edge is joined (then rounding: a top hit). A pixel under its own cell's sheet
+is first taken back to where the ray entered that cell. `?cliffDrop=` is the hashed drop at most, in cells (0-15; the
+uniform's threshold went to x 100 in bits 0-11 to make room: bits 12-15 the drop, bit 28 smooth). Stills
+local/nested/r31s-*: with smooth tops most of the wall goes back to the plain sheet (the plane's own slope along the
+contour is under n, so neighbours join); faces stand only where the wall is steepest, as thin shards and slivers.
+Version 3 (nested levels, `?cliff=3`) is parked on `exp/nested-cliff-levels` (7f0d8b9b), to return next.
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

@@ -185,6 +185,10 @@ export class Renderer {
   cliffV: 1 | 2 = 1;
   /** (version 2) ?cliffN= the march's cells at most (default 4, 1-15) */
   cliffN = 4;
+  /** (version 2) ?cliffSmooth=1: neighbouring columns whose tops differ by at most cliffT cells joined by a smooth sheet */
+  cliffSmooth = false;
+  /** (version 2) ?cliffDrop= a column's hashed drop below the plane at most, cells (default 1, 0-15) */
+  cliffDrop = 1;
   /** the fragment constants of the textured pipelines */
   private texConsts(): Record<string, number> {
     return this.cliffCutBuilt ? { CLIFF_CUT: 1 } : {};
@@ -531,17 +535,18 @@ export class Renderer {
       // draw keeps its own)
       f.set([...(this.texDrawn ? [0.55, -0.45, 0.62] : [0.45, -0.35, 0.82]), Math.cos((this.crease * Math.PI) / 180)], 8);
       // (misc2.y, round 22: the sheets' slide, ?slide= / "Round edges")
-      // (misc2.z, round 31: ?cliff: bits 0-15 the slope threshold x 1000, 0 off; 16-23 the width code (0: a column of
-      // the level; else 128 + log2 of the width in shading units); 24-27 version 2's steps; 30 version 2; 31 the cut:
-      // draw.wgsl texOut)
+      // (misc2.z, round 31: ?cliff: bits 0-11 the slope threshold x 100, 0 off; 12-15 version 2's hashed drop, cells;
+      // 16-23 the width code (0: a column of the level; else 128 + log2 of the width in shading units); 24-27 version 2's
+      // steps; 28 its smooth tops; 30 version 2; 31 the cut: draw.wgsl texOut)
       let cliffBits = 0;
       if (this.cliff) {
         const shadeUnitM = this.mpu / 2 ** this.shadeS;
         // (version 2: fixed world cells, 4 m by default)
         const wm = this.cliffV === 2 && this.cliffW <= 0 ? 4 : this.cliffW;
         const wc = wm > 0 ? 128 + Math.round(Math.log2(wm / shadeUnitM)) : 0;
-        const v2 = this.cliffV === 2 ? (0x40000000 | (Math.min(15, Math.max(1, this.cliffN)) << 24)) : 0;
-        cliffBits = (Math.min(65535, Math.max(1, Math.round(this.cliffT * 1000))) | (wc << 16) | v2 | (this.cliffCut ? 0x80000000 : 0)) >>> 0;
+        const drop = Math.min(15, Math.max(0, Math.round(this.cliffDrop))) << 12;
+        const v2 = this.cliffV === 2 ? (0x40000000 | (Math.min(15, Math.max(1, this.cliffN)) << 24) | (this.cliffSmooth ? 0x10000000 : 0)) : 0;
+        cliffBits = (Math.min(4095, Math.max(1, Math.round(this.cliffT * 100))) | drop | (wc << 16) | v2 | (this.cliffCut ? 0x80000000 : 0)) >>> 0;
       }
       new Uint32Array(st, lv.depth * DU + 64, 4).set([this.nest.cap, this.slide ? 1 : 0, cliffBits, pages[lv.depth] ?? 0]);
       new Float32Array(st, lv.depth * DU + 80, 16).set(IDENTITY);
