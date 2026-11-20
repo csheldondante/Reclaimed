@@ -1027,6 +1027,14 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
 - NS-303 (test, round 32 B3) The brush script's slope-site views and the rA6 side view are framed badly (the camera
   lands near the cliff; the CPU view is low); the edit-pose stills show only the bowl floor; the rebuild lag was not
   caught. Re-frame before judging those.
+- NS-304 (look, round 32 B5; fix proposed, not built) The teeth round a sphere add's foot (rB3b-gentle-add80-side-T4,
+  stills rB5-*) are the sheets' material, not their geometry: one material a column (nest.wgsl sheet bake, sheet flags
+  bits 8-15), drawn flat a triangle (draw.wgsl sheetVert / VOutS.mat); on a vertical wall the ground columns' triangles
+  climb it in sand, repeating at the drawn level's column (2 m staircase in plan). ?tex=2's matMix (plan weights) and the
+  field mesh's per-pixel plan lookup (fdMat) do not help on walls. Proposed: on steep pixels only, choose the material
+  per pixel by height (the pixel's own and facing neighbour columns' surfMatD at the pixel's z: the column holding z,
+  else the nearest surface; a blend band as tex2's), estimated well under 0.5 ms; alternative a per-cluster material
+  weight in the bake. The scripts/nested-rB5-skirt.mjs "above" pose is badly framed (eye near the dome's surface).
 
 - NS-253 (test, round 31) Compile times swing 1.5-2.5x between runs on this machine (drawFieldTex 295-820 ms with no
   change); version 3's textured variants (drawBoxesTexV3 / drawSheetsTexV3) got a 600 ms budget from 341-457 / 401-535 ms.
