@@ -1029,14 +1029,14 @@ export class App {
       },
       /** (round 26, measurement) level L's whole window baked again (forced, its own draw: sheets, boxes or the field
        *  mesh): GPU-done ms, the frames' work held back meanwhile */
-      benchBake: async (L: number) => {
+      benchBake: async (L: number, oneSubmit = false, side = 0) => {
         this.benchPause = true;
         const fz = this.frozen;
         this.frozen = true;
         await new Promise((r) => requestAnimationFrame(r));
         await this.device.queue.onSubmittedWorkDone();
         const t = performance.now();
-        while (!this.nest.rebakeLevel(L)) await new Promise((r) => setTimeout(r, 30));
+        while (!this.nest.rebakeLevel(L, oneSubmit, side)) await new Promise((r) => setTimeout(r, 30));
         await this.device.queue.onSubmittedWorkDone();
         const ms = performance.now() - t;
         this.benchPause = false;

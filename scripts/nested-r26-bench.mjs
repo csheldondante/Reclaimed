@@ -65,6 +65,17 @@ await run({ name: 'r26-bench', kind: 'behaviour', size: '960x640', dpr: 1, echo:
         const bake = [];
         await nested.benchBake(L);
         for (let i = 0; i < reps; i++) bake.push(await nested.benchBake(L));
+        // (the whole window in one dispatch: throughput, not a chunk row's latency)
+        const bake1 = [];
+        for (let i = 0; i < reps; i++) bake1.push(await nested.benchBake(L, true));
+        // (one chunk, and 2 x 2 chunks, in one dispatch: a frame's share)
+        const b1 = [];
+        const b4 = [];
+        for (let i = 0; i < reps + 2; i++) {
+          b1.push(await nested.benchBake(L, true, 1));
+          b4.push(await nested.benchBake(L, true, 2));
+        }
+        bake1.push(-1, Math.min(...b1), Math.min(...b4));
         const draw = [];
         const frame = [];
         for (let i = 0; i < reps; i++) {
@@ -75,7 +86,7 @@ await run({ name: 'r26-bench', kind: 'behaviour', size: '960x640', dpr: 1, echo:
         const edits = [];
         for (let i = 0; i < reps; i++) edits.push(await nested.benchEdit({ op: 'carve', radius: 8 / a.k ** L, amount: 1, at: { level: L, x: w.n / 2 + 0.5 + i * 3, y: w.n / 2 + 0.5 } }));
         await new Promise((r) => setTimeout(r, 500));
-        return { bake, draw, frame, edits, stats: { ...a.nest.stats }, live: a.nest.live };
+        return { bake, bake1, draw, frame, edits, stats: { ...a.nest.stats }, live: a.nest.live };
       },
       { L, reps },
     );
@@ -94,7 +105,7 @@ await run({ name: 'r26-bench', kind: 'behaviour', size: '960x640', dpr: 1, echo:
       pages: r.stats.used,
     };
     out.push(row);
-    console.log(`${variant}: level ${L} window rebake ${row.bake.toFixed(1)} ms (${row.bakeAll.join(', ')}); carve ${row.carve.toFixed(1)} ms with bakes, ${row.carveNoBake.toFixed(1)} without (${row.carves.join(', ')}); draw ${row.draw.toFixed(2)} ms, frame ${row.frame.toFixed(2)} ms; pages ${row.pages}, refused ${row.refused}, field miss ${row.fieldMiss}, field cz ${row.maxCzField}; still ${file}`);
+    console.log(`${variant}: level ${L} window rebake ${row.bake.toFixed(1)} ms (${row.bakeAll.join(', ')}; one dispatch ${r.bake1.map((x) => x.toFixed(1)).join(', ')}); carve ${row.carve.toFixed(1)} ms with bakes, ${row.carveNoBake.toFixed(1)} without (${row.carves.join(', ')}); draw ${row.draw.toFixed(2)} ms, frame ${row.frame.toFixed(2)} ms; pages ${row.pages}, refused ${row.refused}, field miss ${row.fieldMiss}, dbg ${r.stats.fieldDbg}, field cz ${row.maxCzField}; still ${file}`);
     await page.close();
   }
   console.log(JSON.stringify(out));

@@ -84,6 +84,8 @@ export interface PoolStats {
    *  round a crossed edge had no vertex (ctl 14: the selection missed it; 0 expected) */
   maxCzField?: number;
   fieldMiss?: number;
+  /** (measurement) ctl 15: a counter for diagnoses */
+  fieldDbg?: number;
   cap: number;
   used: number;
   free: number;
@@ -555,7 +557,7 @@ export class GpuNest {
         tmp.destroy();
         // (the bump end passes the cap only by refused allocations; ctl's cap may be an older, smaller one)
         const end = Math.min(h[0], this.cap);
-        Object.assign(this.stats, { used: end - h[2], free: this.cap - end + h[2], refused: h[1], mismatch: h[4], tableFull: h[5], maxCz: h[7], maxCzTmp: h[8], maxCzFace: h[9], sheetSeen: h[12], sheetBaked: h[13], maxCzField: h[11], fieldMiss: h[14] });
+        Object.assign(this.stats, { used: end - h[2], free: this.cap - end + h[2], refused: h[1], mismatch: h[4], tableFull: h[5], maxCz: h[7], maxCzTmp: h[8], maxCzFace: h[9], sheetSeen: h[12], sheetBaked: h[13], maxCzField: h[11], fieldMiss: h[14], fieldDbg: h[15] });
         this.pendingBound = Math.max(0, this.pendingBound - bound);
         this.reading = false;
         this.settled = this.pendingBound === 0;
@@ -1059,11 +1061,21 @@ export class GpuNest {
   }
   /** (measurement only, round 26) level L's whole window baked again, forced, a chunk row a submit (whichever draw the
    *  level has: sheets, boxes or the field mesh); false while the pool cannot hold it yet */
-  rebakeLevel(L: number): boolean {
+  rebakeLevel(L: number, oneSubmit = false, side = 0): boolean {
     const w = this.wins[L];
     if (!w) return false;
     if (!this.reserve(this.bakeBound((w.n / 16) ** 2))) return false;
-    for (let y = w.gy / 16; y < (w.gy + w.n) / 16; y++) {
+    if (oneSubmit) {
+      // (the whole window in one dispatch: the GPU's throughput rather than a row's latency; side > 0: only a side x side
+      // block of chunks at the window's centre, the cost of a frame's share)
+      const c = { x: (w.gx + w.n / 2) / 16, y: (w.gy + w.n / 2) / 16 };
+      const r = side > 0 ? { x0: c.x - Math.floor(side / 2), y0: c.y - Math.floor(side / 2), x1: c.x - Math.floor(side / 2) + side, y1: c.y - Math.floor(side / 2) + side } : { x0: w.gx / 16, y0: w.gy / 16, x1: (w.gx + w.n) / 16, y1: (w.gy + w.n) / 16 };
+      const rows = r.y1 - r.y0;
+      const s = this.cpuSlot(0, r);
+      this.bake(L, [s], false, [rows], 0, true, { per: rows, n: 1 });
+      this.mergeFrees();
+      this.submit(false);
+    } else for (let y = w.gy / 16; y < (w.gy + w.n) / 16; y++) {
       this.bakeRects(L, [{ x0: w.gx / 16, y0: y, x1: (w.gx + w.n) / 16, y1: y + 1 }], 0, false);
       this.mergeFrees();
       this.submit(false);

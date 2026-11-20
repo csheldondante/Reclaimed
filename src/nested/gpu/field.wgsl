@@ -20,9 +20,10 @@ const FFAR: f32 = 3.0;
 /** quad pages: a 16-word header (page 0's: the chunk's), then 783 quads of 4 vertices x 4 words */
 const FHW: u32 = 16u;
 const FQPP: u32 = 783u;
-/** scratch vertex entries: K, offset in the cell (2 x unorm16), z, normal, corner mask */
-const FVW: u32 = 5u;
-const FVPP: u32 = 2508u;
+/** scratch entries, one a candidate cell: K, offset in the cell (2 x unorm16), z, normal, corner mask (0: not crossed),
+ *  its cell column's index in the computing area */
+const FVW: u32 = 6u;
+const FVPP: u32 = 2090u;
 /** computing cell columns of a chunk at most (38 x 38: 16 + 1 + 2 x OVER + 1 with OVER <= k / 2 + 2 = 10 at k 16) */
 const FA_N: u32 = 1444u;
 /** support columns at most: 4 x 4 own + 3 x 3 parent */
@@ -74,8 +75,91 @@ fn fRec(lv: u32, X: i32, Y: i32, j: u32) -> vec2<u32> {
   }
   return recAt(lv, X, Y, j);
 }
+// ---- (round 26 B2, step 3) each column's runs read once a chunk: the boundaries (inside / outside changes) of every own
+// column the chunk's samples and sweeps can read (the computing area + 1 below, + 2 above) and of the parent's columns
+// under it, in the scratch pages' first region: a table (2 words a column: offset, count | inside at the bottom << 31),
+// then the boundaries (f32, the column's own level's units)
+var<private> fRunsOn: bool;
+var<private> fRA: vec2<i32>;
+var<private> fRW: i32;
+var<private> fPA: vec2<i32>;
+var<private> fPWd: i32;
+/** the scratch's first pages: the run region's word w */
+fn fRunW(w: u32) -> u32 {
+  // (the run region nearly always fits its first page: no division)
+  if (w < PW) { return fSp[0] * PW + w; }
+  let cz = w / PW;
+  var p = 0u;
+  if (cz < 16u) { p = fSp[cz]; } else { p = pageOf(FSCR_ID + u.a.w, fC.x, fC.y, cz); }
+  return p * PW + w % PW;
+}
+/** the run table's index of column (lv, X, Y), or -1 when it is not cached */
+fn fRunT(lv: u32, X: i32, Y: i32) -> i32 {
+  if (!fRunsOn) { return -1; }
+  if (lv == u.a.w) {
+    let r = vec2<i32>(X, Y) - fRA;
+    if (r.x < 0 || r.y < 0 || r.x >= fRW || r.y >= fRW) { return -1; }
+    return r.y * fRW + r.x;
+  }
+  if (lv + 1u != u.a.w) { return -1; }
+  let r = vec2<i32>(X, Y) - fPA;
+  if (r.x < 0 || r.y < 0 || r.x >= fPWd || r.y >= fPWd) { return -1; }
+  return fRW * fRW + r.y * fPWd + r.x;
+}
+/** the run table's column t: (lv, X, Y) */
+fn fRunCol(t: u32) -> vec3<i32> {
+  let n0 = u32(fRW * fRW);
+  if (t < n0) { return vec3<i32>(i32(u.a.w), fRA.x + i32(t) % fRW, fRA.y + i32(t) / fRW); }
+  let r = i32(t - n0);
+  return vec3<i32>(i32(u.a.w) - 1, fPA.x + r % fPWd, fPA.y + r / fPWd);
+}
+/** a column's boundaries from its records: counted, or (write) written from run word `at` on; x the count, y 1 when
+ *  inside at the bottom */
+fn fRunsOf(lv: u32, X: i32, Y: i32, at: u32, write: bool) -> vec2<u32> {
+  let n = fCount(lv, X, Y);
+  if (n == 0u) { return vec2<u32>(0u); }
+  var nxt = fRec(lv, X, Y, 0u);
+  let bottom = select(0u, 1u, fInside(nxt.y));
+  var c = 0u;
+  for (var j = 0u; j < n; j++) {
+    let cur = nxt;
+    let s = fInside(cur.y);
+    var sn = false;
+    if (j + 1u < n) {
+      nxt = fRec(lv, X, Y, j + 1u);
+      sn = fInside(nxt.y);
+    }
+    if (sn != s) {
+      if (write) { pgStore(fRunW(at + c), cur.x); }
+      c++;
+    }
+  }
+  return vec2<u32>(c, bottom);
+}
+/** a cached column: (boundary offset, count, inside at the bottom) */
+fn fRunAt(t: i32) -> vec3<u32> {
+  let w1 = pgLoad(fRunW(u32(t) * 2u + 1u));
+  return vec3<u32>(pgLoad(fRunW(u32(t) * 2u)), w1 & 0x7fffffffu, w1 >> 31u);
+}
 /** a column's vertical signed distance to its inside runs at z (negative inside), clamped to +-FFAR; 0 on a boundary */
 fn fColDist(lv: u32, X: i32, Y: i32, z: f32) -> f32 {
+  let t = fRunT(lv, X, Y);
+  if (t >= 0) {
+    let r = fRunAt(t);
+    var s = r.z == 1u;
+    var lo = -1e30;
+    for (var j = 0u; j < r.y; j++) {
+      let b = bitcast<f32>(pgLoad(fRunW(r.x + j)));
+      if (z < b) {
+        let d = min(min(z - lo, b - z), FFAR);
+        return select(d, -d, s);
+      }
+      lo = b;
+      s = !s;
+    }
+    if (r.y == 0u) { return select(FFAR, -FFAR, s); }
+    return min(z - lo, FFAR);
+  }
   let n = fCount(lv, X, Y);
   if (n == 0u) { return FFAR; }
   var lo = -1e30;
@@ -201,6 +285,7 @@ var<private> swN: array<u32, 25>;
 var<private> swJ: array<u32, 25>;
 var<private> swS: array<bool, 25>;
 var<private> swB: array<f32, 25>;
+var<private> swO: array<u32, 25>;
 var<private> swCount: u32;
 var<private> swIn: u32;
 var<private> swPrev: f32;
@@ -212,6 +297,16 @@ fn swAdvance(i: u32) {
   let n = swN[i];
   var j = swJ[i];
   swB[i] = 1e30;
+  // (B2 step 3: a cached column's next boundary is its next stored one)
+  if (swO[i] != NONE) {
+    if (j < n) {
+      var z = bitcast<f32>(pgLoad(fRunW(swO[i] + j)));
+      if (lv != u.a.w) { z = (z - zOrigin(u.a.w)) * f32(u.a.x); }
+      swB[i] = z;
+      swJ[i] = j + 1u;
+    }
+    return;
+  }
   loop {
     if (j >= n) { break; }
     let r = fRec(lv, swX[i], swY[i], j);
@@ -230,14 +325,27 @@ fn swAdvance(i: u32) {
 }
 fn swAdd(lv: u32, c: vec2<i32>) {
   let i = swCount;
-  if (i >= FCUR) { return; }
+  if (i >= FCUR) {
+    // (more support columns than the cursors: cannot happen with warp < 1; counted, never silent)
+    atomicAdd(&ctl[14], 1u);
+    return;
+  }
   swLv[i] = lv;
   swX[i] = c.x;
   swY[i] = c.y;
-  let n = fCount(lv, c.x, c.y);
-  swN[i] = n;
   swJ[i] = 0u;
-  swS[i] = n > 0u && fInside(fRec(lv, c.x, c.y, 0u).y);
+  let t = fRunT(lv, c.x, c.y);
+  if (t >= 0) {
+    let r = fRunAt(t);
+    swO[i] = r.x;
+    swN[i] = r.y;
+    swS[i] = r.z == 1u;
+  } else {
+    swO[i] = NONE;
+    let n = fCount(lv, c.x, c.y);
+    swN[i] = n;
+    swS[i] = n > 0u && fInside(fRec(lv, c.x, c.y, 0u).y);
+  }
   if (swS[i]) { swIn++; }
   swAdvance(i);
   swCount = i + 1u;
@@ -396,10 +504,53 @@ fn fEnsure(lid: u32, cx: i32, cy: i32, need: u32) {
 }
 /** word address of scratch vertex entry i */
 fn fScr(i: u32) -> u32 {
-  let cz = i / FVPP;
+  let cz = fPrP + i / FVPP;
   var p = 0u;
   if (cz < 16u) { p = fSp[cz]; } else { p = pageOf(FSCR_ID + u.a.w, fC.x, fC.y, cz); }
   return p * PW + (i % FVPP) * FVW;
+}
+// ---- (round 26 B2, step 2) the samples, each evaluated once a chunk and shared by the cells round it: per sample column
+// (the computing area's cell columns + 1 each way up) the z hull of the candidates of the 4 cell columns touching it,
+// scanned; the table (offset, lo) and the values in the scratch pages after the candidate entries (word addressed)
+var<workgroup> fPe: u32;
+var<private> fPeP: u32;
+/** (B2 step 3) the run region's pages (the scratch's first); the candidate entries start after them */
+var<workgroup> fPr: u32;
+var<private> fPrP: u32;
+/** word address of word w of the sample region */
+fn fSW(w: u32) -> u32 {
+  if (w < PW && fPeP < 16u) { return fSp[fPeP] * PW + w; }
+  let cz = fPeP + w / PW;
+  var p = 0u;
+  if (cz < 16u) { p = fSp[cz]; } else { p = pageOf(FSCR_ID + u.a.w, fC.x, fC.y, cz); }
+  return p * PW + w % PW;
+}
+/** the first and last candidate K of computing-area cell column (X, Y) (an empty hull when none) */
+fn fColKs(X: i32, Y: i32) -> vec2<i32> {
+  let q = fIdx(X, Y);
+  if (q < 0 || fNV[q] == 0u) { return vec2<i32>(1 << 30, -(1 << 30)); }
+  return vec2<i32>(bitcast<i32>(pgLoad(fScr(fOffV[q]))), bitcast<i32>(pgLoad(fScr(fOffV[q] + fNV[q] - 1u))));
+}
+/** sample column s's z hull [lo, hi] (hi < lo: no samples) */
+fn fSHull(s: u32) -> vec2<i32> {
+  let w = u32(fAW + 1);
+  let sx = fA0.x + i32(s % w);
+  let sy = fA0.y + i32(s / w);
+  var h = vec2<i32>(1 << 30, -(1 << 30));
+  for (var j = 0; j < 4; j++) {
+    let k = fColKs(sx - 1 + (j & 1), sy - 1 + (j >> 1));
+    h = vec2<i32>(min(h.x, k.x), max(h.y, k.y + 1));
+  }
+  return h;
+}
+/** the field's value at sample (sample column X, Y; height z), from the table */
+fn fSample(X: i32, Y: i32, z: i32) -> f32 {
+  let w = fAW + 1;
+  let s = u32((Y - fA0.y) * w + (X - fA0.x));
+  let off = pgLoad(fSW(s * 2u));
+  let lo = bitcast<i32>(pgLoad(fSW(s * 2u + 1u)));
+  let ns = u32(w * w);
+  return bitcast<f32>(pgLoad(fSW(2u * ns + off + u32(z - lo))));
 }
 /** word address of quad slot i */
 fn fQuadAt(i: u32) -> u32 {
@@ -424,7 +575,11 @@ fn fFind(X: i32, Y: i32, K: i32) -> u32 {
     if (lo >= hi) { break; }
     let mid = (lo + hi) / 2u;
     let km = bitcast<i32>(pgLoad(fScr(mid)));
-    if (km == K) { return mid; }
+    if (km == K) {
+      // (a candidate the surface does not cross has mask 0: no vertex)
+      if (pgLoad(fScr(mid) + 4u) == 0u) { return NONE; }
+      return mid;
+    }
     if (km < K) { lo = mid + 1u; } else { hi = mid; }
   }
   return NONE;
@@ -435,30 +590,23 @@ const FEDGE = array<vec2<u32>, 12>(
   vec2<u32>(0u, 2u), vec2<u32>(1u, 3u), vec2<u32>(4u, 6u), vec2<u32>(5u, 7u),
   vec2<u32>(0u, 4u), vec2<u32>(1u, 5u), vec2<u32>(2u, 6u), vec2<u32>(3u, 7u));
 
-/** cell column (X, Y)'s crossed candidate cells written from scratch entry `at` on: their count */
-fn fVerts(X: i32, Y: i32, at: u32) -> u32 {
-  let I = vec2<i32>(X, Y);
-  var n = 0u;
-  swInit(X, Y);
+/** (round 26 B2, step 1) candidate cell i (its scratch entry: K, column index written by the list pass): its 8 corners
+ *  evaluated; crossed: its vertex written into the entry (mask non-zero), else the entry's mask stays 0 */
+fn fCell(i: u32) {
+  let b = fScr(i);
+  let K = bitcast<i32>(pgLoad(b));
+  let q = i32(pgLoad(b + 5u));
+  let I = fA0 + vec2<i32>(q % fAW, q / fAW);
   var v: array<f32, 8>;
-  loop {
-    let r = swNext();
-    if (r.x > r.y) { break; }
-    for (var K = r.x; K <= r.y; K++) {
-      // the 8 corners: the 4 at K carried from the cell below (the range's first cell evaluates them)
-      for (var c = 0u; c < 8u; c++) {
-        let top = c >= 4u;
-        if (!top && K > r.x) {
-          v[c] = v[c + 4u];
-          continue;
-        }
-        v[c] = fField(I + vec2<i32>(i32(c & 1u), i32((c >> 1u) & 1u)), vec3<f32>(0.5, 0.5, f32(K + i32(c >> 2u))));
-      }
+  for (var c = 0u; c < 8u; c++) {
+    v[c] = fSample(I.x + i32(c & 1u), I.y + i32((c >> 1u) & 1u), K + i32(c >> 2u));
+  }
+  {
       var mask = 0u;
       for (var c = 0u; c < 8u; c++) {
         if (v[c] < 0.0) { mask |= 1u << c; }
       }
-      if (mask == 0u || mask == 255u) { continue; }
+      if (mask == 0u || mask == 255u) { return; }
       // the mean of the edge crossings, in the cell
       var acc = vec3<f32>(0.0);
       var ne = 0.0;
@@ -494,24 +642,27 @@ fn fVerts(X: i32, Y: i32, at: u32) -> u32 {
         g[ax] += sg * fField(I, fp + off);
       }
       let nrm = normalize(g + vec3<f32>(0.0, 0.0, 1e-6));
-      let b = fScr(at + n);
-      pgStore(b, bitcast<u32>(K));
       pgStore(b + 1u, pack2x16unorm(t.xy));
       pgStore(b + 2u, bitcast<u32>(fp.z));
       pgStore(b + 3u, octEnc(nrm));
       pgStore(b + 4u, mask);
-      n++;
-    }
   }
-  return n;
 }
-/** cell column (X, Y)'s candidate cell count */
-fn fCands(X: i32, Y: i32) -> u32 {
+/** cell column q = (X, Y)'s candidate cells: counted, or (write) listed from scratch entry `at` on as (K, mask 0, q) */
+fn fSweepCol(X: i32, Y: i32, q: u32, at: u32, write: bool) -> u32 {
   swInit(X, Y);
   var n = 0u;
   loop {
     let r = swNext();
     if (r.x > r.y) { break; }
+    if (write) {
+      for (var K = r.x; K <= r.y; K++) {
+        let b = fScr(at + n + u32(K - r.x));
+        pgStore(b, bitcast<u32>(K));
+        pgStore(b + 4u, 0u);
+        pgStore(b + 5u, q);
+      }
+    }
     n += u32(r.y - r.x + 1);
   }
   return n;
@@ -673,6 +824,69 @@ fn fieldBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_in
   // (a square area: the larger side; columns past the smaller side are not computed)
   fAW = max(a1.x - fA0.x, a1.y - fA0.y);
   let NA = u32(fAW * fAW);
+  // 0. (B2 step 3) the runs of every column the chunk reads, once: counted, scanned, written
+  fRunsOn = false;
+  fRA = fA0 - 1;
+  fRW = fAW + 3;
+  fPWd = 0;
+  if (L > 0u) {
+    let k = i32(u.a.x);
+    fPA = vec2<i32>(fdiv(fRA.x, k), fdiv(fRA.y, k)) - 1;
+    let pe = vec2<i32>(fdiv(fRA.x + fRW, k), fdiv(fRA.y + fRW, k)) + 2;
+    fPWd = max(pe.x - fPA.x, pe.y - fPA.y);
+  }
+  let NT = u32(fRW * fRW + fPWd * fPWd);
+  if (li == 0u) {
+    let need = (2u * NT + PW - 1u) / PW;
+    fEnsure(FSCR_ID + L, cx, cy, need);
+    wflag = 0u;
+    for (var z = 0u; z < need; z++) {
+      if (pageOf(FSCR_ID + L, cx, cy, z) >= NOT_LOADED) { wflag = 1u; }
+    }
+    if (wflag == 1u) { pgStore(hb + 2u, 0u); pgStore(hb, 0u); }
+  }
+  storageBarrier();
+  workgroupBarrier();
+  if (workgroupUniformLoad(&wflag) == 1u) { return; }
+  if (li < 16u) { fSp[li] = pageOf(FSCR_ID + L, cx, cy, li); }
+  workgroupBarrier();
+  let tper = (NT + 255u) / 256u;
+  let t0 = li * tper;
+  let t1 = min(NT, t0 + tper);
+  var tb = 0u;
+  for (var t = t0; t < t1; t++) {
+    let c = fRunCol(t);
+    let r = fRunsOf(u32(c.x), c.y, c.z, 0u, false);
+    pgStore(fRunW(t * 2u + 1u), r.x | (r.y << 31u));
+    tb += r.x;
+  }
+  let rs = wgScan(li, tb);
+  if (li == 0u) {
+    fPr = (2u * NT + rs.y + PW - 1u) / PW;
+    fEnsure(FSCR_ID + L, cx, cy, fPr);
+    wflag = 0u;
+    for (var z = 0u; z < fPr; z++) {
+      if (pageOf(FSCR_ID + L, cx, cy, z) >= NOT_LOADED) { wflag = 1u; }
+    }
+    if (wflag == 1u) { pgStore(hb + 2u, 0u); pgStore(hb, 0u); }
+  }
+  storageBarrier();
+  workgroupBarrier();
+  if (workgroupUniformLoad(&wflag) == 1u) { return; }
+  if (li < 16u) { fSp[li] = pageOf(FSCR_ID + L, cx, cy, li); }
+  workgroupBarrier();
+  var toff = 2u * NT + rs.x;
+  for (var t = t0; t < t1; t++) {
+    let c = fRunCol(t);
+    let n = pgLoad(fRunW(t * 2u + 1u)) & 0x7fffffffu;
+    pgStore(fRunW(t * 2u), toff);
+    fRunsOf(u32(c.x), c.y, c.z, toff, true);
+    toff += n;
+  }
+  storageBarrier();
+  workgroupBarrier();
+  fPrP = workgroupUniformLoad(&fPr);
+  fRunsOn = true;
   // 1. candidate cells per computed cell column, scanned into scratch offsets
   var tot = 0u;
   for (var q = li; q < FA_N; q += 256u) {
@@ -680,7 +894,7 @@ fn fieldBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_in
     if (q < NA) {
       let X = fA0.x + i32(q) % fAW;
       let Y = fA0.y + i32(q) / fAW;
-      if (X < a1.x && Y < a1.y && fComputed(L, X, Y)) { c = fCands(X, Y); }
+      if (X < a1.x && Y < a1.y && fComputed(L, X, Y)) { c = fSweepCol(X, Y, q, 0u, false); }
     }
     fNV[q] = c;
     tot += c;
@@ -692,8 +906,11 @@ fn fieldBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_in
     off += fNV[q];
   }
   let N = sc.y;
+  let NS = u32((fAW + 1) * (fAW + 1));
   if (li == 0u) {
-    let need = (N + FVPP - 1u) / FVPP;
+    // (the candidate entries' pages, then the sample table's: 2 words a sample column)
+    fPe = fPrP + (N + FVPP - 1u) / FVPP;
+    let need = fPe + (2u * NS + PW - 1u) / PW;
     fEnsure(FSCR_ID + L, cx, cy, need);
     wflag = 0u;
     for (var z = 0u; z < need; z++) {
@@ -714,15 +931,71 @@ fn fieldBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_in
   }
   if (li < 16u) { fSp[li] = pageOf(FSCR_ID + L, cx, cy, li); }
   workgroupBarrier();
-  // 2. the vertices of the crossed candidates
-  var nv = 0u;
+  // 2. (round 26 B2, step 1) the candidates listed per cell column (K and the column, a thread a column: the sweep only),
+  // then evaluated a thread a candidate over the flat list, so a long column no longer runs in one thread
   for (var q = li; q < FA_N; q += 256u) {
-    if (q < NA && fNV[q] > 0u) {
-      let X = fA0.x + i32(q) % fAW;
-      let Y = fA0.y + i32(q) / fAW;
-      fNV[q] = fVerts(X, Y, fOffV[q]);
-      nv += fNV[q];
+    if (q < NA && fNV[q] > 0u) { fSweepCol(fA0.x + i32(q) % fAW, fA0.y + i32(q) / fAW, q, fOffV[q], true); }
+  }
+  storageBarrier();
+  workgroupBarrier();
+  // 3. (B2, step 2) the samples: per sample column its z hull, scanned into the table, then each sample evaluated once,
+  // a thread a sample over the flat list
+  fPeP = workgroupUniformLoad(&fPe);
+  var tsn = 0u;
+  // (a thread a contiguous run of sample columns, so the scanned offsets ascend with the sample column: the flat pass
+  // finds a sample's column by a binary search)
+  let sper = (NS + 255u) / 256u;
+  let s0 = li * sper;
+  let s1 = min(NS, s0 + sper);
+  for (var s = s0; s < s1; s++) {
+    let h = fSHull(s);
+    let c = u32(max(h.y - h.x + 1, 0));
+    pgStore(fSW(s * 2u), c);
+    pgStore(fSW(s * 2u + 1u), bitcast<u32>(h.x));
+    tsn += c;
+  }
+  let ss = wgScan(li, tsn);
+  var soff = ss.x;
+  for (var s = s0; s < s1; s++) {
+    let c = pgLoad(fSW(s * 2u));
+    pgStore(fSW(s * 2u), soff);
+    soff += c;
+  }
+  let NSV = ss.y;
+  if (li == 0u) {
+    let need = fPeP + (2u * NS + NSV + PW - 1u) / PW;
+    fEnsure(FSCR_ID + L, cx, cy, need);
+    wflag = 0u;
+    for (var z = 0u; z < need; z++) {
+      if (pageOf(FSCR_ID + L, cx, cy, z) >= NOT_LOADED) { wflag = 1u; }
     }
+    if (wflag == 1u) { pgStore(hb + 2u, 0u); pgStore(hb, 0u); }
+  }
+  storageBarrier();
+  workgroupBarrier();
+  if (workgroupUniformLoad(&wflag) == 1u) { return; }
+  if (li < 16u) { fSp[li] = pageOf(FSCR_ID + L, cx, cy, li); }
+  workgroupBarrier();
+  let sw = u32(fAW + 1);
+  for (var i = li; i < NSV; i += 256u) {
+    // (the sample column: the last whose offset is at most i)
+    var lo = 0u;
+    var hi = NS;
+    loop {
+      if (hi - lo <= 1u) { break; }
+      let mid = (lo + hi) / 2u;
+      if (pgLoad(fSW(mid * 2u)) <= i) { lo = mid; } else { hi = mid; }
+    }
+    let z = bitcast<i32>(pgLoad(fSW(lo * 2u + 1u))) + i32(i - pgLoad(fSW(lo * 2u)));
+    let I = fA0 + vec2<i32>(i32(lo % sw), i32(lo / sw));
+    pgStore(fSW(2u * NS + i), bitcast<u32>(fField(I, vec3<f32>(0.5, 0.5, f32(z)))));
+  }
+  storageBarrier();
+  workgroupBarrier();
+  var nv = 0u;
+  for (var i = li; i < N; i += 256u) {
+    fCell(i);
+    if (pgLoad(fScr(i) + 4u) != 0u) { nv++; }
   }
   storageBarrier();
   workgroupBarrier();
@@ -755,15 +1028,18 @@ fn fieldBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_in
       workgroupBarrier();
     }
     let fail = ps == 1u && workgroupUniformLoad(&wflag) == 1u;
-    for (var q = li; q < FA_N; q += 256u) {
-      if (fail || q >= NA) { continue; }
-      let X = fA0.x + i32(q) % fAW;
-      let Y = fA0.y + i32(q) / fAW;
-      if (X < own0.x || Y < own0.y || X >= a1.x || Y >= a1.y) { continue; }
-      for (var j = 0u; j < fNV[q]; j++) {
-        let b = fScr(fOffV[q] + j);
-        let K = bitcast<i32>(pgLoad(b));
+    // (a thread a candidate, over the flat list)
+    for (var j = li; j < N; j += 256u) {
+      if (fail) { break; }
+      {
+        let b = fScr(j);
         let mask = pgLoad(b + 4u);
+        if (mask == 0u) { continue; }
+        let K = bitcast<i32>(pgLoad(b));
+        let q = i32(pgLoad(b + 5u));
+        let X = fA0.x + q % fAW;
+        let Y = fA0.y + q / fAW;
+        if (X < own0.x || Y < own0.y || X >= a1.x || Y >= a1.y) { continue; }
         for (var ax = 0u; ax < 3u; ax++) {
           // (the edge from corner 0 along the axis: corner 1, 2 or 4)
           if (((mask ^ (mask >> (1u << ax))) & 1u) == 0u) { continue; }

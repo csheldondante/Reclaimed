@@ -48,7 +48,8 @@ export const BUDGET_MS: Record<string, number> = {
   genFill: 13_400,
   // (round 26) the field mesh, ?field= only, made after every other pipeline (first measured: fieldBake 2,242 ms, the
   // field draws 199 / 352, the rest under 200)
-  fieldBake: 3400,
+  // (B2: 3,696 ms with the flat candidate pass, the shared samples and the run cache)
+  fieldBake: 5600,
   fieldRelease: 400,
   fieldDirClear: 400,
   fieldDirBuild: 400,

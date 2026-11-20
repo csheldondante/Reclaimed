@@ -27930,3 +27930,30 @@ self-test 47 of 47; boot gate: two runs failed one line by a hair (every boot pi
 19,545 ms against 19,000), the base commit 140b8553 checked out in the same tree right after gave 18,110, and a third run
 of this commit passed every line (18,065; cold 1,205 / 2,089 / 2,335; 256 MB 8,932 / 16,753 / 12,860). With `?field` off
 the nest and draw modules are byte-identical to the base and no field module, buffer or pipeline is made.
+
+## 2026-11-20 — Nested scales lab, round 26, step B2: the field mesh's build, three changes measured one by one
+
+The coordinator: keep the trial (draw and frame are good), cut the build (NS-203) in a given order, measuring after
+each. Level 3 at the steepest step, sheets and field pages back to back (scripts/nested-r26-bench.mjs):
+
+| change | whole window, a chunk row a submit | sheets same session |
+|---|---|---|
+| step B (a thread a cell column, serial) | 291-300 ms | 12-28 |
+| 1. a thread a candidate cell after the scan | 209-221 | 11-13 |
+| 2. each sample evaluated once a chunk, shared (z hull per sample column, a table, a flat pass) | 110-113 | 11-12 |
+| 3. each column's runs read once a chunk into scratch (counted, scanned, written) | 135-143 | 10-13 |
+
+Step 1 lists the candidates (K, column) per cell column after the count's scan, then evaluates a thread a candidate.
+Step 2 is the large one; its first version had the sample table's offsets in thread order, not column order, so the
+binary search found the wrong column (407,214 quads left out, caught by `fieldMiss` and a debug comparison against the
+field itself; fixed by giving each thread a contiguous run of sample columns). Step 3 made the count pass cheaper
+(31-32 -> 23 ms with `?fstop=count`) but the whole slightly slower; it stays because the per-frame numbers below are
+what the targets are about.
+
+**The real cost is per submit, not per chunk.** The whole window in ONE dispatch (`benchBake(L, true)`): field 24.0-27.4
+ms against sheets 6.1-10.1 at the step (about 3-4 x), 17.1-17.5 against 9.1-9.4 at the window centre (about 2 x). One
+chunk, or a 2 x 2 block, in one dispatch: 3.1-4.0 ms for the field and 3.9-4.0 for the sheets, which is the
+measurement's own floor (the round trip of onSubmittedWorkDone). The row-a-submit numbers above are a chunk row's
+latency times 16 (each row's workgroups run their phases in series: 6-9 ms a row for the field, under 1 for the
+sheets). So the window build in one dispatch meets the targets (within 2 x gentle, 4 x steep); spread over frames, a
+few chunks a frame is under the floor. Hence the next step: builds spread across frames.
