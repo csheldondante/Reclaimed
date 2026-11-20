@@ -46,16 +46,18 @@ it('nested gen: atlas root, generated detail per level, zoom cycle and restrict'
   nest.detailAmp = 0;
   nest.setGen(gen);
   // (the fill alone, timed: a whole window of root columns)
-  for (let i = 0; i < 2; i++) {
+  // (round 27: a finer level's fill too; every fill now takes the slope's four more ground() calls)
+  for (let i = 0; i < 4; i++) {
+    const L = i >> 1;
     const enc = dev.createCommandEncoder();
     const p = enc.beginComputePass();
-    gen.fill(p, 0, 0, 0, N, N);
+    gen.fill(p, L, 0, 0, N, N);
     p.end();
     const t = performance.now();
     dev.queue.submit([enc.finish()]);
     gen.submitted();
     await dev.queue.onSubmittedWorkDone();
-    console.log(`[gen] fill of ${N} x ${N} root columns: ${(performance.now() - t).toFixed(1)} ms (run ${i})`);
+    console.log(`[gen] fill of ${N} x ${N} level ${L} columns: ${(performance.now() - t).toFixed(1)} ms (run ${i & 1})`);
   }
   // (where to look: the whole torus at the root's columns, 2 x 2 windows; the 8 km squares with the most relief that are
   // mostly land, the page's default spot is picked from these)
@@ -121,6 +123,9 @@ it('nested gen: atlas root, generated detail per level, zoom cycle and restrict'
     const s0 = await nest.readAll();
     const c = s0.column(2, wins[2].gx + N / 2, wins[2].gy + N / 2);
     expect(nest.edit({ op: 'carve', radius: 6 / K ** 2, amount: 0, at: { level: 2, x: N / 2, y: N / 2, z: c.z1[c.z1.length - 1] + 1 } })).toBe(true);
+    // (round 27) a material edit too: an add (plain soil) at level 1, off the carve, so the cycle checks it survives
+    const c1 = s0.column(1, wins[1].gx + N / 2 + 40, wins[1].gy + N / 2);
+    expect(nest.edit({ op: 'add', radius: 4 / K, amount: 0, at: { level: 1, x: N / 2 + 40, y: N / 2, z: c1.z1[c1.z1.length - 1] + 0.5 } })).toBe(true);
   }
   const s1 = await nest.readAll();
   const t1 = wins.map((w, L) => tops(s1, L, w));
@@ -130,14 +135,25 @@ it('nested gen: atlas root, generated detail per level, zoom cycle and restrict'
     let zo = 0;
     for (let j = 1; j <= L; j++) zo += s1.zOrigin(j) / K ** (j - 1);
     const v = [...t1[L]].filter((x) => Number.isFinite(x)).map((x) => (zo + x / K ** L) * ROOT_M);
-    const mats = new Map<number, number>();
+    const mats = new Map<string, number>();
+    // (round 27) the material each sampled column shows on top (bits 0-3), and where it differs from its parent's top
+    const shown = new Map<number, number>();
+    let differs = 0;
+    const topMat = (L2: number, X: number, Y: number) => {
+      const r = s1.records(L2, X, Y);
+      for (let j = r.mat.length - 1; j >= 0; j--) if ((r.mat[j] & 255) !== 0) return r.mat[j] & 15;
+      return 0;
+    };
     for (let y = 0; y < N; y += 4)
       for (let x = 0; x < N; x += 4) {
         const r = s1.records(L, wins[L].gx + x, wins[L].gy + y);
-        const key = r.mat.filter((m) => (m & 255) !== 0).map((m) => m & 255).join('');
-        mats.set(Number(key), (mats.get(Number(key)) ?? 0) + 1);
+        const key = r.mat.filter((m) => (m & 255) !== 0).map((m) => (m & 255).toString(16)).join('.');
+        mats.set(key, (mats.get(key) ?? 0) + 1);
+        const t = topMat(L, wins[L].gx + x, wins[L].gy + y);
+        shown.set(t, (shown.get(t) ?? 0) + 1);
+        if (L > 0 && t !== topMat(L - 1, Math.floor((wins[L].gx + x) / K), Math.floor((wins[L].gy + y) / K))) differs++;
       }
-    console.log(`[gen] level ${L} (${cs} m columns): local tops ${Math.min(...v).toFixed(1)}..${Math.max(...v).toFixed(1)}; column structures (materials bottom up: count of 1/16 sampled) ${JSON.stringify([...mats])}`);
+    console.log(`[gen] level ${L} (${cs} m columns): local tops ${Math.min(...v).toFixed(1)}..${Math.max(...v).toFixed(1)}; column structures (material bytes bottom up, hex: count of 1/16 sampled) ${JSON.stringify([...mats])}; top material shown ${JSON.stringify([...shown])}${L > 0 ? `, ${differs} sampled columns show another top material than their parent column` : ''}`);
   }
   expect(g.takeErrors()).toEqual([]);
 
@@ -176,12 +192,22 @@ it('nested gen: atlas root, generated detail per level, zoom cycle and restrict'
   for (let L = 1; L <= 3; L++) expect(nest.promote(L, wins[L])).toBe(true);
   const s2 = await nest.readAll();
   let cycleDiff = 0;
+  // (round 27) whole records too (tops and material words, edges included): the materials decided per level and the
+  // level 1 add survive the cycle
+  let recDiff = 0;
   for (let L = 0; L <= 3; L++) {
     const t2 = tops(s2, L, wins[L]);
     for (let i = 0; i < t2.length; i++) if (!(t2[i] === t1[L][i] || (Number.isNaN(t2[i]) && Number.isNaN(t1[L][i])))) cycleDiff++;
+    for (let y = 0; y < N; y++)
+      for (let x = 0; x < N; x++) {
+        const a = s1.records(L, wins[L].gx + x, wins[L].gy + y);
+        const b = s2.records(L, wins[L].gx + x, wins[L].gy + y);
+        if (a.mat.length !== b.mat.length || a.mat.some((m, j) => m !== b.mat[j] || !Object.is(a.top[j], b.top[j]))) recDiff++;
+      }
   }
-  console.log(`[gen] zoom cycle with a level 2 carve in (demote 1, promote 1-3 again): ${cycleDiff} columns differ`);
+  console.log(`[gen] zoom cycle with a level 2 carve and a level 1 add in (demote 1, promote 1-3 again): ${cycleDiff} column tops differ, ${recDiff} columns' records differ`);
   expect(cycleDiff).toBe(0);
+  expect(recDiff).toBe(0);
 
   // restrict: raise by 0 at the finest level's centre, radius ~70 of its columns: the ancestors move by rounding only
   expect(nest.edit({ op: 'raise', radius: 70 / K ** 3, amount: 0, at: { level: 3, x: N / 2, y: N / 2 } })).toBe(true);

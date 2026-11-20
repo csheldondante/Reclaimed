@@ -425,7 +425,8 @@ fn blockSum(lx: u32, ly: u32, k: u32) -> f32 {
 fn sameMats(lid: u32, a: vec2<i32>, b: vec2<i32>, n: u32) -> bool {
   if (colCount(lid, a.x, a.y) != n) { return false; }
   for (var i = 0u; i < n; i++) {
-    if (((ivlAt(lid, a.x, a.y, i).m ^ ivlAt(lid, b.x, b.y, i).m) & 0xffu) != 0u) { return false; }
+    // (round 27: a generated cover or plant interval is the same structure whatever material it shows)
+    if (matDiffers(ivlAt(lid, a.x, a.y, i).m, ivlAt(lid, b.x, b.y, i).m)) { return false; }
   }
   return true;
 }
@@ -565,6 +566,8 @@ fn addRes(e: f32, L: u32, i: u32, which: u32) -> f32 {
 fn putRes(live: f32, e: f32, L: u32, i: u32, which: u32, write: bool) { putResW(live, e, L, i, which, write, 0u); }
 /** (this thread) some residual word of its column is not zero (derive mode 1 reduces it over the workgroup) */
 var<private> gAnyRes: bool;
+/** (round 27, derive) this thread's column's generator decision word (NONE: no generator at this level), read once */
+var<private> gDec: u32;
 /** word2: 0 for a per-bound record; WHOLE | material for a whole column's */
 fn putResW(live: f32, e: f32, L: u32, i: u32, which: u32, write: bool, word2: u32) {
   let hi = live - e;
@@ -604,7 +607,7 @@ fn writeWhole(L: u32, n: u32, need: u32) {
 fn sameAcross(la: u32, a: vec2<i32>, lb: u32, b: vec2<i32>, n: u32) -> bool {
   if (colCount(la, a.x, a.y) != n) { return false; }
   for (var i = 0u; i < n; i++) {
-    if (((ivlAt(la, a.x, a.y, i).m ^ ivlAt(lb, b.x, b.y, i).m) & 0xffu) != 0u) { return false; }
+    if (matDiffers(ivlAt(la, a.x, a.y, i).m, ivlAt(lb, b.x, b.y, i).m)) { return false; }
   }
   return true;
 }
@@ -640,6 +643,9 @@ fn derive(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
   let p0 = vec2<i32>(cx * 16 / k - 2, cy * 16 / k - 2);
   // (round 25) the generator's detail where both levels' fields are filled (uniform: the header)
   let gon = genOn(L) && genOn(P);
+  // (round 27) what this level's generator decides at this column, for the generated intervals' materials (matWord)
+  gDec = NONE;
+  if (genOn(L)) { gDec = bitcast<u32>(genAt(L, gX, gY).w); }
   for (var q = li; q < u32(ps * ps); q += 256u) {
     let c = clampTo(P, p0.x + i32(q) % ps, p0.y + i32(q) / ps);
     wPTop[q] = topS(P, c.x, c.y, colCount(P, c.x, c.y));
@@ -736,6 +742,15 @@ fn derive(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
     workgroupBarrier();
     if (gAct && !gWhole) { setCount(TMP_ID + L, gX, gY, gN, need); }
     layers(lid.x, lid.y, li, maxN, 0u, true);
+    // (round 27) the generated intervals show what this level's generator decides at this column (their role kept): one
+    // loop over the column just written, not in the layer pass (inlined three times: its compile went 2.4 -> 4 s)
+    if (gAct && !gWhole && gDec != NONE) {
+      for (var i = 0u; i < gN; i++) {
+        let t = ivlAt(TMP_ID + L, gX, gY, i);
+        let w = genMatD(t.m, gDec);
+        if (w != t.m) { setIvl(TMP_ID + L, gX, gY, i, t.z0, t.z1, w); }
+      }
+    }
     if (gAct && gWhole) { writeWhole(L, finalN, need); }
   } else {
     layers(lid.x, lid.y, li, maxN, 1u, false);
@@ -825,7 +840,7 @@ fn restrictK(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
           gap += layerVal(L, X * k + a, Y * k + b, 2u * i - 1u);
         }
       }
-      setIvl(T, X, Y, i, z - th * inv, z, (ivlAt(L, tpl.x, tpl.y, i).m & 0xffu) | restrictEdge(L, X, Y, k, i, n));
+      setIvl(T, X, Y, i, z - th * inv, z, genMat(P, X, Y, ivlAt(L, tpl.x, tpl.y, i).m & 0xffu) | restrictEdge(L, X, Y, k, i, n));
       z = z - th * inv - gap * inv;
     }
   } else {
@@ -841,29 +856,36 @@ fn restrictK(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
         let cn = colCount(L, c.x, c.y);
         for (var i = 1u; i < cn; i++) {
           let iv = ivlAt(L, c.x, c.y, i);
-          vm[iv.m & 7u] += iv.z1 - iv.z0;
+          vm[rBucket(iv.m)] += iv.z1 - iv.z0;
           air += iv.z0 - ivlAt(L, c.x, c.y, i - 1u).z1;
         }
       }
     }
     for (var i = 1u; i < n; i++) {
       let iv = ivlAt(L, tpl.x, tpl.y, i);
-      tm[iv.m & 7u] += iv.z1 - iv.z0;
+      tm[rBucket(iv.m)] += iv.z1 - iv.z0;
       tair += iv.z0 - ivlAt(L, tpl.x, tpl.y, i - 1u).z1;
     }
     let kk = kf * kf;
     for (var i = max(n, 1u) - 1u; i >= 1u; i--) {
       let iv = ivlAt(L, tpl.x, tpl.y, i);
-      let mi = iv.m & 7u;
+      let mi = rBucket(iv.m);
       var th = 0.0;
       if (tm[mi] > 0.0) { th = (iv.z1 - iv.z0) * (vm[mi] / kk / tm[mi]) / kf; }
       var gap = 0.0;
       if (tair > 0.0) { gap = (iv.z0 - ivlAt(L, tpl.x, tpl.y, i - 1u).z1) * (air / kk / tair) / kf; }
-      setIvl(T, X, Y, i, z - th, z, (iv.m & 0xffu) | restrictEdge(L, X, Y, k, i, n));
+      setIvl(T, X, Y, i, z - th, z, genMat(P, X, Y, iv.m & 0xffu) | restrictEdge(L, X, Y, k, i, n));
       z = z - th - gap;
     }
   }
-  setIvl(T, X, Y, 0u, OPEN_BOTTOM, z, (ivlAt(L, tpl.x, tpl.y, 0u).m & 0xffu) | restrictEdge(L, X, Y, k, 0u, n));
+  // (round 27: a generated interval's material is the parent level's decision at the parent column, genMat)
+  setIvl(T, X, Y, 0u, OPEN_BOTTOM, z, genMat(P, X, Y, ivlAt(L, tpl.x, tpl.y, 0u).m & 0xffu) | restrictEdge(L, X, Y, k, 0u, n));
+}
+/** (round 27) restrict's per-material sums: a plain material by its id (1-5), a generated cover or plant interval by its
+ *  role (6, 7) whatever it shows (matKey's classes) */
+fn rBucket(m: u32) -> u32 {
+  let r = m & ROLE_MASK;
+  return select(m & 7u, select(6u, 7u, r == ROLE_PLANT), r != 0u);
 }
 /** (round 22) restrict: a parent interval's edge from its k x k children of n intervals that keep one, in row order: the
  *  mean normal (normalised) and the mean of the children's line points projected on it (edge.ts edgeFromChildren) */
@@ -935,6 +957,21 @@ fn genAt(L: u32, X: i32, Y: i32) -> vec4<f32> {
   let y = ((Y % n) + n) % n;
   return genF[GEN_HDR + L * u32(n * n) + u32(y * n + x)];
 }
+/** (round 27) a material word with a role resolved for level L's column (X, Y) from its generator field: the cover shows
+ *  the decided cover (stone where bare), the plant layer plants where they grow, else the cover's material. Any other word
+ *  (a plain material, or no generator: the toy root) as it is. The role and the edge bits are kept. */
+fn genMat(L: u32, X: i32, Y: i32, w: u32) -> u32 {
+  if ((w & ROLE_MASK) == 0u || !genOn(L)) { return w; }
+  return genMatD(w, bitcast<u32>(genAt(L, X, Y).w));
+}
+/** genMat with the column's decision word already read (NONE: no generator); derive reads it once a thread (gDec) */
+fn genMatD(w: u32, dcs: u32) -> u32 {
+  // (branch-free: FXC inlines this at every call site of derive's layer pass; with branches its compile went 2.4 -> 4 s)
+  let r = w & ROLE_MASK;
+  let c = dcs & 15u;
+  let m = select(select(c, MAT_STONE, c == 0u), MAT_PLANT, r == ROLE_PLANT && (dcs & 16u) != 0u);
+  return select(w, (w & ~0x0fu) | m, r != 0u && dcs != NONE);
+}
 
 @compute @workgroup_size(16, 16)
 fn rootGen(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
@@ -949,16 +986,18 @@ fn rootGen(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) 
   var soil = 0.25 + 0.15 * valueNoise(f32(X) / 6.0, f32(Y) / 6.0, 7, u.a.y);
   // (round 25) from the generator: the atlas's ground in root units (one unit = one root column), its cover (gen.wgsl:
   // forms.wgsl colFinish's slope and wet rules) and the plant layer
+  // (round 27) every generated column has the same structure, stone, a cover and a plant interval, of the generator's
+  // thicknesses; what the two show is this level's decision at this column (genMat)
   let gon = genOn(0u);
   var plant = 0.0;
-  var cmat = MAT_SOIL;
+  var dcs = NONE;
   if (gon) {
     let cs = genF[0].x;
     let g = genAt(0u, X, Y);
     s = g.x / cs;
-    cmat = bitcast<u32>(g.w);
-    soil = select(0.0, g.y / cs, cmat != 0u);
-    if (soil > 0.0) { plant = g.z / cs; }
+    soil = g.y / cs;
+    plant = g.z / cs;
+    dcs = bitcast<u32>(g.w);
   }
   let stripe = X == u.e.x && Y == u.e.y && u.e.z > 2;
   // the generated column, bottom up (the stripe's is written below)
@@ -966,18 +1005,12 @@ fn rootGen(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) 
   var gm = array<u32, 3>(MAT_STONE, MAT_SOIL, MAT_PLANT);
   var n = 2u;
   if (gon) {
-    n = 1u;
+    n = 3u;
     gz[0] = s - soil - plant;
-    if (soil > 0.0) {
-      gz[n] = s - plant;
-      gm[n] = cmat;
-      n++;
-    }
-    if (plant > 0.0) {
-      gz[n] = s;
-      gm[n] = MAT_PLANT;
-      n++;
-    }
+    gz[1] = s - plant;
+    gz[2] = s;
+    gm[1] = genMatD(ROLE_COVER, dcs);
+    gm[2] = genMatD(ROLE_PLANT, dcs);
   } else {
     gz[0] = s - soil;
     gz[1] = s;
@@ -1046,7 +1079,7 @@ fn rootGen(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) 
       setIvl(T, X, Y, i, select(lo, OPEN_BOTTOM, i == 0u), s - 4.0 + f32(i + 1u) * 0.1, select(MAT_SAND, MAT_CLAY, (i & 1u) == 1u));
     }
   } else {
-    // stone, the cover over it, the plants over that (each only where it has thickness)
+    // stone, the cover over it, the plants over that (round 27: always all three with the generator)
     for (var i = 0u; i < n; i++) { setIvl(T, X, Y, i, select(gz[max(i, 1u) - 1u], OPEN_BOTTOM, i == 0u), gz[i], gm[i]); }
   }
 }

@@ -40,6 +40,22 @@ fn matSolid(m: u32) -> bool { return (m & 0xffu) != MAT_AIR; }
  *  bit 8 on, 9-17 the normal's angle, 18-29 the signed distance; 0 = none). Material comparisons mask with 0xff. */
 const EDGE_MASK: u32 = 0x3fffff00u;
 const EDGE_ON: u32 = 0x100u;
+/** (round 27) a generated interval's ROLE, bits 4-5 of the material byte (0x10 the cover, 0x20 the plant layer; 0 a
+ *  plain material): its visible material (bits 0-3) is decided per level from the generator field (nest.wgsl genMat).
+ *  Structure comparisons use matKey (a role compares by its role alone); the draws use matId. */
+const ROLE_MASK: u32 = 0x30u;
+const ROLE_COVER: u32 = 0x10u;
+const ROLE_PLANT: u32 = 0x20u;
+fn matId(m: u32) -> u32 { return m & 0x0fu; }
+fn matKey(m: u32) -> u32 {
+  let r = m & ROLE_MASK;
+  return select(m & 0xffu, r, r != 0u);
+}
+/** two material words of different structure (matKey's classes): with a role on either side bits 0-3 are not compared
+ *  (a plain id has no bits 4-7, so a role against a plain id always differs) */
+fn matDiffers(a: u32, b: u32) -> bool {
+  return ((a ^ b) & select(0xffu, 0xf0u, ((a | b) & ROLE_MASK) != 0u)) != 0u;
+}
 /** (residual records) the live edge overrides the enhanced one */
 const RES_EDGE: u32 = 0x40000000u;
 

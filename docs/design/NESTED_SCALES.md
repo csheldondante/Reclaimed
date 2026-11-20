@@ -1534,6 +1534,34 @@ good) and set the build's targets per frame: opening a level and sliding must no
   the parent's cells and the generator's steps) drawn as the thin wall it is; the textured shading darkens a steep face
   away from the sun.
 
+**Round 27 plan, part 1 (written before the code): materials decided per level.** How inheritance works from now on:
+(1) A generated column has ONE structure at every level: stone, a COVER interval, a PLANT interval (thicknesses from the
+generator, never zero), so enhance, restrict and the residuals see the same structure everywhere and which material a
+column shows can never make a whole-column residual. (2) The cover and plant intervals carry a ROLE (bits 4-5 of the
+material byte); their visible material (bits 0-3) is decided wherever such an interval is written (rootGen, derive,
+restrict) from the generator field of THAT level at THAT column (the atlas's ground at the column centre), and structure
+comparisons ignore bits 0-3 of a role. (3) An edit that writes a material writes a plain id (no role): another
+structure, kept by the residuals as before, so it survives zoom; a carve keeps the role of what it leaves, and each level
+resolves it again from the same field (bit-identical over a zoom cycle).
+The atlas's cover inputs (Region.cover, topMat, veg) are one value a REGION: a border between two regions' covers is
+the partition's line. It is softened with the atlas's own continuous field and rule: forms.wgsl colFinish takes region A
+where `w + (hash - 0.5) x 0.3 > 0.5` (w: A's blend weight); here the hash is of the 1 m cell of world position, so a
+point decides the same from every level. (As built: the hash at 2 m column centres gave a checkerboard of the two
+covers, so the atlas's own periodic fbm, noise.wgsl pfbm with 32-8 m features, takes its place at the same amplitude:
+`w + 0.3 fbm > 0.5`.) The slope and wet rules stay the atlas's (round 25), now at every level.
+
+**As built (round 27, part 1).** As planned. gen.wgsl genFill: every fill (not only the root's) takes the slope's four
+more ground() calls (still one call site); the region by the atlas's dither; writes (height, cover thickness >= 0.25 m,
+plant thickness 0.5 m, decision bits: cover material, plants). store.wgsl: ROLE_COVER 0x10, ROLE_PLANT 0x20, matId,
+matKey, matDiffers. nest.wgsl: genMat / genMatD resolve a role from a level's field; rootGen writes the three intervals;
+derive reads its column's decision once (gDec) and resolves the column it just wrote (one loop after the layer pass: in
+matWord, inlined six times, the compile looked 2.4 -> 4 s, though that turned out to be another load on the GPU);
+restrictK resolves at the parent's column (it moved to the generator's layout); sameMats / sameAcross compare by
+matDiffers; restrict's per-material sums by rBucket (a role by its role). The draws take matId. Checked
+(test/gpu/nested-gen.test.ts, extended): a zoom cycle with a level 2 carve and a level 1 add: 0 tops and 0 whole records
+differ at any level; restrict 1.9e-3 mm / 3.8e-3 mm (levels 1, 2); the root slide round trip 0 of 8,192. Stills
+local/nested/r27-mat-before|after-<zoom-L0..L3|high>.png.
+
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

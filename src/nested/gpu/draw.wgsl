@@ -76,7 +76,8 @@ fn vpOf(L: u32) -> mat4x4<f32> {
 /** a material's colour (round 25: the material alone; soil was green where the normal was up: the owner, "terrain layers
  *  should not have multiple materials by normal") */
 fn matColor(m: u32) -> vec3<f32> {
-  switch (m) {
+  // (round 27: the material id alone, a generated interval's role bits off: store.wgsl matId)
+  switch (matId(m)) {
     case 1u: { return vec3<f32>(0.47, 0.45, 0.43); }
     case 2u: { return vec3<f32>(0.45, 0.36, 0.24); }
     case 3u: { return vec3<f32>(0.80, 0.70, 0.48); }
@@ -549,7 +550,7 @@ fn texOut(q: vec3<f32>, zo: f32, ng: vec3<f32>, mat: u32, pxL: f32, toEye: vec3<
   // (the fog by metres; 0 keeps round 21's haze)
   si.fog = select(-1.0, fogAt(u32(d.lvl.w), dEye), d.geo.y > 0.0);
   si.ng = ng;
-  si.mat = mat;
+  si.mat = matId(mat);
   si.pxW = pxL * sc;
   si.view = -normalize(toEye);
   si.distW = dEye * sc;

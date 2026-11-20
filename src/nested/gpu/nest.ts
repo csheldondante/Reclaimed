@@ -135,7 +135,8 @@ export interface GenHook {
   submitted(): void;
 }
 /** derive and rootGen (round 25): the entry points bound to the generator field */
-const GEN_ENTRIES = ['derive', 'rootGen'];
+// (round 27: restrictK too: it resolves a generated interval's material at the parent's column, nest.wgsl genMat)
+const GEN_ENTRIES = ['derive', 'rootGen', 'restrictK'];
 /** (round 25) residual pages a leaving root chunk may take for each column page in its stack (nest.wgsl rootGen mode 1:
  *  a residual page holds 16 records, two an interval; a column page up to 24 records) */
 const KEEP_PAGES = 3;

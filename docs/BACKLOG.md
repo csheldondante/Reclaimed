@@ -687,7 +687,30 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   freezing and under the atlas's tree line (sea + 70 m); forms.wgsl's density (moisture, woods noise) is not used, and
   the thickness is not the atlas's (it has none: veg is a plant density). Water is not a material yet: the sea, rivers
   and lakes are their ground (sand under the sea), next round's fluids.
-- NS-188 (limit, round 25) Materials are decided per ROOT column (128 m) and finer levels inherit the root's structure
+- NS-213 (limit, round 27 part 1) Every generated column now holds three intervals (stone, a cover and a plant interval
+  of the generator's thicknesses, never zero), also where it shows bare stone: pages held went up about 30 % at the r25
+  zoom spot with four levels open (3,089 -> 4,079 used). The cost of one structure everywhere (NESTED_SCALES.md "Round 27
+  plan, part 1"); a column whose three intervals all show stone could be packed to one if this matters on the phone.
+- NS-214 (stand-in, round 27 part 1) Where nothing covers the rock the cover interval is GEN_COVER_MIN = 0.25 m thick
+  (gen.wgsl) and shows stone; the plant interval is 0.5 m everywhere (NS-187) and shows the cover's material where
+  nothing grows. Picked, not the atlas's (it has no such thickness): only seen on a carved wall, as a band of the same
+  material.
+- NS-215 (limit, round 27 part 1) The root still decides per 128 m column (its own columns), so from 2 km, where only
+  the root is open, material borders are 128 m squares with `?tex=1` (local/nested/r27-mat-after-high.png, unchanged from
+  before). Finer levels decide at 16 m, 2 m and 0.25 m. `?tex=2` blends a border over the four nearest column centres by
+  texture height (round 27 part 2).
+- NS-216 (look, round 27 part 1) On one steep slope near the r26 border poses (r27p1-r26-border-out-sheets|field.png,
+  top right) the 2 m level shows a checkerboard of bare stone and sand, column by column. Cause not proven: the atlas's
+  slope rule (bare past 1.6 over a metre) sampled at 2 m column centres on ground whose slope sits near the threshold or
+  steps with a period near two columns (the atlas's terraces) would alias like this. The region dither was ruled out
+  (a hash at first; the fbm that replaced it changed nothing there). Each level samples its own column centres by design;
+  a fix would decide from a footprint (the slope's mean over the column), not a point.
+- NS-217 (look, round 27 part 1) The round 26 visual-closure check: sheets 0 at every pose; field 0 except border-out, 1
+  pixel (twice, deterministic; round 26 measured 0). Every generated column now shares one structure, so enhance's top
+  surface interpolates across former material borders (gCompat) and level 3's geometry changed there a little; the
+  single pixel is at the field window's join. Not examined further.
+- NS-188 (DONE round 27 part 1: materials decided per level from the generator at each level's columns, roles in the
+  material byte; see NS-213-215) (limit, round 25) Materials are decided per ROOT column (128 m) and finer levels inherit the root's structure
   through enhance (thicknesses interpolate; the count and materials are the parent's): soil and plants cover a cliff that
   falls inside a root column, and material borders are 128 m blocks softened by the thickness interpolation. The atlas's
   slope rule (cover less half the slope, none past 1.6) is applied at the root's 128 m spacing, where it almost never

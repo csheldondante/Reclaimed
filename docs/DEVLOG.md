@@ -28024,3 +28024,35 @@ against 9.7.
 **Gates (`?field` off: byte-identical modules).** typecheck; nested unit tests 77 of 77; compile gate passed (fieldBake
 2,584 ms, budget 5,600; fieldFlip 118; the field draws 283 / 441; total 24.5 s of 40); boot gate passed (cold 1,177 /
 9,013 / 1,530 ms; 512 MB reload 9,339 / 17,393 / 13,493; 256 MB 8,279 / 15,948 / 12,001); full self-test 47 of 47.
+
+## 2026-11-20 — Nested scales lab, round 27 part 1: materials decided per level, not per 128 m root column
+
+**Why.** From above the land was 128 m coloured squares (NS-188, r25-root-high): the cover (soil, sand, bare stone,
+plants) was decided per root column and inherited, because a column of another structure than its parent can only be a
+whole-column residual. The fix keeps the structure the same everywhere and lets each level decide what the generated
+intervals show (NESTED_SCALES.md "Round 27 plan, part 1", three lines written before the code).
+
+**What.** Every generated column is stone + a cover interval + a plant interval (thicknesses never zero: cover at least
+0.25 m, plants 0.5 m). The two carry a role in bits 4-5 of the material byte; bits 0-3, the material shown, come from
+the generator field of the level that writes the interval at that column (rootGen, derive, restrictK; genMat). Structure
+comparisons ignore bits 0-3 of a role; draws use bits 0-3. Every level's fill now pays the slope's four extra ground()
+calls (round 25: the root's only). Region borders: the atlas's covers are one value a region; the border is softened
+with the region blend weight w plus the atlas's own fbm (colFinish's per-cell hash made a checkerboard at 2 m columns).
+
+**Measured.** Generator test (test/gpu/nested-gen.test.ts, extended to compare whole records and to add a material
+edit): zoom cycle with a level 2 carve and a level 1 add, 0 tops and 0 records differ at any level; restrict by a zero
+raise at level 3 moves level 1 1.9e-3 mm, level 2 3.8e-3 mm (as round 25); root slide round trip 0 of 8,192 columns. Of
+1/16 of each window sampled, 17 (level 1) and 14 (level 2) columns show another top material than their parent column.
+Fill of a 256 x 256 window: root 10.6 ms, level 1 6.1 ms (warm). Pages: every column now three intervals: at the r25 zoom
+spot with 4 levels, 4,079 used against 3,089 (NS-213). Compile: derive 2,387 ms, restrictK 829, rootGen 220 (budgets
+2,700 / 1,400 / 400; two earlier runs read 4.0 s for derive while the GPU was shared: the same code measured 2.4 s on
+a quiet run, and HEAD 2.4 s both times).
+
+**Look.** local/nested/r27-mat-before|after-<zoom-L0..L3|high>.png. Level 1 (16 m): the soil patch's edge is now 16 m
+steps following the ground instead of 128 m blocks. 2 km (root only): unchanged, still 128 m squares: the root decides at
+its own columns (NS-215; part 2's tex=2 blends borders). The 0.25 m level at the r25 spot looks the same (that spot is
+sand and stone either way). A checkerboard of stone and sand on one steep slope at 2 m (NS-216).
+
+**Gates.** typecheck; nested unit tests 77 of 77; compile gate passed; boot gate passed (cold 6,776 / 9,929 / 9,409 ms;
+512 MB reload 9,575 / 18,864 / 13,848; 256 MB 8,003 / 16,044 / 11,865); full self-test 47 of 47 (668 s); generator test
+passed; round 26 visual closure: sheets 0 at all 9 poses, field 0 except border-out 1 pixel (NS-217).
