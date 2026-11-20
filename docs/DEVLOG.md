@@ -28120,3 +28120,92 @@ closure: sheets 0, field 1 pixel at border-out in one run and 49 in another (ide
 passes (7,006 / 10,367 / 9,826 ms) and 256 MB passes, but the 512 MB reload's "every boot pipeline" read 19,260 and
 20,014 ms against 19,000; part 1's commit, checked out and run right after, read 20,460 there: the machine's load at
 the time, not this change (the textures and their pipelines start after every boot pipeline is made).
+
+## 2026-11-20 — Nested scales lab, round 28 step 1: the field mesh on levels 1-3 together, a Field mesh button, the field's page reservation
+
+**Why.** The owner's phone screenshots (sheets, the default link) show sawtooth fangs at every carve rim and cliff,
+material checkerboards and square pillars, at 17-43 ms a frame. The owner never saw the field mesh: `?field=finest` only
+drew the 0.25 m level. The brief: make the field mesh good enough to be the default for every level below the root.
+
+**What.** (1) `?field=1,2,3` runs as one configuration (field child over field parent at every join): it already
+worked; checked below. (2) A "Field mesh" button switches at run time: the field's pipelines are made in the background
+once the terrain is made (GpuNest.prepareField; 8.5-8.7 s of compiles that no longer sit on the switch), and the switch
+demotes to the root, sets the mask (GpuNest.setFieldMask, only with the root alone live) and lets the camera's rules open
+the levels again in the new draw. Desktop: the switch and the levels reopened in 1,979 ms, 183 frames, worst frame 75 ms.
+(3) The field's page reservation. The field configuration reserved 723 MB (15,296 pages) against 230 MB for sheets: the
+pool grew to the reservation, not the use (2,600 pages used either way). Cause: a field level's promote and slide
+reserved the whole window's bake bound at the field's per-chunk bound (2 x (1 + deepest field stack so far) + 2 = 26-30
+pages a chunk, the deepest stack being one steep chunk's scratch) although a field level bakes nothing in that op (the
+job builds it later, each 2 x 2 block reserving its own, and the flip bakes the parent); and every bake bound was charged
+the field rate while any field level was live, the root's included. Now: a field level's promote and slide reserve their
+column pages only; the flip reserves the parent's bakes over the footprints and its parent's rim chunks (flipBound); the
+bake bound takes the level baked (sheet levels and the root at the sheets' rate); an edit adds the field bound of each
+field level's chunks it rebuilds (before, an edit counted one face page a chunk there, leaning on the pool's slack).
+Measured at the four phone poses (one session each): sheets 227-254 MB held, field 175-242 MB; the grow log's largest
+op went from 12,212 pages to 2,072.
+
+**Visual closure, 3 runs each, `?field=1,2,3`.** Round 26 poses at levels 3, 2 and 1 (scripts/nested-r26-stills.mjs
+--field 1,2,3; 10, 10 and 9 poses): 0 hole pixels at every pose in every run. The four phone situations
+(scripts/nested-r28.mjs: carve rim at 2 m from 100 m, a material border at 2 m, the step from 190 m, the step at 16 m
+from 600 m): 0 in every run.
+
+**NS-217 explained.** Identical code gave 1 and 49 pixels because the windows land in different places run to run: the
+streaming lead follows the eye's velocity smoothed over real frame times and the slides have hysteresis, so the same
+pose ends with the windows a chunk or more apart (logged now: level 2 at y 3,680 / 3,712 / 3,728 over three runs of one
+pose). A sweep (--sweep 5: the finest window slid to 25 placements round where it stands, levels held still) at the
+border poses: with `?field=3` alone (a field child over a SHEET parent, round 27's configuration) 20 of 50 placements
+leak, 1, 49 or 55 pixels depending only on the window's y placement: the round 27 numbers exactly; with `?field=1,2,3`
+0 of 50. The leak is the field-over-sheets join (NS-224); field over field does not leak at any placement tried.
+
+**Frame time (step 3 of the brief), desktop proxy.** `?gputime=1` (measurement only: a render pass a level and one for
+the sky, each timed by timestamp queries, read back asynchronously; scripts/nested-r28-frame.mjs, 446 x 1000 at dpr 2 =
+1.78 M pixels, three poses from the phone's situations). Per pass, GPU ms (textured; canopy off; flat; textured at half
+the side):
+
+| pose | draw | finest level | next | root | sky | total | flat total | half side |
+|---|---|---|---|---|---|---|---|---|
+| 600 m, 2 levels | sheets | L1 5.08 | | 0.59 | 0.06 | 5.72 | 2.45 | 3.38 |
+| | field (before / indexed) | L1 5.67 / 5.54 | | 0.48 | 0.06 | 6.20 / 6.09 | 3.83 / 3.46 | 5.04 / 4.18 |
+| 190 m oblique, 3 | sheets | L2 4.37 | L1 1.34 | 0.45 | 0.08 | 6.24 | 3.10 | 4.47 |
+| | field | L2 6.11 / 5.49 | L1 1.37 / 1.40 | 0.46 | 0.07 | 8.01 / 7.42 | 3.91 / 3.35 | 4.76 / 3.95 |
+| 100 m down, 3 | sheets | L2 5.27 | L1 0.48 | 0.43 | 0.06 | 6.24 | 2.92 | 3.89 |
+| | field | L2 6.51 / 6.34 | L1 0.56 / 0.40 | 0.44 | 0.06 | 7.57 / 7.24 | 4.06 / 4.03 | 4.73 / 5.17 |
+
+The textured shading (textured less flat) is 3.3-3.6 ms of the finest level in both draws, the largest cost; the canopy
+0-0.2 ms here (1.6 ms in one earlier run at 100 m). The field's flat draw costs 1.0-1.4 ms more than the sheets': 2.3 x
+the triangles (L2: 302,780 against 131,968; slots 524,610 against 139,264) and a per-pixel material lookup (fdMat: the
+warp's two noises and a column walk). Levels drawn alone cover 1.000 x the screen with sheets and 1.000-1.090 with the
+field (its OVER bands and skirts at the 190 m pose); the overdraw inside one level could not be counted (Dawn's
+occlusion queries on D3D12 are binary). Wall time 9.9-10.0 ms everywhere (the display's 100 Hz).
+
+**The phone's frame time: a level opened and closed every 0.6 s while the camera stood still.** At 190 m (and wherever
+the eye is 230-310 m from the nearest surface at the 2 m level's zoom) level 2 was promoted, demoted and promoted again
+for as long as the camera stayed (scripts/nested-r28-thrash.mjs: 7 promotes and 7 demotes in 5 s, sheets and field
+alike; the field built 256 chunks each time). Cause: the camera pass's nearest-surface search reaches CAM_R columns of
+each level but measures 3D distance, and the finest level's find was taken as the nearest even when farther than that
+reach: level 2 (48 m reach) found the ground below at 318 m while a hillside 166 m away stood past its reach, so the
+nearest read 318 m with level 2 open (> 0.6 of its width: demote) and 166 m without (< 0.45: promote). Fix
+(nest.wgsl camera): a level's find ends the search only within its reach; a find beyond it bounds the answer from above
+and the coarser levels go on. After: 1 promote, held, nearest 150 m. This is not a draw cost: each cycle derives and bakes
+a whole 512 m window, which on the phone is the 17-43 ms the owner saw at 93-193 m (not measurable here; the HUD's new
+mean-and-worst over the last second will show it).
+
+**Idle frames.** Work every frame with the camera still and nothing changing, before: the camera pass (one workgroup)
+and its 128-byte report read back (a mapAsync a frame), the draw (allowed), the HUD's text (DOM), and the level thrash
+above. Now the camera pass and its readback are skipped when the move is zero, nothing was placed, the cruise is off and
+no op has submitted since the last pass whose report came back (GpuNest.camera; nested.app.nest.camSkips counts them).
+Left: the draw itself, the uniform write (a few hundred bytes), the HUD text.
+
+**Two reductions.** (1) The thrash (above): the whole-window derive and bake every 0.6 s gone. (2) The field draw
+indexed: 6 indices a quad over its 4 corners (a shared index buffer, drawIndexedIndirect), so a corner runs the vertex
+stage once instead of 1.5 times: flat totals 3.83 -> 3.46, 3.91 -> 3.35 ms at two poses, 4.06 -> 4.03 at the third
+(noise is about 0.3 ms run to run). The textured shading, the largest cost, was not reduced: a depth pre-pass or fewer
+band noises were not tried this round (NS-226). The field stays 0.4-1.2 ms over the sheets at every pose.
+
+**Toggles for the phone.** Buttons "Canopy" (on/off) and "Draw 100 % / 75 % / 50 %" (the canvas's resolution; also
+`?scale=`); "Textured" as before. The HUD's frame time is the mean over the last second and the worst frame in it.
+
+**Boot.** The tiling textures (`?tex=2`) are generated only once tex=2 is first wanted (with the Preparing line), not at
+every boot (NS-222). Boot gate after: cold 7,415 / 15,942 / 10,973 ms (first frame / every boot pipeline / first sheet
+frame), 512 MB reload 9,335 / 17,971 / 12,833, 256 MB 8,556 / 15,834 / 12,043 (round 27: cold 7,006 / 10,367 / 9,826,
+512 MB 9,575-20,014 for every boot pipeline).

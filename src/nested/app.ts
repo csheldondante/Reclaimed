@@ -2,7 +2,7 @@
 // level is promoted round the focus (and a finer one inside it), each drawn in its own units; sculpt on whichever
 // level is under the pointer. Everything that touches the columns runs on the GPU (gpu/nest.ts); this file holds the
 // camera's inputs, which levels are wanted where, the buttons and the measurements.
-import { GpuNest, type Op, type Win } from './gpu/nest';
+import { GpuNest, PW, type Op, type Win } from './gpu/nest';
 import { Renderer, type DrawLevel } from './render';
 import { coverage, holePixels, lastImage, manifold, rayDiag, rimJunctions, unionClosure } from './watertight';
 import { NestGen, labAtlasParams } from './gen';
@@ -164,6 +164,9 @@ export class App {
     if (q.has('texbands')) this.render.texBands = Number(q.get('texbands'));
     // (round 21) the forest canopy from afar: ?canopy=0 off; ?canopyfade= its crossover footprint (world units a pixel)
     this.render.canopy = q.get('canopy') !== '0';
+    // (round 28, measurement only) ?gputime=1: every pass of the draw timed and its fragments counted (a readback)
+    if (q.get('gputime') === '1') this.render.enableGpuTime();
+    if (q.has('scale')) this.drawScale = Math.min(1, Math.max(0.25, Number(q.get('scale'))));
     if (q.has('canopyfade')) this.render.canopyFade = Number(q.get('canopyfade'));
     // (round 25) the terrain from the atlas's ground (?gen=0: the toy root, which the self-test's oracle knows). The root
     // window sits over ?at=x,y (root columns of its centre); fog by metres (?fog=, default 8 km)
@@ -203,7 +206,8 @@ export class App {
       if (q.has('fdbg')) this.render.fieldOpt.dbg = Number(q.get('fdbg'));
       if (q.has('fjitter')) this.render.fieldOpt.jitter = Math.max(0, Number(q.get('fjitter')));
       this.nest.enableField(mask);
-      this.fieldDone = false;
+      this.fieldWant = mask;
+      this.fieldLevels = mask;
     }
     this.q = q;
   }
@@ -332,6 +336,19 @@ export class App {
       this.buttons.get('slide')!.classList.toggle('on', this.render.slide);
     });
     this.buttons.get('slide')!.classList.toggle('on', this.render.slide);
+    // (round 28) the field mesh on every level below the root (or ?field's levels), switched at run time: its pipelines
+    // are made in the background after boot; the finer levels open again in the new draw
+    add('field', 'Field mesh', () => this.setField(this.fieldWant === 0));
+    this.fieldButton();
+    // (round 28) for the owner's phone, where per-pass timers are unreliable: the canopy on or off and the draw's
+    // resolution, to difference the frame time
+    add('canopy', 'Canopy', () => {
+      this.render.canopy = !this.render.canopy;
+      this.buttons.get('canopy')!.classList.toggle('on', this.render.canopy);
+    });
+    this.buttons.get('canopy')!.classList.toggle('on', this.render.canopy);
+    add('scale', 'Draw 100 %', () => this.setDrawScale(this.drawScale === 1 ? 0.75 : this.drawScale === 0.75 ? 0.5 : 1));
+    this.setDrawScale(this.drawScale);
     this.setMode(this.mode);
     const c = this.canvas;
     c.addEventListener('pointerdown', (e) => {
@@ -673,11 +690,75 @@ export class App {
   private compileAt = 0;
   /** between ops and not switching the smooth draw: a level op, an edit or a shrink may run */
   private get free(): boolean {
-    return this.pipesDone && this.fieldDone && this.nest.settled && !this.nest.switching && (!this.genOn || this.genReady);
+    return this.pipesDone && (!this.nest.fieldMask || this.fieldMade) && this.nest.settled && !this.nest.switching && (!this.genOn || this.genReady);
   }
-  /** (round 26) the field mesh's pipelines made (true with no field level); ms after the page opened when they were */
-  fieldDone = true;
+  /** (round 26) the field mesh's pipelines made (true with no field level wanted); ms after the page opened when they were */
+  get fieldDone(): boolean {
+    return !this.fieldWant || this.fieldMade;
+  }
   fieldAt = 0;
+  /** (round 28) the levels the field mesh should draw (the Field mesh button; the page switches when it can) and the
+   *  levels the button turns on (?field's, else every level below the root) */
+  fieldWant = 0;
+  fieldLevels = 0;
+  /** (round 28) the field's pipelines made (both the bake's and the draw's); asked once */
+  private fieldMade = false;
+  private fieldAsked = false;
+  /** (round 28) make the field mesh's pipelines in the background (once): at once when a field level is wanted, else
+   *  after the terrain is made, so the button switches without a compile and the boot is not slowed */
+  private fieldCompile(): void {
+    if (this.fieldAsked) return;
+    this.fieldAsked = true;
+    this.nest.prepareField();
+    const t0 = performance.now();
+    void Promise.all([this.nest.makePipes(GpuNest.FIELD_PIPES), this.render.enableField()]).then(() => {
+      this.fieldMade = true;
+      this.fieldAt = performance.now();
+      console.log(`[field] field pipelines made in ${(this.fieldAt - t0).toFixed(0)} ms (draw ${this.render.fieldCompileMs.toFixed(0)} ms), at ${this.fieldAt.toFixed(0)} ms`);
+      this.fieldButton();
+    });
+    this.fieldButton();
+  }
+  /** (round 28) the field switch: when the wanted levels differ from the drawn ones, the finer levels are demoted (an op,
+   *  between ops) and the mask set with the root alone live; the camera's rules promote them again in the new draw */
+  private fieldStep(): boolean {
+    if (this.nest.fieldMask === this.fieldWant) return false;
+    if (this.fieldWant && !this.fieldMade) return false;
+    if (!this.free || this.strokeOn || this.frozen) return false;
+    if (this.nest.live > 1) {
+      this.nest.demote(1);
+      return true;
+    }
+    this.nest.setFieldMask(this.fieldWant);
+    this.fieldButton();
+    return true;
+  }
+  private fieldButton(): void {
+    const b = this.buttons.get('field');
+    if (!b) return;
+    b.classList.toggle('on', this.fieldWant !== 0);
+    b.textContent = this.fieldWant && !this.fieldMade ? 'Field mesh (preparing)' : this.nest.fieldMask !== this.fieldWant ? 'Field mesh (switching)' : 'Field mesh';
+  }
+  /** (round 28) the draw's resolution, a fraction of the canvas's pixels (?scale=, the Draw button) */
+  drawScale = 1;
+  setDrawScale(s: number): void {
+    this.drawScale = s;
+    const b = this.buttons.get('scale');
+    if (b) {
+      b.textContent = `Draw ${Math.round(s * 100)} %`;
+      b.classList.toggle('on', s < 1);
+    }
+  }
+  setField(on: boolean): void {
+    this.fieldWant = on ? this.fieldLevels || this.allBelowRoot() : 0;
+    if (on) this.fieldCompile();
+    this.fieldButton();
+  }
+  private allBelowRoot(): number {
+    let m = 0;
+    for (let L = 1; L <= this.maxDepth; L++) m |= 1 << L;
+    return m;
+  }
   /** (round 25) the atlas built after the first frame (its compiles beside the rest), then, between ops, the root made
    *  from it: every finer level dropped first (they were derived from the placeholder; no edit can have been made, the
    *  brushes waited) */
@@ -714,7 +795,8 @@ export class App {
     this.frameCount++;
     if (this.frames.length > 600) this.frames.shift();
     this.last = t;
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    // (round 28) the Draw scale button: the canvas at 100, 75 or 50 % of its pixels (the browser scales it up)
+    const dpr = Math.min(2, window.devicePixelRatio || 1) * this.drawScale;
     const W = Math.max(1, Math.round(this.canvas.clientWidth * dpr));
     const H = Math.max(1, Math.round(this.canvas.clientHeight * dpr));
     if (this.canvas.width !== W || this.canvas.height !== H) {
@@ -767,7 +849,10 @@ export class App {
     // known exactly, so the next reserve is exact and no op piles up behind another)
     // (levels hold still during a stroke: its snapshot is of the levels open when it began)
     // (round 18: and not while the smooth switch bakes its rows: the levels hold still)
-    if (!this.frozen && this.free && !this.strokeOn) this.levels();
+    // (round 28) the Field mesh button's switch first: an op of its own
+    if (this.fieldStep()) {
+      /* the switch's op ran this frame */
+    } else if (!this.frozen && this.free && !this.strokeOn) this.levels();
     // (round 26 B3) a field level opening or sliding: a few of its chunks built this frame, nearest the eye first
     else if (!this.frozen && this.nest.fieldJob && this.nest.settled && !this.benchPause) {
       const s = this.k ** this.nest.fieldJob.L;
@@ -827,20 +912,17 @@ export class App {
         this.pipesDone = true;
         this.pipesAt = performance.now();
         console.log(`[boot] first frame ${this.firstFrameAt.toFixed(0)} ms (its pipelines made at ${this.bootAt.toFixed(0)} ms), every pipeline made at ${this.pipesAt.toFixed(0)} ms`);
-        // (round 26) the field mesh's pipelines, its own stage after every other one (?field only); levels wait for them
-        if (this.nest.fieldMask) {
-          const t0 = performance.now();
-          void Promise.all([this.nest.makePipes(GpuNest.FIELD_PIPES), this.render.enableField()]).then(() => {
-            this.fieldDone = true;
-            this.fieldAt = performance.now();
-            console.log(`[field] field pipelines made in ${(this.fieldAt - t0).toFixed(0)} ms (draw ${this.render.fieldCompileMs.toFixed(0)} ms), at ${this.fieldAt.toFixed(0)} ms`);
-          });
-        }
+        // (round 26) the field mesh's pipelines, its own stage after every other one when a field level is wanted; levels
+        // wait for them
+        if (this.fieldWant) this.fieldCompile();
       });
     }
+    // (round 28) otherwise made in the background once the terrain is made, for the Field mesh button
+    if (this.pipesDone && (!this.genOn || this.genReady) && this.frameCount > 2) this.fieldCompile();
     // (round 27) the tiling textures: generated after every boot pipeline, a material a frame (their own pipelines made
     // asynchronously first); ?tex=2's draws made when first wanted
-    if (this.pipesDone && !this.render.texgen.ready && this.render.texgen.step()) {
+    // (round 28: only once ?tex=2 is wanted, not at every boot: NS-222)
+    if (this.pipesDone && this.render.tex && this.render.tex2 && !this.render.texgen.ready && this.render.texgen.step()) {
       const tg = this.render.texgen;
       void this.device.queue.onSubmittedWorkDone().then(() => console.log(`[tex2] material textures made: generator pipelines ${tg.ms.compile.toFixed(0)} ms, layers encoded ${tg.ms.layers.map((x) => x.toFixed(1)).join(', ')} ms, done at ${performance.now().toFixed(0)} ms after the page opened (${(tg.bytes / 2 ** 20).toFixed(1)} MB)`));
     }
@@ -867,11 +949,19 @@ export class App {
     const live = this.nest.live;
     const col = (ROOT_COLUMN_M / this.k ** (live - 1)) * 100;
     const st = this.nest.stats;
-    const ft = this.frames.slice(-60);
-    const avg = ft.reduce((a, b) => a + b, 0) / Math.max(1, ft.length);
+    // (round 28) the frame time: the mean over the last second and the worst frame in it
+    let acc = 0;
+    let cnt = 0;
+    let worst = 0;
+    for (let i = this.frames.length - 1; i >= 0 && acc < 1000; i--) {
+      acc += this.frames[i];
+      cnt++;
+      worst = Math.max(worst, this.frames[i]);
+    }
+    const avg = acc / Math.max(1, cnt);
     const lines = [
       `Levels open: ${live}. Finest column: ${col >= 100 ? `${(col / 100).toFixed(1)} m` : `${col.toFixed(col < 1 ? 2 : 1)} cm`}.`,
-      `Camera ${(this.dNear * ROOT_COLUMN_M).toFixed(this.dNear * ROOT_COLUMN_M < 10 ? 2 : 0)} m from the nearest surface. Frame ${avg.toFixed(1)} ms.`,
+      `Camera ${(this.dNear * ROOT_COLUMN_M).toFixed(this.dNear * ROOT_COLUMN_M < 10 ? 2 : 0)} m from the nearest surface. Frame ${avg.toFixed(1)} ms (last second; worst ${worst.toFixed(1)} ms).${this.drawScale < 1 ? ` Drawn at ${Math.round(this.drawScale * 100)} %.` : ''}`,
       `Pages: ${st.used} used of ${st.held} reserved (${st.mb} MB in ${st.segs} of ${st.segSlots} buffers; the device's largest buffer ${this.limitsText}).`,
       live < this.maxDepth + 1 ? 'Zoom in close to the ground to open a finer level.' : 'This is the finest level.',
       this.mode === 'move' ? 'Drag to move. Pinch or scroll to zoom. Fwd and Back move along the aim. Keys: WASD to fly, Q and E down and up, R and V along the aim.' : this.mode === 'orbit' ? 'Drag to look around.' : `Drag on the ground to ${this.mode}.`,
@@ -884,7 +974,7 @@ export class App {
       const s = this.nest.pipeStatus;
       lines.push(`Preparing: ${s.made} of ${s.total} GPU programs made; levels and brushes wait for them (compiling: ${s.pending.slice(0, 3).join(', ')}${s.pending.length > 3 ? ', ...' : ''}).`);
     }
-    if (this.pipesDone && !this.render.texgen.ready) lines.push(`Preparing the material textures: ${this.render.texgen.done} of 5 made.`);
+    if (this.pipesDone && this.render.tex && this.render.tex2 && !this.render.texgen.ready) lines.push(`Preparing the material textures: ${this.render.texgen.done} of 5 made.`);
     if (this.genOn && !this.genReady)
       lines.push(`Preparing the terrain: building the world map (${((performance.now() - (this.genAsked || performance.now())) / 1000).toFixed(0)} s); the land shown until then is a placeholder, and levels and brushes wait for it.`);
     if (this.lifts) lines.push(`The camera was lifted out of solid ${this.lifts} times.`);
@@ -895,6 +985,7 @@ export class App {
     if (this.render.texText) lines.push(this.render.texText);
     if (this.firstSheetAt) lines.push(`first frame ${this.firstFrameAt.toFixed(0)} ms, first sheet frame ${this.firstSheetAt.toFixed(0)} ms after the page opened`);
     this.info.textContent = lines.join('\n');
+    if (this.fieldWant !== this.nest.fieldMask || this.frameCount % 30 === 0) this.fieldButton();
     if (this.speedText) this.speedText.textContent = `${this.cruiseWps.toFixed(2)} w/s`;
     if (this.cruiseOn) document.getElementById('cruise')!.textContent = this.cruiseText();
   }
@@ -1215,6 +1306,89 @@ export class App {
       slide: async (on: boolean) => {
         this.render.slide = on;
         this.buttons.get('slide')?.classList.toggle('on', on);
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      },
+      /** (round 28, measurement, ?gputime=1) over the next n frames: per pass the mean GPU ms and fragments, the screen's
+       *  pixels, and the frame's wall time (mean, worst); null without timestamp queries */
+      gpuTimes: async (n = 60) => {
+        const r = this.render;
+        r.gpuSamples.clear();
+        const f0 = this.frames.length;
+        const t0 = performance.now();
+        const c0 = this.frameCount;
+        while (this.frameCount - c0 < n) await new Promise((res) => setTimeout(res, 20));
+        const wall = (performance.now() - t0) / (this.frameCount - c0);
+        void f0;
+        const out: Record<string, { ms: number; frags: number; n: number }> = {};
+        for (const [k, s] of r.gpuSamples) {
+          const m = (a: number[]) => a.reduce((x, y) => x + y, 0) / Math.max(1, a.length);
+          // (the median of the times: a frame the browser composited late does not skew it)
+          const sorted = [...s.ms].sort((a, b) => a - b);
+          out[k] = { ms: sorted[Math.floor(sorted.length / 2)] ?? 0, frags: m(s.frags), n: s.ms.length };
+        }
+        return { passes: out, pixels: r.gpuPixels, wall, worst: Math.max(...this.frames.slice(-n)) };
+      },
+      /** (round 28, measurement, readbacks) per level: triangles drawn (non-empty) and triangle slots the draw submits
+       *  (the vertex stage runs for every slot: an empty one is placed off screen). Sheet and box levels by the capture;
+       *  field levels from their chunks' headers (the drawn bank's quads, 2 triangles each; 783 quad slots a page) */
+      drawnTris: async () => {
+        const was = this.frozen;
+        this.frozen = true;
+        try {
+          const out: Record<string, { tris: number; slots: number }> = {};
+          const caps = await this.render.capture(this.drawList().filter((l) => !this.nest.fieldOn(l.depth)));
+          for (const c of caps) {
+            let n = 0;
+            const t = c.tris;
+            for (let i = 0; i + 11 < t.length; i += 12) if (t[i + 3] !== 0 && t[i + 7] !== 0 && t[i + 11] !== 0) n++;
+            out[`L${c.depth}`] = { tris: n, slots: t.length / 12 };
+          }
+          const s = await this.nest.readAll();
+          for (let L = 1; L < this.nest.live; L++) {
+            if (!this.nest.fieldOn(L)) continue;
+            let quads = 0;
+            let pages = 0;
+            for (const key of s.chunksOf(24 + L)) {
+              const [cx, cy] = key.split(',').map(Number);
+              const p = s.page(24 + L, cx, cy, 0);
+              if (p < 0) continue;
+              const bank = s.pg[p * PW + 2] & 1;
+              const q = s.pg[p * PW + 7 + bank];
+              quads += q;
+              pages += Math.ceil(q / 783);
+            }
+            out[`L${L}`] = { tris: 2 * quads, slots: pages * 783 * 2 };
+          }
+          return out;
+        } finally {
+          this.frozen = was;
+        }
+      },
+      /** (round 28, measurement, readbacks) pixels each level covers drawn ALONE (with the depth test), and covered by the
+       *  whole draw: their sum over the union is the overlap between levels (parents under children, skirts, OVER bands).
+       *  Fragments hidden inside one level are not counted (Dawn's occlusion queries on D3D12 are binary) */
+      levelPixels: async () => {
+        const was = this.frozen;
+        this.frozen = true;
+        try {
+          const list = this.drawList();
+          const out: Record<string, number> = {};
+          let screen = 0;
+          for (const lv of list) {
+            const h = await holePixels(this.device, this.render, () => this.render.draw([lv]));
+            screen = h.w * h.h;
+            out[`L${lv.depth}`] = screen - h.holes;
+          }
+          const all = await holePixels(this.device, this.render, () => this.render.draw(list));
+          return { screen, levels: out, union: screen - all.holes };
+        } finally {
+          this.frozen = was;
+        }
+      },
+      /** (round 28) the Field mesh button: on or off; resolves once the mask is switched (the levels then open again) */
+      field: async (on: boolean) => {
+        this.setField(on);
+        while (this.nest.fieldMask !== this.fieldWant) await new Promise((r) => setTimeout(r, 30));
         await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       },
     };

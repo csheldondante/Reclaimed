@@ -346,13 +346,32 @@ export class Renderer {
     this.bind();
     this.uniforms(levels);
     const enc = this.device.createCommandEncoder({ label: 'nest draw' });
-    const pass = enc.beginRenderPass({
-      colorAttachments: [
-        { view: tex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0.62, g: 0.71, b: 0.78, a: 1 } },
-        { view: this.info!.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } },
-      ],
-      depthStencilAttachment: { view: this.depth!.createView(), depthLoadOp: 'clear', depthStoreOp: 'store', depthClearValue: 0 },
-    });
+    // (round 28, measurement: ?gputime=1) a render pass a level and one for the sky, each timed and its fragments counted;
+    // otherwise one pass. The passes after the first load what it drew, so the image is the same.
+    const gt = this.gpuT;
+    let pass: GPURenderPassEncoder | null = null;
+    let np = 0;
+    const labels: string[] = [];
+    const begin = (label: string) => {
+      if (pass && !gt) return pass;
+      if (pass) {
+        pass.endOcclusionQuery();
+        pass.end();
+      }
+      const first = np === 0;
+      const i = np++;
+      labels.push(label);
+      pass = enc.beginRenderPass({
+        colorAttachments: [
+          { view: tex.createView(), loadOp: first ? 'clear' : 'load', storeOp: 'store', clearValue: { r: 0.62, g: 0.71, b: 0.78, a: 1 } },
+          { view: this.info!.createView(), loadOp: first ? 'clear' : 'load', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } },
+        ],
+        depthStencilAttachment: { view: this.depth!.createView(), depthLoadOp: first ? 'clear' : 'load', depthStoreOp: 'store', depthClearValue: 0 },
+        ...(gt ? { timestampWrites: { querySet: gt.qs, beginningOfPassWriteIndex: 2 * i, endOfPassWriteIndex: 2 * i + 1 }, occlusionQuerySet: gt.occ } : {}),
+      });
+      if (gt) pass.beginOcclusionQuery(i);
+      return pass;
+    };
     // finest first: the depth test then spares the coarse levels' fragments under it
     const order = [...levels].sort((a, b) => b.depth - a.depth);
     const tp = this.texDrawn ? this.texPipes : null;
@@ -362,37 +381,116 @@ export class Renderer {
     const fl = this.nest.fieldMask ? order.filter((lv) => this.nest.fieldOn(lv.depth)) : [];
     if (fl.length && this.field?.tex) {
       const bg = this.fieldBind();
-      pass.setPipeline(t2 && this.field.tex2 ? this.field.tex2 : tp ? this.field.tex : this.field.flat!);
       for (const lv of fl) {
-        pass.setBindGroup(0, bg, [lv.depth * DU]);
-        pass.drawIndirect(this.nest.fieldArgs!, lv.depth * 16);
+        const p = begin(`L${lv.depth} field`);
+        p.setPipeline(t2 && this.field.tex2 ? this.field.tex2 : tp ? this.field.tex : this.field.flat!);
+        p.setBindGroup(0, bg, [lv.depth * DU]);
+        p.setIndexBuffer(this.fieldIndex(), 'uint32');
+        p.drawIndexedIndirect(this.nest.fieldArgs!, lv.depth * 32);
       }
     }
     const rest = fl.length ? order.filter((lv) => !this.nest.fieldOn(lv.depth)) : order;
     if (this.nest.smooth) {
       // (round 16) per level the sheets
       const sp = this.smoothPipes();
-      pass.setPipeline(t2 ? t2.sheet : tp ? tp.sheet : sp.sheet);
       for (const lv of rest) {
-        pass.setBindGroup(0, this.bg!, [lv.depth * DU]);
-        pass.drawIndirect(this.nest.drawArgs, (MAX_LEVELS + lv.depth) * 16);
+        const p = begin(`L${lv.depth} sheets`);
+        p.setPipeline(t2 ? t2.sheet : tp ? tp.sheet : sp.sheet);
+        p.setBindGroup(0, this.bg!, [lv.depth * DU]);
+        p.drawIndirect(this.nest.drawArgs, (MAX_LEVELS + lv.depth) * 16);
       }
     } else {
-      pass.setPipeline(t2 ? t2.box : tp ? tp.box : this.pipe);
       for (const lv of rest) {
-        pass.setBindGroup(0, this.bg!, [lv.depth * DU]);
-        pass.drawIndirect(this.nest.drawArgs, lv.depth * 16);
+        const p = begin(`L${lv.depth} boxes`);
+        p.setPipeline(t2 ? t2.box : tp ? tp.box : this.pipe);
+        p.setBindGroup(0, this.bg!, [lv.depth * DU]);
+        p.drawIndirect(this.nest.drawArgs, lv.depth * 16);
       }
     }
     // (round 20) the sky where nothing was drawn, with level 0's uniforms (its view-projection and eye)
     if (tp && levels.some((l) => l.depth === 0)) {
-      pass.setPipeline(tp.sky);
-      pass.setBindGroup(0, this.bg!, [0]);
-      pass.draw(3);
+      const p = begin('sky');
+      p.setPipeline(tp.sky);
+      p.setBindGroup(0, this.bg!, [0]);
+      p.draw(3);
     }
-    pass.end();
+    const last = begin('end') as GPURenderPassEncoder;
+    if (gt) {
+      // ('end' is an empty pass: the last real one is closed by it)
+      last.endOcclusionQuery();
+      last.end();
+      labels.pop();
+      np--;
+      this.gpuResolve(enc, np, labels, tex.width * tex.height);
+    } else last.end();
     this.device.queue.submit([enc.finish()]);
+    this.gpuRead();
     return tex;
+  }
+  /** (round 28) the field draw's indices, shared by every instance (a quad page): quad slot q's two triangles over its
+   *  corners 4q..4q+3, so a corner runs the vertex stage once (fielddraw.wgsl vsField reads the slot and corner) */
+  private fieldIdx: GPUBuffer | null = null;
+  private fieldIndex(): GPUBuffer {
+    if (!this.fieldIdx) {
+      const Q = 783;
+      const a = new Uint32Array(Q * 6);
+      for (let q = 0; q < Q; q++) a.set([4 * q, 4 * q + 1, 4 * q + 2, 4 * q, 4 * q + 2, 4 * q + 3], q * 6);
+      this.fieldIdx = this.device.createBuffer({ label: 'nest field indices', size: a.byteLength, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST });
+      this.device.queue.writeBuffer(this.fieldIdx, 0, a);
+    }
+    return this.fieldIdx;
+  }
+  // ---- (round 28, measurement only: ?gputime=1) GPU time and fragments a pass, read back asynchronously ----------------
+  private gpuT: { qs: GPUQuerySet; occ: GPUQuerySet; res: GPUBuffer; ring: { b: GPUBuffer; busy: boolean; np: number; labels: string[]; px: number }[]; pending: { b: GPUBuffer; np: number; labels: string[]; px: number } | null } | null = null;
+  /** the passes' last results: label -> rolling samples of ms and fragments (cleared by the reader) */
+  readonly gpuSamples = new Map<string, { ms: number[]; frags: number[] }>();
+  gpuPixels = 0;
+  /** (measurement) time every pass of the draw (the device must have 'timestamp-query') */
+  enableGpuTime(): void {
+    if (this.gpuT || !this.device.features.has('timestamp-query')) return;
+    const N = 32;
+    this.gpuT = {
+      qs: this.device.createQuerySet({ type: 'timestamp', count: 2 * N }),
+      occ: this.device.createQuerySet({ type: 'occlusion', count: N }),
+      res: this.device.createBuffer({ size: 3 * N * 8, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC }),
+      ring: Array.from({ length: 3 }, () => ({ b: this.device.createBuffer({ size: 3 * N * 8, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }), busy: false, np: 0, labels: [], px: 0 })),
+      pending: null,
+    };
+  }
+  private gpuResolve(enc: GPUCommandEncoder, np: number, labels: string[], px: number): void {
+    const g = this.gpuT!;
+    const r = g.ring.find((x) => !x.busy);
+    if (!r || np === 0) return;
+    enc.resolveQuerySet(g.qs, 0, 2 * np, g.res, 0);
+    enc.resolveQuerySet(g.occ, 0, np, g.res, 2 * 32 * 8);
+    enc.copyBufferToBuffer(g.res, 0, r.b, 0, 3 * 32 * 8);
+    r.busy = true;
+    r.np = np;
+    r.labels = labels;
+    r.px = px;
+    g.pending = r;
+  }
+  private gpuRead(): void {
+    const g = this.gpuT;
+    if (!g?.pending) return;
+    const r = g.pending as { b: GPUBuffer; busy: boolean; np: number; labels: string[]; px: number };
+    g.pending = null;
+    r.b.mapAsync(GPUMapMode.READ).then(
+      () => {
+        const v = new BigUint64Array(r.b.getMappedRange());
+        for (let i = 0; i < r.np; i++) {
+          const ms = Number(v[2 * i + 1] - v[2 * i]) / 1e6;
+          let s = this.gpuSamples.get(r.labels[i]);
+          if (!s) this.gpuSamples.set(r.labels[i], (s = { ms: [], frags: [] }));
+          s.ms.push(ms);
+          s.frags.push(Number(v[64 + i]));
+        }
+        this.gpuPixels = r.px;
+        r.b.unmap();
+        r.busy = false;
+      },
+      () => (r.busy = false),
+    );
   }
 
   /** the per-level uniforms (pages: the capture's face pages a level) */

@@ -1604,6 +1604,30 @@ tiling textures); default 1; the Textured button cycles 0 -> 1 -> 2 ("Textured: 
   the broad tone were not in the brief: added after looking at the stills (the grid, the 16 x grains, the blank far
   stone).
 - *Measured (DEVLOG round 27 part 2):* timing table, continuity (test/gpu/nested-tex.test.ts), compile times.
+
+**As built (round 28): the field mesh on levels 1-3, the field's reservation, the level thrash, the frame measured.**
+The default did not move: sheets stay the default (DEVLOG round 28 has the numbers; the field is 0.4-1.2 ms a frame over
+the sheets on the desktop at the phone's poses).
+- *One configuration.* `?field=1,2,3` (field over field at every join): visual closure 0 at every round 26 pose of
+  levels 1-3 and the four phone situations, 3 runs each, and at 50 swept window placements; a field level over a sheet
+  parent (`?field=3` alone) leaks at some placements (NS-224, the cause of NS-217's 1 / 49 pixels).
+- *Run-time switch.* GpuNest.prepareField (module, descriptions, buffers; made once) and setFieldMask (only with the
+  root alone live). The app makes the field's pipelines in the background once the terrain is made; the "Field mesh"
+  button demotes to the root, sets the mask, and the levels open again in the new draw (App.fieldStep, an op of its own).
+- *Reservation.* A field level's promote and slide reserve their column pages only: its chunks are built by the job, each
+  block reserving its own, and the flip reserves the parent's bakes over the footprints and its parent's rim chunks
+  (flipBound). bakeBound takes the level baked (the field's per-chunk bound only for a field level). An edit adds the
+  field bound for each field level's chunks it rebuilds.
+- *Camera.* A level's nearest-surface find counts only within its search reach (CAM_R columns, the window's edge); a
+  find beyond it bounds the answer and the coarser levels go on (NS-228). The pass and its readback are skipped on a
+  still frame (no move, no placement, no cruise, no op since the last pass whose report came back).
+- *Field draw.* Indexed: a shared index buffer of 783 quads x 6 indices over 4 corners, drawIndexedIndirect; field
+  draw arguments 8 words a level.
+- *Measurement and toggles.* `?gputime=1` (timestamp queries: a render pass a level and the sky, read back; nested.
+  gpuTimes, drawnTris, levelPixels); buttons Canopy and Draw 100 / 75 / 50 % (`?scale=`); the HUD's frame time is the
+  last second's mean and worst. `?tex=2`'s textures are generated when first wanted.
+- *Found, not changed:* the 2 m level's square pillars are derive's limiter at extremum cells (NS-227); the material
+  checkerboards are per-column decisions (NS-216); the textured shading is the largest cost (NS-226).
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

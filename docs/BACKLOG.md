@@ -699,13 +699,18 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   the root is open, material borders are 128 m squares with `?tex=1` (local/nested/r27-mat-after-high.png, unchanged from
   before). Finer levels decide at 16 m, 2 m and 0.25 m. `?tex=2` blends a border over the four nearest column centres by
   texture height (round 27 part 2).
-- NS-216 (look, round 27 part 1) On one steep slope near the r26 border poses (r27p1-r26-border-out-sheets|field.png,
+- NS-216 (round 28: the data. At the default spot every column of levels 0-2 has the same structure (scripts/nested-r28-
+  pillars.mjs: 0 of 130,050 neighbour pairs differ), so the checkerboard is each column's own material decision (the
+  slope rule at its centre); the sheets colour whole columns, the field draw looks the material up per pixel with a
+  jitter and shows it as speckle instead) (look, round 27 part 1) On one steep slope near the r26 border poses (r27p1-r26-border-out-sheets|field.png,
   top right) the 2 m level shows a checkerboard of bare stone and sand, column by column. Cause not proven: the atlas's
   slope rule (bare past 1.6 over a metre) sampled at 2 m column centres on ground whose slope sits near the threshold or
   steps with a period near two columns (the atlas's terraces) would alias like this. The region dither was ruled out
   (a hash at first; the fbm that replaced it changed nothing there). Each level samples its own column centres by design;
   a fix would decide from a footprint (the slope's mean over the column), not a point.
-- NS-217 (look, round 27 part 1) The round 26 visual-closure check: sheets 0 at every pose; field 0 except border-out, 1
+- NS-217 (DONE round 28: explained; the windows land run to run in different places (the lead from real frame times,
+  the slides' hysteresis), and the join of a field level over a sheet parent leaks at some placements: NS-224. With
+  `?field=1,2,3`, 0 at every pose over 3 runs and at 50 swept placements) (look, round 27 part 1) The round 26 visual-closure check: sheets 0 at every pose; field 0 except border-out, 1
   pixel (twice, deterministic; round 26 measured 0). Every generated column now shares one structure, so enhance's top
   surface interpolates across former material borders (gCompat) and level 3's geometry changed there a little; the
   single pixel is at the field window's join. Not examined further.
@@ -726,7 +731,7 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   still visible at about 100 m as a lattice of blocks on stone (local/nested/r27-cliff100-tex2.png), and the macro
   tile's mineral specks read as dots from 300 m. A per-tile random offset blended over a noise would hide repeats; not
   built.
-- NS-222 (limit, round 27 part 2) The textures are generated at every boot (after every boot pipeline, a material a
+- NS-222 (DONE round 28: generated once ?tex=2 is first wanted) (limit, round 27 part 2) The textures are generated at every boot (after every boot pipeline, a material a
   frame, 13.3 MB), also when ?tex=1 is the mode, so the button switches to tex=2 at once; ?tex=2's draws compile when it
   is first wanted. Its light, canopy and haze are tex=1's (shade.wgsl shFinish), the canopy still in shading units
   (NS-193).
@@ -803,9 +808,41 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   gives MAT_AIR, which draws magenta (left visible on purpose, not seen in the runs). Half a column is a tolerance for
   the mesh's distance from the columns, picked, not derived. The OVER cells past a child's window read the parent's
   column at the converted height.
-- NS-208 (limit, round 26) `?field` is set at load only (no button), levels 1 and up; its pipelines are made after every
+- NS-224 (limit, round 28) A field level over a SHEET parent leaks at the window's join for some placements of the
+  window (the round 26 border poses with `?field=3`: 20 of 50 placements, 1-55 pixels, by the window's y placement
+  alone; NS-217's cause). Field over field (`?field=1,2,3`) leaked at none of 50. Not fixed: the configuration to use is
+  field on every level below the root; a field level under a sheet one is a measurement dial only.
+- NS-225 (limit, round 28) A field bake's page bound is per chunk the deepest field stack seen so far (one steep chunk's
+  scratch, 13 pages) on every chunk, twice (two banks), + 2: 30 pages a chunk against the sheets' 2. Round 28 stopped
+  charging it where nothing is baked (a field level's promote and slide) and on sheet levels, but an edit over a field
+  level and a job's blocks still reserve it whole, so a big brush over three field levels reserves thousands of pages
+  for a moment. Tighter: the scratch's bound per band of chunks (it is let go at each bake's end), the quads' per chunk.
+- NS-226 (perf, round 28) The textured shading (the band noises, up to 7 detailHG a pixel) is 3.3-3.6 ms of the finest
+  level's 5-6.5 ms on the desktop at the phone's poses, in both draws: not reduced this round. Candidates: a depth
+  pre-pass (shading once a pixel; the overdraw inside a level is unmeasured: Dawn's occlusion queries are binary on
+  D3D12), fewer bands where the fog or the footprint hides them. The field draw costs 0.4-1.2 ms more than the sheets
+  (2.3 x the triangles, a per-pixel material lookup with the warp's noises and a column walk): a per-vertex material
+  written by the bake, with the lookup only where a quad's corners disagree, would remove most of the latter.
+- NS-227 (look, round 28) Flat-topped square pillars at the 2 m level, one parent (16 m) cell wide, standing 9-24 m
+  over their neighbours (scripts/nested-r28-pillars.mjs at the default spot: 4 found, spread 0.4-4 m inside against a
+  step of 18-24 m, every one at a parent cell that is a local extremum of the parent's tops along x or y). The data,
+  not the draw: derive's limited PPM (nest.wgsl ppmSub) keeps the curvature at an extremum only where the neighbours
+  curve the same way (Colella-Sekora) and otherwise collapses the cell to its mean (aL = aR = c): a flat block of the
+  parent cell with the steps to its neighbours as walls; the 128 m pillars are the same rule one level up (root cells at
+  level 1, NS-198). Smallest correct change (not made: it changes every level's look and needs the zoom gates run on
+  it; out of this round's budget): at an extremum whose curvatures disagree keep a peaked parabola (aL, aR from the
+  edge values clamped to the cell's mean side) instead of a flat one; mean-preserving, so restrict(enhance) is unchanged.
+- NS-228 (limit, round 28) The camera pass's nearest-surface search (CAM_R columns of each level) now takes a find only
+  within its reach and bounds the answer by finds beyond it (the level thrash fix); with no level finding anything in
+  reach the nearest is the smaller of the bound and the reach, a lower bound as before.
+- NS-208 (DONE round 28: the "Field mesh" button switches at run time; the pipelines are made in the background once the
+  terrain is made) (limit, round 26) `?field` is set at load only (no button), levels 1 and up; its pipelines are made after every
   other one (4.4-4.6 s more on the desktop) and levels wait for them.
-- NS-209 (perf, round 26 B3) A field job builds a 2 x 2 block a frame and only in frames whose pool header came back, so
+- NS-209 (round 28: the pool-growth stall's cause was the field promote's reservation, 26-30 pages a chunk over the
+  whole window though it baked nothing, which asked for grows of thousands of pages; fixed with the reservation (DEVLOG
+  round 28 step 1). The steep chunk's 5-6 ms stands: a chunk is one workgroup whose passes run in turn (runs, count, scan,
+  samples, cells, quads), and a steep chunk has 10-25 x the candidates of a gentle one; splitting a chunk over several
+  workgroups (quadrants with their own scratch) is the fix, not built) (perf, round 26 B3) A field job builds a 2 x 2 block a frame and only in frames whose pool header came back, so
   opening a level takes about 2 s and a slide 0.5-1 s, during which levels and edits wait: at cruise the next slide waits
   for the last; in one 200 m/s run the open's job stalled behind pool grows for the whole 8 s. A steep chunk alone costs
   about 5 ms of a frame (over the 4 ms target). Not tuned.

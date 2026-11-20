@@ -12,7 +12,7 @@
 //   grazing   a few metres over the ground, nearly level
 //   border-in / border-out   across the field level's window edge from about 30 m, from inside and from outside
 // node scripts/nested-r26-stills.mjs --chromeargs ignore-certificate-errors --port 5461 [--level 3] [--order sheets,field]
-//   [--below 200] [--tag r26] [--extra "&tex=0"] [--only bowl,cliff]
+//   [--below 200] [--tag r26] [--extra "&tex=0"] [--only bowl,cliff] [--field 1,2,3 (round 28: the field's levels)]
 import { run, sleep } from './lib/runner.mjs';
 import fs from 'node:fs';
 
@@ -30,7 +30,7 @@ await run({ name: 'r26-stills', kind: 'behaviour', size: '960x640', dpr: 1, echo
       if (m.type() === 'error') console.log(`[page ${m.type()}] ${m.text()}`);
     });
     page.on('pageerror', (e) => console.log(`[page exception] ${e.message}`));
-    await page.goto(`https://localhost:${port}/nested.html?smooth=1${kind === 'field' ? `&field=${L}` : ''}${R.opt('extra', '')}${vx}`, { waitUntil: 'load' });
+    await page.goto(`https://localhost:${port}/nested.html?smooth=1${kind === 'field' ? `&field=${R.opt('field', String(L))}` : ''}${R.opt('extra', '')}${vx}`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.nested && nested.app.pipesReady && nested.app.genReady && nested.app.fieldDone && nested.app.frameCount > 30, { timeout: 300000, polling: 200 });
     const settle = async (live) => {
       for (let i = 0; i < 160; i++) {
@@ -156,13 +156,72 @@ await run({ name: 'r26-stills', kind: 'behaviour', size: '960x640', dpr: 1, echo
             const dz = -Math.sin(pitch) + ny * tn * Math.cos(pitch);
             if (all || dz / Math.hypot(1, ny * tn) < -0.1) cnt += hl.rows[y];
           }
-          return { cnt, live: nested.app.nest.live, eye: nested.eye() };
+          return { cnt, live: nested.app.nest.live, eye: nested.eye(), wins: nested.app.nest.wins.slice(0, nested.app.nest.live).map((w) => `${w.gx},${w.gy}`).join(' ') };
         },
         { pitch: v.pitch, all: name === 'cave' },
       );
       await page.evaluate(() => (nested.app.frozen = false));
       totals[variant] = (totals[variant] ?? 0) + h.cnt;
-      console.log(`${variant} ${name}: ${h.cnt} hole pixels ${name === 'cave' ? '(all)' : 'below the horizon'}; levels ${h.live}; eye ${(h.eye.dNear * 128).toFixed(1)} m from the nearest surface; ${file}`);
+      console.log(`${variant} ${name}: ${h.cnt} hole pixels ${name === 'cave' ? '(all)' : 'below the horizon'}; levels ${h.live}; eye ${(h.eye.dNear * 128).toFixed(1)} m from the nearest surface; windows ${h.wins}; ${file}`);
+      // (round 28, --sweep N: the windows' placement depends on the frames' timing (the streaming lead, the slides'
+      // hysteresis), so the same pose sees the join at different places run to run (NS-217). At the border poses the
+      // finest level's window is slid by whole chunks to N x N placements round where it stands, the levels held still,
+      // and the closure counted at each)
+      const sweep = Number(R.opt('sweep', '0'));
+      if (sweep > 0 && name.startsWith('border')) {
+        const rows = await page.evaluate(
+          async ({ pitch, sweep }) => {
+            const a = nested.app;
+            const nest = a.nest;
+            const L = nest.live - 1;
+            const w0 = { ...nest.wins[L] };
+            const out = [];
+            a.frozen = true;
+            const idle = async () => {
+              for (let i = 0; i < 2000; i++) {
+                if (nest.settled && !nest.fieldJob) return;
+                if (nest.settled && nest.fieldJob) nest.stepField(a.ex * a.k ** L, a.ey * a.k ** L);
+                await new Promise((r) => setTimeout(r, 20));
+              }
+            };
+            const h2 = Math.floor(sweep / 2);
+            for (let j = -h2; j < sweep - h2; j++)
+              for (let i = -h2; i < sweep - h2; i++) {
+                const w = { gx: w0.gx + i * 16, gy: w0.gy + j * 16, n: w0.n };
+                await idle();
+                let ok = false;
+                try {
+                  for (let t = 0; t < 400 && !(ok = nest.slide(L, w)); t++) await new Promise((r) => setTimeout(r, 20));
+                } catch (e) {
+                  out.push({ i, j, skip: String(e.message).slice(0, 60) });
+                  continue;
+                }
+                await idle();
+                await new Promise((r) => setTimeout(r, 200));
+                const hl = await nested.holes();
+                const tn = Math.tan((50 * Math.PI) / 360);
+                let cnt = 0;
+                for (let y = 0; y < hl.h; y++) {
+                  const ny = 1 - ((y + 0.5) / hl.h) * 2;
+                  const dz = -Math.sin(pitch) + ny * tn * Math.cos(pitch);
+                  if (dz / Math.hypot(1, ny * tn) < -0.1) cnt += hl.rows[y];
+                }
+                out.push({ i, j, cnt, refused: nest.stats.refused });
+              }
+            await idle();
+            try {
+              while (!nest.slide(L, w0)) await new Promise((r) => setTimeout(r, 20));
+            } catch {}
+            await idle();
+            a.frozen = false;
+            return out;
+          },
+          { pitch: v.pitch, sweep },
+        );
+        const bad = rows.filter((r) => r.cnt > 0);
+        totals[`${variant} sweep`] = (totals[`${variant} sweep`] ?? 0) + bad.reduce((s, r) => s + r.cnt, 0);
+        console.log(`${variant} ${name} sweep: ${rows.filter((r) => r.cnt !== undefined).length} placements, ${bad.length} with holes ${JSON.stringify(bad)}; skipped ${rows.filter((r) => r.skip).length}`);
+      }
     }
     await page.close();
   }

@@ -82,13 +82,16 @@ await run({ name: 'nested-smoothboot', kind: 'behaviour', size: '960x640', dpr: 
       const s = await a.nest.readAll();
       const pages = [];
       for (let m = 0; m < a.nest.live; m++) pages.push({ level: m, chunks: (a.nest.wins[m].n / 16) ** 2, sheetPages: s.pagesOf(48 + m), facePages: s.pagesOf(16 + m), columnPages: s.pagesOf(m) });
-      return { compileNest: a.nest.compileMs, compileDraw: a.render.compileMs, switchLog: a.nest.switchLog, pages, maxCz: a.nest.stats.maxCz, live: a.nest.live };
+      // (round 28) the last boot pipelines made: what sets "every boot pipeline made"
+      const made = Object.entries(a.nest.pipeMade).sort((x, y) => y[1].at - x[1].at).slice(0, 6).map(([n, t]) => `${n} at ${t.at.toFixed(0)} (${t.ms.toFixed(0)} ms)`);
+      return { compileNest: a.nest.compileMs, compileDraw: a.render.compileMs, switchLog: a.nest.switchLog, pages, maxCz: a.nest.stats.maxCz, live: a.nest.live, made, bootAt: a.bootAt };
     });
     console.log(`maxbuf ${mb || 'device'}: first frame ${st.first.toFixed(0)} ms, first sheet frame ${st.on ? st.sheet.toFixed(0) : 'never'} ms; pool ${st.cap} pages (device ${st.max}), used ${st.used}; ${after.live} levels`);
     console.log(`  statuses: ${[...seen.values()].join(' | ') || '(none seen)'}`);
     console.log(`  pipelines: sheet pass ${after.compileNest.toFixed(0)} ms, sheet draw ${after.compileDraw.toFixed(0)} ms (asynchronous)`);
     console.log(`  switch: ${JSON.stringify(after.switchLog)}; maxCz ${after.maxCz}`);
     console.log(`  pages after: ${JSON.stringify(after.pages)}`);
+    console.log(`  boot pipelines: first frame's made at ${after.bootAt.toFixed(0)} ms; the last made: ${after.made.join(', ')}`);
     R.check(`maxbuf ${mb || 'device'}: the sheets are drawn, or the page says why not`, st.on || st.text.includes('cannot'), st.text);
     // (round 19, the boot gate: ms after the page opened, desktop Chrome, each about 1.5 x round 19's cold run; a fresh
     // browser each run, so the first page is cold and the next ones reloads)

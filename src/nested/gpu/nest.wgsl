@@ -1950,7 +1950,14 @@ fn camera(@builtin(local_invocation_index) li: u32) {
   // the nearest solid (world): the finest level that found one within its reach; finer levels that found none bound it
   // from below by their reach (or their window's edge). A coarser level's distance is less one of its columns (its
   // surface is the finer one's mean, not the finer one itself).
+  // (round 28) A level searches CAM_R of its columns each way but measures the 3D distance, so a solid it finds farther
+  // than that reach is not the nearest: something nearer may stand just past the reach. Only a find within the reach
+  // ends the search; one beyond it bounds the answer from above (cap) and the coarser levels go on. Before, at 190 m over
+  // the ground, level 2 (2 m columns, 48 m reach) found the ground straight below at 318 m while a hillside 166 m away
+  // stood past its reach: the nearest read 318 with level 2 open and 166 without, so level 2 was opened and closed every
+  // 0.6 s for as long as the camera stayed there (the promote under 0.45 of its width, 230 m; the demote over 0.6, 307).
   var lb = 0.0;
+  var cap = FAR;
   var d = -1.0;
   var used = -1;
   var raw = FAR;
@@ -1959,17 +1966,22 @@ fn camera(@builtin(local_invocation_index) li: u32) {
     let e = wEye[m];
     if (e.w < 0.5) { continue; }
     let s = kpow(m);
-    raw = wD[m];
-    if (raw < 1e29) {
-      d = max(lb, (raw - select(1.0, 0.0, m == fin)) / s);
-      used = mi;
-      break;
-    }
     let w = u.lv[m];
     let edge = min(min(e.x, e.y), min(f32(w.z) - e.x, f32(w.z) - e.y));
-    lb = max(lb, max(0.0, min(f32(CAM_R), edge) - 1.5) / s);
+    let reach = max(0.0, min(f32(CAM_R), edge) - 1.5);
+    raw = wD[m];
+    if (raw < 1e29) {
+      let dm = max(lb, (raw - select(1.0, 0.0, m == fin)) / s);
+      if (raw <= reach || mi == 0) {
+        d = min(cap, dm);
+        used = mi;
+        break;
+      }
+      cap = min(cap, dm);
+    }
+    lb = max(lb, reach / s);
   }
-  if (d < 0.0) { d = lb; }
+  if (d < 0.0) { d = min(cap, lb); }
   // inside solid (a level promoted under the eye with detail above it, or an add over it): lifted to the air above
   if (used == i32(fin) && raw <= 0.0) {
     let m = fin;

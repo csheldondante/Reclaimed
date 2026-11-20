@@ -1203,10 +1203,13 @@ fn fieldFlip(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 @compute @workgroup_size(1)
 fn fieldDirFinish() {
+  // (round 28) indexed: 6 indices a quad slot over its 4 corners (render.ts's shared index buffer), so each corner runs
+  // the vertex stage once, not 1.5 times; the arguments of an indexed indirect draw, 8 words a level
   for (var L = 0u; L < 8u; L++) {
-    dargs[L * 4u] = 6u * FQPP;
-    dargs[L * 4u + 1u] = atomicLoad(&dir[L]);
-    dargs[L * 4u + 2u] = 0u;
-    dargs[L * 4u + 3u] = 0u;
+    dargs[L * 8u] = 6u * FQPP;
+    dargs[L * 8u + 1u] = atomicLoad(&dir[L]);
+    dargs[L * 8u + 2u] = 0u;
+    dargs[L * 8u + 3u] = 0u;
+    dargs[L * 8u + 4u] = 0u;
   }
 }

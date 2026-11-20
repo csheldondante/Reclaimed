@@ -348,7 +348,7 @@ export class GpuNest {
     this.planBg = this.device.createBindGroup({ label: 'nest plan', layout: this.planLayout, entries: [...entries, { binding: 7, resource: { buffer: this.args } }, ...segE] });
     this.genBg = this.device.createBindGroup({ label: 'nest gen', layout: this.genLayout, entries: [...entries, { binding: 7, resource: { buffer: this.gen?.field ?? this.genNone } }, ...segE] });
     // (round 26) the field's directory binds the segments too
-    if (this.fieldMask) this.ensureFieldDir(true);
+    if (this.fieldArgs) this.ensureFieldDir(true);
     this.dirBg = this.device.createBindGroup({
       label: 'nest directory',
       layout: this.dirLayout,
@@ -426,7 +426,7 @@ export class GpuNest {
    *  not drawn, then flipped together (fieldFlip) with the op's deferred rest (`flip`: the parent's footprint bakes, the
    *  leaving chunks' quads let go). The level's old meshes (or, opening, the parent) are drawn meanwhile; levels and
    *  edits hold still (`switching`). */
-  fieldJob: { L: number; queue: { x: number; y: number }[]; flip: () => void; t0: number; frames: number; chunks: number } | null = null;
+  fieldJob: { L: number; queue: { x: number; y: number }[]; flip: () => void; flipPages: number; t0: number; frames: number; chunks: number } | null = null;
   /** (B3) a field job builds a fieldBudget x fieldBudget block of chunks a frame (?fbudget=) */
   fieldBudget = 2;
   /** (B3, measurement) each finished field job: level, kind, chunks, frames, ms */
@@ -434,7 +434,7 @@ export class GpuNest {
   private fieldDefer = false;
   private fieldFlipping = false;
   /** (B3) queue level L's chunks of these rects (clipped to its window) for the job, no repeats */
-  private fieldQueue(L: number, rects: { x0: number; y0: number; x1: number; y1: number }[], flip: () => void): void {
+  private fieldQueue(L: number, rects: { x0: number; y0: number; x1: number; y1: number }[], flipPages: number, flip: () => void): void {
     const seen = new Set<string>();
     const queue: { x: number; y: number }[] = [];
     for (const r0 of rects) {
@@ -447,7 +447,27 @@ export class GpuNest {
           queue.push({ x, y });
         }
     }
-    this.fieldJob = { L, queue, flip, t0: performance.now(), frames: 0, chunks: queue.length };
+    this.fieldJob = { L, queue, flip, flipPages, t0: performance.now(), frames: 0, chunks: queue.length };
+  }
+  /** (round 28) pages the bakes of level L - 1 over these rects (its chunks, clipped) may take through the region rule:
+   *  its own chunks and its parent's rim chunks over them (in the parent's units, grown by two columns, as dilate does).
+   *  The child's ring is not baked (fieldFlipping; a demote has no child left). */
+  private flipBound(L: number, rects: { x0: number; y0: number; x1: number; y1: number }[]): number {
+    const P = L - 1;
+    if (P < 0 || !this.wins[P]) return 0;
+    let own = 0;
+    let up = 0;
+    const k = this.k;
+    const S = this.bakeTarget ?? this.smooth;
+    for (const r0 of rects) {
+      const r = this.clipChunks(P, r0);
+      own += GpuNest.area(r);
+      if (P > 0 && this.wins[P - 1] && GpuNest.area(r)) {
+        const g = { x0: Math.floor(((r.x0 * 16) / k - 2) / 16), y0: Math.floor(((r.y0 * 16) / k - 2) / 16), x1: Math.ceil(((r.x1 * 16) / k + 2) / 16), y1: Math.ceil(((r.y1 * 16) / k + 2) / 16) };
+        up += GpuNest.area(this.clipChunks(P - 1, g));
+      }
+    }
+    return this.bakeBound(own, S, P) + (P > 0 ? this.bakeBound(up, S, P - 1) : 0);
   }
   /** (B3) one frame of the field job: up to fieldBudget chunks nearest (ex, ey) (level L's global columns) built,
    *  deferred; the flip once none are left. Call between ops (the app: when no other op runs this frame). */
@@ -472,7 +492,7 @@ export class GpuNest {
       const B = this.fieldBudget;
       const c0 = job.queue[best];
       const r = this.clipChunks(L, { x0: Math.floor(c0.x / B) * B, y0: Math.floor(c0.y / B) * B, x1: Math.floor(c0.x / B) * B + B, y1: Math.floor(c0.y / B) * B + B });
-      if (!this.reserve(this.bakeBound((r.x1 - r.x0) * (r.y1 - r.y0)))) return;
+      if (!this.reserve(this.bakeBound((r.x1 - r.x0) * (r.y1 - r.y0), this.bakeTarget ?? this.smooth, L))) return;
       job.queue = job.queue.filter((c) => c.x < r.x0 || c.y < r.y0 || c.x >= r.x1 || c.y >= r.y1);
       this.fieldDefer = true;
       const s = this.cpuSlot(0, r);
@@ -482,7 +502,7 @@ export class GpuNest {
       this.submit();
       return;
     }
-    if (!this.reserve(this.bakeBound(64))) return;
+    if (!this.reserve(job.flipPages)) return;
     job.flip();
     this.fieldJob = null;
     this.fieldLog.push({ L, chunks: job.chunks, frames: job.frames, ms: performance.now() - job.t0 });
@@ -491,27 +511,45 @@ export class GpuNest {
   fieldOn(L: number): boolean {
     return ((this.fieldMask >> L) & 1) === 1;
   }
-  /** (round 26) the levels the field mesh draws (set once, before any of them is promoted): its module and pipeline
-   *  descriptions made here, its pipelines made by makePipes (the page, after the first frame) or at once (tests) */
+  /** (round 26) the levels the field mesh draws: its module and pipeline descriptions made (prepareField), then the mask
+   *  set (setFieldMask: only while the root alone is live). Tests and ?field at load. */
   enableField(mask: number): void {
-    if (mask & 1) throw new Error('?field: the field mesh draws levels 1 and up (the root is baked in the first frame, before its pipelines exist)');
-    if (this.fieldMask) throw new Error('?field: set once');
-    this.fieldMask = mask;
-    if (!mask) return;
+    this.prepareField();
+    this.setFieldMask(mask);
+  }
+  /** (round 28) the field mesh's module, pipeline descriptions and buffers, made once (its pipelines by makePipes, the
+   *  page in the background, or at once in tests); nothing is drawn or baked by it until a mask is set */
+  prepareField(): void {
+    if (this.fieldArgs) return;
     const module = this.device.createShaderModule({ label: 'nest field', code: `const TCAP: u32 = ${TCAP}u;\n${segWgsl(this.S, this.segP, false)}\n${storeWgsl}\n${nestWgsl}\n${fieldWgsl}` });
     for (const e of GpuNest.FIELD_PIPES) this.specs[e] = { label: `nest ${e}`, layout: e.startsWith('fieldDir') ? this.plDir : this.plMain, compute: { module, entryPoint: e } };
     if (!this.asyncPipes) for (const e of GpuNest.FIELD_PIPES) this.pipes[e] = this.device.createComputePipeline(this.specs[e]!);
-    this.fieldArgs = this.device.createBuffer({ label: 'nest field draw args', size: MAX_LEVELS * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST });
-    this.device.queue.writeBuffer(this.fieldArgs, 0, new Uint32Array(MAX_LEVELS * 4));
+    // (round 28: an indexed indirect draw a level, 8 words apart)
+    this.fieldArgs = this.device.createBuffer({ label: 'nest field draw args', size: MAX_LEVELS * 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST });
+    this.device.queue.writeBuffer(this.fieldArgs, 0, new Uint32Array(MAX_LEVELS * 8));
     this.ensureFieldDir();
+  }
+  /** (round 28) which levels the field mesh draws (bit L, levels 1 and up). Changed only while the root alone is live and
+   *  no op or field job is in flight (the caller demotes first): every finer level is then promoted, and baked, afresh in
+   *  the new draw, so no level ever holds one draw's pages under the other's mask. */
+  setFieldMask(mask: number): void {
+    if (mask & 1) throw new Error('?field: the field mesh draws levels 1 and up (the root is baked in the first frame, before its pipelines exist)');
+    if (mask === this.fieldMask) return;
+    if (mask && !this.fieldArgs) throw new Error('setFieldMask: prepareField first');
+    if (this.live > 1 || this.fieldJob || !this.settled) throw new Error('setFieldMask: only while the root alone is live and no op is in flight');
+    this.fieldMask = mask;
+  }
+  /** whether the field's pipelines are made (prepareField'ed and every one made) */
+  get fieldMade(): boolean {
+    return !!this.fieldArgs && GpuNest.FIELD_PIPES.every((n) => this.pipes[n]);
   }
   /** whether the field's pipelines are made (always, with no field level) */
   get fieldReady(): boolean {
-    return !this.fieldMask || GpuNest.FIELD_PIPES.every((n) => this.pipes[n]);
+    return !this.fieldMask || this.fieldMade;
   }
   /** the field's page list sized to the pool (its stride is the pool's pages), its bind group with the segments */
   private ensureFieldDir(force = false): void {
-    if (!this.fieldMask) return;
+    if (!this.fieldArgs) return;
     if (this.fieldDirCap !== this.cap) {
       this.fieldDir?.destroy();
       this.fieldDir = this.device.createBuffer({ label: 'nest field directory', size: (8 + MAX_LEVELS * this.cap * 3) * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
@@ -529,6 +567,8 @@ export class GpuNest {
   /** the page's mode: every pipeline made asynchronously (makePipes) before the ops that use it can run */
   readonly asyncPipes: boolean;
   private making = new Map<string, Promise<void>>();
+  /** (round 28, measurement) each pipeline made asynchronously: when (ms after the page opened) and its wait (ms) */
+  readonly pipeMade: Record<string, { at: number; ms: number }> = {};
   /** the pipelines normal play makes (every one but ON_USE) */
   bootPipes(): string[] {
     // (round 26: the field's pipelines are the field's own stage, never in normal play's list)
@@ -541,8 +581,11 @@ export class GpuNest {
         if (this.pipes[name]) return Promise.resolve();
         let m = this.making.get(name);
         if (!m) {
+          const t0 = performance.now();
           m = this.device.createComputePipelineAsync(this.specs[name]!).then((p) => {
             this.pipes[name] = p;
+            // (round 28, measurement: when each pipeline was made, ms after the page opened, and how long its own wait was)
+            this.pipeMade[name] = { at: performance.now(), ms: performance.now() - t0 };
           });
           this.making.set(name, m);
         }
@@ -975,10 +1018,12 @@ export class GpuNest {
    *  deep as any so far. Sheets (round 18: the draw being baked, not both: a sheet bake makes no face pages; round 16-17
    *  asked for both, the face pages' stack on top of the sheets'): page 0, at least one sheet page, and as deep as any
    *  column page stack so far (maxCz). */
-  private bakeBound(chunks: number, sheets = this.bakeTarget ?? this.smooth): number {
+  private bakeBound(chunks: number, sheets = this.bakeTarget ?? this.smooth, L?: number): number {
     const per = sheets ? 2 + this.stats.maxCz : this.facePages();
-    // (only while a field level is live or is the next one promoted: the others' ops reserve as before)
-    if (!(this.fieldMask & ((2 << this.live) - 1))) return chunks * per;
+    // (only while a field level is live or is the next one promoted: the others' ops reserve as before; round 28: given
+    // the level baked, only when that level is a field level, so the root's and the sheet levels' bakes are not charged
+    // the field's bound)
+    if (L !== undefined ? !(L > 0 && this.fieldOn(L)) : !(this.fieldMask & ((2 << this.live) - 1))) return chunks * per;
     // (round 26) with field levels: a chunk's quad pages and its scratch (let go at the bake's end, but pending until the
     // next merge), each as deep as any so far, at least 3 until measured (NS-205: a first bake past it leaves a chunk
     // undrawn, as the sheets do)
@@ -1229,9 +1274,12 @@ export class GpuNest {
     if (L !== this.live) throw new Error(`promote depth ${L}: ${this.live} levels live`);
     this.checkWin(L, w);
     const fc = this.footChunks(L, w);
-    const footN = (fc.x1 - fc.x0) * (fc.y1 - fc.y0);
     // (column pages and their TMP twins, the child's faces, the parent's faces round the footprint)
-    if (!this.reserve((w.n / 16) ** 2 * (this.overflowPages() + this.tmpPages()) + this.bakeBound((w.n / 16) ** 2 + footN))) return false;
+    // (round 28: a field level bakes nothing here: its chunks are built by the job, each block reserving its own, and the
+    // parent's footprint at the flip, which reserves for it. Reserving the whole window's field bound here, at the deepest
+    // field stack so far for every chunk, asked ~12,000 pages for a 2,600-page world and grew the pool to 714 MB)
+    const fieldL = this.fieldOn(L);
+    if (!this.reserve((w.n / 16) ** 2 * (this.overflowPages() + this.tmpPages()) + (fieldL ? 0 : this.bakeBound((w.n / 16) ** 2, this.bakeTarget ?? this.smooth, L) + this.flipBound(L, [fc])))) return false;
     this.wins[L] = { ...w };
     // the z origin is picked where a level is promoted somewhere new; a window overlapping the last one at this depth
     // keeps it, so demote then promote is bit-identical (NS-11: a long slide keeps it too)
@@ -1251,12 +1299,12 @@ export class GpuNest {
     // (Round 26 B3) a field level: its chunks built a few a frame (stepField) into the bank not drawn; the level draws
     // nothing and the parent keeps its footprint until the flip, which makes them all drawn and bakes the parent's
     // footprint (its own chunks only: the child's ring was just built with the window) in the same submit
-    if (this.fieldOn(L)) {
+    if (fieldL) {
       const wr = { x0: w.gx / 16, y0: w.gy / 16, x1: (w.gx + w.n) / 16, y1: (w.gy + w.n) / 16 };
       this.directory();
       this.mergeFrees();
       this.submit();
-      this.fieldQueue(L, [wr], () => {
+      this.fieldQueue(L, [wr], this.flipBound(L, [fc]), () => {
         this.run('fieldFlip', this.uni(({ a }) => (a[3] = L)), TCAP / 64);
         this.mergeFrees();
         this.fieldFlipping = true;
@@ -1346,10 +1394,19 @@ export class GpuNest {
     const fn = L > 0 ? this.footChunks(L, w) : null;
     // (round 9) the parent round the old and the new footprint, as two rects clipped to the parent's window: a long slide
     // of a deep level once took the box round both (up to 128 x 128 chunks of level 1's grid, or 1024 x 1024 at level 2)
-    // as its worst case, past the device's limit, and the error that left stopped every later grow (NS-88)
-    const footN = fp && fn ? GpuNest.area(this.clipChunks(L - 1, fp)) + GpuNest.area(this.clipChunks(L - 1, fn)) : 0;
+    // as its worst case, past the device's limit, and the error that left stopped every later grow (NS-88); round 28:
+    // counted by flipBound, which clips them the same way
     // (the entering chunks' column pages and TMP twins, their faces, the edge ring's and the parent's round the footprint)
-    if (!this.reserve(chunks * (this.overflowPages() + this.tmpPages()) + this.bakeBound(chunks + ringN + footN) + keepPages)) return false;
+    // (round 28: a field level's bakes reserve their own, in the job's blocks and at its flip; see promote)
+    const fieldL = L > 0 && this.fieldOn(L);
+    // (a child the new window would not hold is demoted below, which bakes this level over its footprint at once)
+    const kid0 = this.wins[L + 1];
+    const kidBound = fieldL && kid0 ? this.flipBound(L + 1, [this.footChunks(L + 1, kid0)]) : 0;
+    // (round 28: each level's bakes at its own draw's bound: this level's entering chunks and ring, the parent round both
+    // footprints and its parent's rim chunks (flipBound), the child's rim chunks (its ring at most))
+    const S = this.bakeTarget ?? this.smooth;
+    const ownBound = this.bakeBound(chunks + ringN, S, L) + (fp && fn ? this.flipBound(L, [fp, fn]) : 0) + (kid0 ? this.bakeBound((4 * kid0.n) / 16, S, L + 1) : 0);
+    if (!this.reserve(chunks * (this.overflowPages() + this.tmpPages()) + (fieldL ? kidBound : ownBound) + keepPages)) return false;
     // (round 17, NS-128) a child the new window would not hold (inside it with the margin, checkWin) is demoted in the
     // same op, before the slide: else for a frame or more (the app runs one level op a frame) the child sits outside
     // its parent, its window-edge lines see no parent columns and its whole edge is open (the selftest's 1,024 open
@@ -1386,12 +1443,12 @@ export class GpuNest {
     // (round 26 B3) a field level: the entering chunks and the one-chunk band beside them (their quads reach in) and the
     // new edge ring built a few a frame into the bank not drawn; the old meshes (the leaving ones too) and the parent as
     // it was stay drawn until the flip, which lets the leaving meshes go and bakes the parent round both footprints
-    if (this.fieldOn(L)) {
+    if (fieldL) {
       this.directory();
       this.mergeFrees();
       this.submit();
       const grown = parts.map((p) => ({ x0: p.x0 - 1, y0: p.y0 - 1, x1: p.x1 + 1, y1: p.y1 + 1 }));
-      this.fieldQueue(L, [...grown, ...this.ring(w)], () => {
+      this.fieldQueue(L, [...grown, ...this.ring(w)], fp && fn ? this.flipBound(L, [fp, fn]) : 0, () => {
         this.run('fieldFlip', this.uni(({ a }) => (a[3] = L)), TCAP / 64);
         this.run('fieldRelease', this.uni(({ a, e }) => ((a[3] = L), e.set([nc.x0, nc.y0, nc.x1, nc.y1]))), TCAP / 64);
         this.mergeFrees();
@@ -1446,7 +1503,11 @@ export class GpuNest {
     // residual stack (a whole-column residual where there was none), one more face page (faces grown past a page), and
     // in a stroke the snapshot's copy of the column pages; and the TMP scratch of the largest pass only, since every
     // pass's TMP pages are let go and merged before the next pass takes any.
-    if (!this.reserve(bound * (2 + this.overflowPages() + (swept ? this.overflowPages() : 0)) + most * this.tmpPages())) return false;
+    // (round 28) a field level's chunks rebuilt by the edit: both banks and the scratch at the field's bound (the "one
+    // more face page" above is a sheet's growth; a field chunk's new bank is written beside the drawn one)
+    let fieldPages = 0;
+    for (let m = 1; m < live; m++) if (this.fieldOn(m)) fieldPages += this.bakeBound(per[m], this.bakeTarget ?? this.smooth, m);
+    if (!this.reserve(bound * (2 + this.overflowPages() + (swept ? this.overflowPages() : 0)) + most * this.tmpPages() + fieldPages)) return false;
     const opId = { raise: 1, dig: 2, melt: 3, carve: 4, add: 5 }[spec.op];
     const base = ({ a, r, c, d }: { a: Uint32Array; r: Uint32Array; c: Float32Array; d: Float32Array }) => {
       a[2] = opId;
@@ -1530,8 +1591,18 @@ export class GpuNest {
   /** this frame's camera: the eye moved (limited by the nearest solid) and the per-level view-projections (cam buffer)
    *  from camIn; then its report (cam words 0-31) copied out and read when ready (never awaited) */
   camera(): void {
+    // (round 28: an idle frame runs no camera pass and reads nothing back. The pass is a function of camIn (less the
+    // frame's dt, which only scales a move), the live windows and columns (any op submits) and the cruise; with all of
+    // them as at the last pass, and that pass's report back, its result would be the same)
+    const sig = `${Array.from(this.camIn.subarray(0, 11)).join(',')}|${this.counts.submits}|${this.camCruise}`;
+    const still = this.camIn[0] === 0 && this.camIn[1] === 0 && this.camIn[2] === 0 && this.camIn[3] === 0 && !this.camCruise;
+    if (still && sig === this.camSig && this.camGot === this.camSeq) {
+      this.camSkips++;
+      return;
+    }
     this.run('camera', this.uni(), 1);
     this.submit(false);
+    this.camSig = `${Array.from(this.camIn.subarray(0, 11)).join(',')}|${this.counts.submits}|${this.camCruise}`;
     const buf = this.camRing.find((b) => !b.busy);
     if (!buf) return;
     buf.busy = true;
@@ -1561,7 +1632,12 @@ export class GpuNest {
    *  ground now as the height to keep (the camera pass measures it) */
   cruise(on: boolean, speed: number, keep = false): void {
     this.device.queue.writeBuffer(this.cam, 260 * 4, new Float32Array(keep ? [on ? 1 : 0, speed, -1] : [on ? 1 : 0, speed]));
+    this.camCruise = on;
   }
+  private camCruise = false;
+  /** (round 28) the inputs of the last camera pass run (camIn less dt, the submits since, the cruise), and passes skipped */
+  private camSig = '';
+  camSkips = 0;
   /** the camera's last report (cam words 0-31): 20-22 eye hi, 24-26 eye lo, 27 lifts, 28 nearest solid, 29 centre hit
    *  distance (-1 none), 30 the measuring level, 31 the margin */
   readonly camOut = new Float32Array(32);

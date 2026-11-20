@@ -61,6 +61,9 @@ await run({ name: 'nested-cruise', kind: 'timing', size: '960x640', dpr: 1, echo
           let minSide = 1e9;
           let maxLive = 0;
           let minLive = 9;
+          let maxJob = 0;
+          const jobs0 = a.nest.fieldLog.length;
+          const grows0 = a.nest.growLog.length;
           const old = a.post;
           // (the frame intervals the page itself takes, read as each frame ends: a.frames keeps only the last 600)
           const ft = [];
@@ -73,6 +76,9 @@ await run({ name: 'nested-cruise', kind: 'timing', size: '960x640', dpr: 1, echo
             minSide = Math.min(minSide, (ey - w.gy) * M, (w.gy + w.n - ey) * M);
             maxLive = Math.max(maxLive, a.nest.live);
             minLive = Math.min(minLive, a.nest.live);
+            // (round 28) the oldest field job seen (a fill must always complete) and the pool's grows meanwhile
+            const j = a.nest.fieldJob;
+            if (j) maxJob = Math.max(maxJob, performance.now() - j.t0);
           };
           while (performance.now() - t0 < secs * 1000) await fr(1);
           a.post = old;
@@ -103,6 +109,13 @@ await run({ name: 'nested-cruise', kind: 'timing', size: '960x640', dpr: 1, echo
             dNear: nested.eye().dNear * M,
             // (round 26) the field jobs (level, chunks, frames, ms) finished so far
             fieldJobs: JSON.stringify(a.nest.fieldLog.slice(-4).map((j) => [j.L, j.chunks, j.frames, Math.round(j.ms)])),
+            // (round 28) jobs finished in the run, the longest of them, the oldest job seen (finished or not), grows
+            jobsDone: a.nest.fieldLog.length - jobs0,
+            jobMax: Math.max(0, ...a.nest.fieldLog.slice(jobs0).map((j) => j.ms)),
+            maxJob,
+            grows: a.nest.growLog.length - grows0,
+            held: a.nest.stats.held,
+            used: a.nest.stats.used,
           };
         },
         [H, v, secs, M],
@@ -111,7 +124,7 @@ await run({ name: 'nested-cruise', kind: 'timing', size: '960x640', dpr: 1, echo
       const ahead = r.minFront > FOG;
       rows.push({ H, v, ...r, holds, ahead });
       console.log(
-        `H ${H} m, ${v} m/s: frame median ${r.median.toFixed(1)} ms, p95 ${r.p95.toFixed(1)}, worst ${r.worst.toFixed(1)} (${r.frames} frames); reached ${r.speed.toFixed(0)} m/s; root front ${(r.minFront / 1000).toFixed(1)} km ahead at least, sides ${(r.minSide / 1000).toFixed(1)} km; slides root ${r.rootSlides} (CPU ${r.rootSlideCpuMs.toFixed(1)} ms at most), level 1 ${r.l1Slides}, level 2 ${r.l2Slides}; promotes ${r.promotes}, demotes ${r.demotes}; refused ${r.refused}; levels ${r.live}; field jobs ${r.fieldJobs}; ${holds ? 'holds 16.7' : 'OVER 16.7'}, ${ahead ? 'kept ahead' : 'FELL BEHIND'}`,
+        `H ${H} m, ${v} m/s: frame median ${r.median.toFixed(1)} ms, p95 ${r.p95.toFixed(1)}, worst ${r.worst.toFixed(1)} (${r.frames} frames); reached ${r.speed.toFixed(0)} m/s; root front ${(r.minFront / 1000).toFixed(1)} km ahead at least, sides ${(r.minSide / 1000).toFixed(1)} km; slides root ${r.rootSlides} (CPU ${r.rootSlideCpuMs.toFixed(1)} ms at most), level 1 ${r.l1Slides}, level 2 ${r.l2Slides}; promotes ${r.promotes}, demotes ${r.demotes}; refused ${r.refused}; levels ${r.live}; field jobs ${r.fieldJobs}, ${r.jobsDone} done (longest ${r.jobMax.toFixed(0)} ms, oldest seen ${r.maxJob.toFixed(0)} ms); grows ${r.grows}, pool ${r.used}/${r.held}; ${holds ? 'holds 16.7' : 'OVER 16.7'}, ${ahead ? 'kept ahead' : 'FELL BEHIND'}`,
       );
       await sleep(500);
     }

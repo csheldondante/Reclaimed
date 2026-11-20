@@ -14,7 +14,6 @@ struct FieldDU {
 
 const FD_QPP: u32 = 783u;
 const FD_HW: u32 = 16u;
-const FD_CORNER = array<u32, 6>(0u, 1u, 2u, 0u, 2u, 3u);
 
 struct VOutF {
   @builtin(position) pos: vec4<f32>,
@@ -35,9 +34,10 @@ fn vsField(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -
   let e = 8u + (L * d.misc2.x + inst) * 3u;
   let page = dir[e];
   let key = dir[e + 1u];
-  let s = vv / 6u;
+  // (round 28: an indexed draw, vv = 4 x the quad slot + the corner; render.ts fieldIndex)
+  let s = vv / 4u;
   if (s >= dir[e + 2u]) { return o; }
-  let b = page * PW + FD_HW + s * 16u + FD_CORNER[vv % 6u] * 4u;
+  let b = page * PW + FD_HW + s * 16u + (vv % 4u) * 4u;
   let w0 = pgLoad(b);
   let t = unpack2x16unorm(pgLoad(b + 1u));
   // (the cell column as an integer offset from the window first, then the offset in the cell: every chunk that holds
