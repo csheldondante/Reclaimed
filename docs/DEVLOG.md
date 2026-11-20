@@ -28486,3 +28486,35 @@ section. Nothing in the look changed.
 - Typecheck clean; unit nested-* 91/91. Self-test (nested-selftest.mjs, port 5461): killed at the 10 minute limit while
   in the smooth half ("smooth coverage in the rim shaft" the last step logged), no pass/fail line; no page errors besides
   the usual 404, no odd edges or holes in the steps it logged. Not retried.
+
+## 2026-11-20 — Nested scales lab, round 32 (step A): the cliff rule defined on the CPU, drawn by a CPU ray march
+
+**Why.** Round 31's shCol3 fakes nested stone columns per pixel from hashes and a plane fitted per pixel: its heights
+are guesses, tops vary randomly, and the real fine level could never reproduce it. The owner wants a voxel look in a
+compressed column space on steep ground and a heightmap elsewhere, with tops seamless with the sheet, horizontal noise
+and notches, all from "the same hash plus the parent data". Step A defines that rule once, in integer maths, so a pixel
+march and the level's derive can both evaluate it, and draws it on the CPU before any WGSL is written.
+
+**What.** src/nested/exp/cliffrule.ts (the rule; stated in NESTED_SCALES "As built (round 32, step A)"), cliffview.ts
+(a hierarchical CPU ray march: coarse DDA, quadtree descent with the rule's bound, sun shadows by a second march, a
+4-tap recess occlusion), test/unit/nested-cliffrule.test.ts (a synthetic 16 m field with every fallback; invariants;
+`RA_PICS=1` writes local/nested/rA2-*.png). No engine source changed.
+- Round 1 (rA-*): a straight up/down boundary with per-level hashes of half a cell, notches at 0.25 m. Looked wrong:
+  0.25 m pin-stripes, notches 1-2 px specks, tops coloured by cell kind (coarse squares), no shadows.
+- Round 2 (rA2-*), from the review: per-level amplitudes (a whole cell at 8 / 4 / 2 m, small and masked below), w at the
+  2 m block centre, zero-sum siblings, notches at every level in that level's cells (the owner: "notches at each level
+  below the current for a carve"; per-level share and depth, "dramatic" all 15 % / 4 vs "tame" 5 % / 1, 10 % / 2,
+  15 % / 4), ground-coloured tops, shadows, occlusion; a sphere bowl and a 27 deg trench carve in the field.
+
+**Measured.**
+- Invariants: tops in a split cell only H or L; the bound never under on 1.17 M nodes (erosion on and off); determinism;
+  the up level meets a sheet hi neighbour exactly at the edge midpoint (worst 4.5 m along a sloped edge, NS-264).
+- Children mean vs h (215 split cells): no residual RMS 330 units / worst 24.5 m; independent offsets 487 / 26.0 m; the
+  closed form alone 94 units; dTheta mean 79 / max 396 w units (~20 / ~99 fine columns); with dTheta RMS 0.27 / worst 2.07
+  units; with erosion 5.2 / 10.2.
+- March nodes a pixel (960 x 640): near 21.8 (max 87), far 19.7 (77), above 12.7, bowl 14.9, trench 21.0; shadow rays
+  13-24 mean (max 114). No ray hit the 6000 cap. 1.2-4.9 s a picture on the CPU.
+- Look (round 2): blocks of 8 / 4 / 2 m standing forward and back read as stylised columns; notches read as pocks
+  (NS-267) and the coarse ones almost never fit (NS-268), so dramatic = tame. Round 1's far-view bottom strip was the
+  map's south border cut, aimed out of frame.
+- Typecheck clean; test/unit/nested-cliffrule.test.ts 7/7 (only this file run).

@@ -1811,6 +1811,58 @@ depth under its cell's top, 14 the columns' weight w, 15 the occlusion ao.
   ms with the version 3 section replaced by a stub (two runs of 7 rounds, a fresh device each): about 35-40 ms (12 %).
   The override (CLIFF_V3 false) skips the call at run time but the code is still compiled. Within the 400 ms floor in the
   medians; single runs still spike to 600-730 ms (NS-253).
+
+**As built (round 32, step A): the cliff rule, defined on the CPU (no engine change).** The owner: "flatter traversable
+sheets that give way to steep jagged stylized stone that we can zoom into cleanly"; column tops smooth and seamless with
+the sheet beside them; noise horizontal; "can't we use the same hash plus the parent data to construct the geometry for
+the same apparent columns?" Round 31's shCol3 guesses heights per pixel; this step defines ONE rule that both a pixel
+march and the real level's derive could evaluate. Sources: src/nested/exp/cliffrule.ts (the rule), cliffview.ts (a CPU
+ray march of it), test/unit/nested-cliffrule.test.ts (invariants; `RA_PICS=1` draws local/nested/rA-*.png, rA2-*.png).
+Integer maths for every geometric decision: heights in 1/64 m, u32 hashes in shHash2's mix, floor division (the WGSL
+port needs floor helpers: `/` and `%` truncate there). Coarse cells 16 m; fine columns 16 m / 2^6 = 0.25 m.
+- *Kinds* (O(1) from the cell and its 4 neighbours). STEEP: max - min over the 5 cells > T = 2 cell widths. SPLIT:
+  steep and strictly between its lowest (lo) and highest (hi) 4-neighbour. Every other cell is a SHEET, including the
+  fallbacks TOP (steep, itself the highest: ridge crest, plateau rim) and BOTTOM (itself the lowest: pit, cliff foot).
+  Sheets are round 31's scTops surface: bilinear quadrants through the centre, edge midpoints (mean with a joined
+  neighbour, else the cell's own height) and corners (mean of the cells joined round that corner); joined = both
+  sheets within T widths.
+- *Levels* (departure: not flat neighbour heights). A split cell's fine columns stand UP at H or DOWN at L. H = hi's
+  height when hi is a sheet (the up tread meets that sheet exactly at the edge midpoint, and all along the edge when it is
+  level), else the midpoint (h + hi) / 2 (the tread a split neighbour shares); L likewise. Flat neighbour levels make a
+  long slope a sawtooth (cell i up at h + 44 m beside cell i+1 down at h); midpoints alone put a step under a rim. Share
+  up F = floor(4096 (h - L) / (H - L)). A sloped sheet beside it leaves up to 4.5 m along the edge (carve rims); meeting
+  it everywhere needs the up tops to follow the hi sheet's edge, and the share solved over that surface (NS-264).
+- *Direction.* The 4-neighbour central gradient quantised to integers with max(|a|, |b|) = 4 (any diagonal); a saddle
+  (gradient under a quarter of hi - lo) takes 2 (hiDir - loDir).
+- *Which columns are up.* Score w = a px + b py, (px, py) = the centre of the column's 2 m block (`wLevel` 3) in fine
+  half-cells from the cell centre (so oblique walls step in 2 m blocks, not a 0.25 m staircase), plus one hashed offset
+  per level 1..6 (8 m .. 0.25 m; departure: no 16 m term, it would only move the cell's share). Amplitude `ampL[l]`/256
+  of that level's cell width along the dominant axis: 256 at 8, 4, 2 m (whole blocks stand forward or back), 24, 16, 8 at
+  1, 0.5, 0.25 m (chips), the slow mask scaling levels >= 1 m. Zero-sum siblings: the parent's hash gives u, v and one of
+  3 pairings; the 4 children get +u, -u, +v, -v. Up when (w + offsets) x 4096 + tie >= theta x 4096 + dTheta: tie is a
+  12-bit per-column hash (departure: integer scores tie in long runs and a threshold cannot split a tie); theta is the
+  closed-form inverse of the area of the square on the high side of a line (a trapezoid's tails: integer sqrt);
+  dTheta is the stored per-cell residual (the lab's residual) that brings the up count to round((h - L) N^2 / (H - L)).
+- *Bound* (for the march). Any node at any level: the w range over the w-blocks inside it, plus its ancestors' known
+  offsets, plus the remaining levels' largest amplitude (the mask at its per-cell maximum: the cell lies in one lattice
+  cell). Max top = H if any descendant could be up, else L; min top mirrored, less the erosion maximum. Tested on 1.17 M
+  nodes, erosion on and off: never under; 0.5 % of nodes (9.7 % with erosion) over-promise.
+- *Notches* (round 2: every level). Level l (8 m .. 0.25 m) cuts its own notches in its own cells, keyed on its own
+  cell: z-segments of 5 cells (hashed offset per key), a hashed share `notchPctL[l]` x the mask, height 1..3 cells, depth
+  1..`notchDepthL[l]` cells; open only where a column within that depth toward lo (sampled every half cell) has its top
+  at or below the notch floor. Air is the union over levels (finer only adds air); each level's top cell stays solid, so
+  tops and the top bound are untouched; a march's leaf tests every level up to the level it reached.
+- *Mask.* Value noise on a 4-coarse-cell lattice of hashed bytes, integer smoothstep, remapped by smoothstep(0.38, 0.62);
+  evaluated at each level cell's (parent's) centre in fine half-cells.
+- *Erosion* (default off). Up columns within 2 m of a lower column toward lo drop 0, 0.5 or 1 m, hashed per 1 m block.
+Numbers (synthetic field: plateau with a curved 80 m cliff, bay and bump corners, a 70 deg slope over 4 cells, a ridge
+with a col, a pit, rolling ground, a sphere bowl r 40 m and a 48 x 40 m trench at 27 deg; 215 split cells): the mean of
+the children against h with no residual RMS 330 units (5.2 m), worst 24.5 m (38 % of H - L; independent offsets 487 /
+26.0 m; the closed form alone, no raggedness, 94 units); dTheta mean 79, max 396 w units (~20 / ~99 fine columns); with
+it RMS 0.27, worst 2.07 units. March: near view 21.8 nodes a pixel (max 87), shadow rays 23.3 (max 97); far 19.7 / 16.8.
+Pictures: round 1 (rA-*) a straight boundary with 0.25 m pin-stripes, notches 1-2 px specks, coarse squares on tops
+coloured by kind; round 2 (rA2-*) blocks of 8 / 4 / 2 m, tops ground-coloured, shadows; notches read as pocks, and the
+8 / 4 m notches almost never fit a 20-40 m face, so "dramatic" and "tame" look the same. Open items NS-264..NS-275.
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

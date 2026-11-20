@@ -934,6 +934,30 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   drawBoxesTex 405, drawFieldTex 612 once) while their medians alone are ~320: the noise of NS-253 plus NS-260's cost.
 - NS-263 (limit, round 31) The 4c frame times are the desktop proxy with the page pinned at the display rate (9.9 ms in
   every state): only the GPU pass times separate the looks (side2: 5.0-5.7 off, 6.1-6.3 v2, 6.4-7.2 v3). No phone bench.
+- NS-264 (limit, round 32 A) The cliff rule's up level H is flat: beside a sloped sheet hi neighbour it meets the sheet
+  only at the edge midpoint (worst 4.5 m along the edge, carve rims). Fix: up tops follow the hi sheet's edge height,
+  the share solved over that surface, the rest in the residual.
+- NS-265 (hack, round 32 A) dTheta (the cliff rule's stored residual) is derived by sorting a split cell's 4096 scores:
+  a derive-time cost, not O(1); with round 2's amplitudes it is large (mean ~20, max ~99 fine columns), so the stored
+  number, not the rule, places much of the edge.
+- NS-266 (hack, round 32 A) Scores carry a 12-bit per-column tie-break hash so a threshold can split ties; collisions
+  still leave an exact-mode error of up to 2 columns' worth (worst 2.07 units).
+- NS-267 (limit, round 32 A) Notches are keyed on one cell of their level (1 cell wide, 1-3 tall): they read as pocks,
+  not horizontal slots.
+- NS-268 (limit, round 32 A) Coarse (8 m, 4 m) notches almost never fit: a fixed 5-cell z-segment and the top-cell rule
+  on 20-40 m faces; "dramatic" and "tame" render the same.
+- NS-269 (perf, round 32 A) The notch's depth test samples columns toward lo every half cell (can miss a face) and costs
+  up to 8 top lookups per level per test, 6 levels: too heavy for a shader as is.
+- NS-270 (limit, round 32 A) Notches open only from faces toward lo along the two axes; enclosed (invisible) air can
+  exist behind them.
+- NS-271 (limit, round 32 A) At LOD (a leaf coarser than 0.25 m) the march takes the leaf's centre column's notches and
+  ignores erosion; that column's own up/down may disagree with the leaf's.
+- NS-272 (hack, round 32 A) The CPU renderer finds sheet hits by 8 samples + bisection (can miss a thin crest), its
+  occlusion is a fixed 0.75 m 4-tap test, and the map border shows as a cut skirt (the far view is aimed to keep it out).
+- NS-273 (limit, round 32 A) The cliff rule's bound for a sheet's sub-cell is the whole coarse cell's control range.
+- NS-274 (limit, round 32 A) A split cell's tops take only two levels: depth comes from plan steps of whole blocks, not
+  staggered column tops like round 31's stills.
+- NS-275 (limit, round 32 A) The map border clamps neighbours (kinds and sheets at the edge read clamped heights).
 - NS-253 (test, round 31) Compile times swing 1.5-2.5x between runs on this machine (drawFieldTex 295-820 ms with no
   change); version 3's textured variants (drawBoxesTexV3 / drawSheetsTexV3) got a 600 ms budget from 341-457 / 401-535 ms.
 - NS-254 (hack, round 31) The pixel's size per unit of distance (draw uniform cl.x) is written by the app each frame
