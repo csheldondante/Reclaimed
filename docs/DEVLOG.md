@@ -28287,3 +28287,8 @@ above, fedge 1's bowl rim is a crisper, rounder outline where fedge 0's is a sof
 and bright shards on its shaded side (more so textured): the rim corner's cells, where the field's switch between two
 columns' distances meets the vertex's averaging. Grazing: nearly the same picture. The trench's upper wall is a straighter
 edge with small notches. Default stays 0.
+
+**Gates.** typecheck; nested unit tests 90 of 90; the compile gate passed (on its rerun); the GPU test passed. The
+self-test (nested-selftest.mjs, 47 of 47 at round 28) was started and stopped by the host for low system memory before
+it reported: not run this round. With `?fedge=0` the field module's text differs only by `const FLINE: bool = false;`
+and every new branch is behind it.
