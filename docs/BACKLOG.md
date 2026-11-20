@@ -976,6 +976,16 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   test like the notches before the port, or keep it off.
 - NS-282 (hack, round 32 A3) bestDTheta uses JS Math.round for the target count (ties up); a WGSL or CPU port must use
   floor((2x + 1) / 2) to match.
+- NS-283 (hack, round 32 B1) The cliff rule's heights are the 16 m level's f32 column tops rounded per pixel to 1/64 m
+  (round half up); integer storage (decided in principle) replaces it.
+- NS-284 (limit, round 32 B1) dTheta is 0 in the shader (not stored), so a split cell's up count is not corrected to its
+  mean h (step A: up to ~12 m off).
+- NS-285 (perf, round 32 B1) ?cliff=4 reads 5-15 columns a pixel through the page table (+2.5 ms on side2's L2 pass); a
+  per-cell table built when the window changes replaces it (step B2).
+- NS-286 (look/design, round 32 B1) On real terrain long steep slopes are split cell after cell: each 16 m row becomes
+  its own band (a staircase of ledges), not one cliff edge. Owner's call whether that is wanted.
+- NS-287 (test, round 32 B1) ?cliff=4's variant pipeline took 1,650 ms in the page and the load's worst frame was 6.7 s;
+  not separated from the other first-frame work. fsST4 compiles in ~600 ms on Dawn (default sheets ~330).
 - NS-253 (test, round 31) Compile times swing 1.5-2.5x between runs on this machine (drawFieldTex 295-820 ms with no
   change); version 3's textured variants (drawBoxesTexV3 / drawSheetsTexV3) got a 600 ms budget from 341-457 / 401-535 ms.
 - NS-254 (hack, round 31) The pixel's size per unit of distance (draw uniform cl.x) is written by the app each frame

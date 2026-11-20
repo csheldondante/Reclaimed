@@ -1908,6 +1908,36 @@ reads as broader, calmer slabs. Open items NS-264..NS-282.
   (1.7e7), F's 4096 (h - L) (overflows past 8,000 m of H - L); global fine half-cell coordinates stay in i32 for worlds
   under 2^17 coarse cells. (6) `Math.sign` / `Math.abs` / `min` / `max` are integer-safe. (7) The ±2147483647 sentinels in
   `kindOf` and `cellBound` are i32-safe.
+
+**As built (round 32, step B1): the rule in the fragment shader on the real 16 m columns, `?cliff=4`.** The question: can
+the terrain fragment shader read the real stored 16 m heights round a pixel and evaluate step A's rule exactly, within the
+bind groups, at an acceptable cost (no march yet)? Yes.
+- *The port* (src/nested/gpu/cliffrule.wgsl): `cr`-prefixed copies of fdiv / fmod (floor), isqrt (an f32 guess, 4 bounded
+  u32 checks each way), mix, hash3, salt, ism, kindOf, deriveCell (no sheet control heights), the mask, ampOf, levelOff
+  (zero-sum), wCentre, tieOf, thetaOf, marginOf, isUp; defaultParams as constants. dTheta = 0 (not stored yet). The
+  includer defines `crH(x, y)`: a cell's height in units with hAt's edge rule.
+- *Heights* (src/nested/gpu/cliff4.wgsl): per pixel from the 16 m level's pages (draw.wgsl cliffColTop: the top, word 0,
+  of the column's highest solid record; with the generator the generated surface), level-local f32 x 1024, rounded half
+  up (crUnits: floor plus (fract >= 0.5)). A cell beyond the 16 m window is clamped to it per axis (hAt's rule); a column
+  with no solid record would be magenta (none seen). The window (gx, gy, n) rides in the draw uniform's unused cl3.yzw.
+- *The switch*: `?cliff=4` builds a separate module variant (render.ts cliffRuleCode: the draw module plus the two files)
+  and one textured sheet pipeline (fsST4) from it; render.cliffRuleOn picks it per frame. The default module's source is
+  unchanged (asserted by the test). Sheets only (no box or field draw variant).
+- *The view*: SHEET cells keep their shading; SPLIT up fine columns orange, down blue; TOP tinted green, BOTTOM purple;
+  coarse borders a thin dark line.
+- *Exactness* (test/gpu/nested-cliffrule-wgsl.test.ts, Dawn): the synthetic field at origin (-20, -16) (215 split cells,
+  880,640 fine columns) and the real 16 m window read back once (test only; 256 x 256 cells at 1072, 3072; 2,625 split
+  cells, 10,752,000 fine columns): 0 cell and 0 column mismatches. Not covered: the draw's float against the readback's
+  (the same record by construction).
+- *Cost*: fragment storage buffers 5 before and after (the table + 4 segments). side2 GPU passes 5.0-5.1 ms off, 7.9-8.8 on
+  (L2 sheets 3.3 -> 5.8, L1 1.2 -> 1.6); the page's frame pinned at 9.9 either way. 5 column reads a pixel (15 on steep
+  cells), each through the table and the records. Compile (Dawn, 7 alternating rounds, medians of two runs): default
+  sheets 335 / 326 ms, fsST from the variant module 354 / 332, fsST4 588 / 623.
+- *Real terrain under the rule*: 2,625 of 65,536 cells split (4 %), 41 top, 38 bottom; split cells' mean hi - lo 54.7 m.
+  Real steep ground is long continuous slopes, so whole mountain faces are split cell after cell: with H and L at the
+  midpoints each 16 m row becomes its own band (a staircase), each with its own ragged up / down edge in 2 m blocks, not
+  one cliff edge (stills local/nested/rB1-side2-cliff0|4.png, rB1-above-cliff0|4.png). The side16 pair was shot before
+  the 16 m level opened (the script now waits for it). Open items NS-283..NS-287.
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

@@ -9,6 +9,8 @@ import shadeWgsl from './gpu/shade.wgsl?raw';
 import fieldDrawWgsl from './gpu/fielddraw.wgsl?raw';
 import texWgsl from './gpu/tex.wgsl?raw';
 import texDrawWgsl from './gpu/texdraw.wgsl?raw';
+import cliffRuleWgsl from './gpu/cliffrule.wgsl?raw';
+import cliff4Wgsl from './gpu/cliff4.wgsl?raw';
 import { MAX_LEVELS, SEG_BASE, TCAP, TPP, segWgsl, type GpuNest } from './gpu/nest';
 import { TexGen, TEX_TILE_M } from './texgen';
 
@@ -16,6 +18,18 @@ import { TexGen, TEX_TILE_M } from './texgen';
  *  bands and the textured shading, then the draws; (round 27) the tiling textures and their entry points (?tex=2) */
 export function drawModuleCode(S: number, segP: number): string {
   return `const TCAP: u32 = ${TCAP}u;\n${segWgsl(S, segP, true)}\n${storeWgsl}\n${detailWgsl}\n${shadeWgsl}\n${drawWgsl}\n${texWgsl}\n${texDrawWgsl}`;
+}
+/** (round 32 step B1, ?cliff=4) the module variant with the cliff rule (gpu/cliffrule.wgsl) painted on the textured
+ *  sheets (gpu/cliff4.wgsl fsST4): the draw module plus those two files, so the default module's source is unchanged.
+ *  lv: the depth of the 16 m level; upl: 1/64 m units per local unit of it */
+export function cliffRuleCode(S: number, segP: number, lv: number, upl: number): string {
+  return `${drawModuleCode(S, segP)}\nconst CR_LV: u32 = ${lv}u;\nconst CR_UPL: f32 = ${upl.toFixed(1)};\n${cliffRuleWgsl}\n${cliff4Wgsl}`;
+}
+/** the depth of the 16 m level (the rule's coarse cells) for root columns of mpu metres and k children an axis */
+export function cliffRuleLevel(mpu: number, k: number): number {
+  const lv = Math.round(Math.log2(mpu / 16) / Math.log2(k));
+  if (lv < 0 || mpu / k ** lv !== 16) throw new Error(`?cliff=4 needs a 16 m level (root ${mpu} m, k ${k}): the cliff rule's cells are 16 m`);
+  return lv;
 }
 /** (round 27) the draw layouts' texture entries (?tex=2: tex.wgsl bindings 6-8, the fragment stage) */
 function texEntries(): GPUBindGroupLayoutEntry[] {
@@ -220,7 +234,14 @@ export class Renderer {
     if (this.cliffDbgBuilt) c.CLIFF_DBG = 1;
     return c;
   }
-  private texPipes: { box: GPURenderPipeline; sheet: GPURenderPipeline; sky: GPURenderPipeline } | null = null;
+  /** (round 32 step B1) ?cliff=4 at load: the textured sheets' variant with the cliff rule made beside the default one
+   *  (cliffRuleCode); `cliffRuleOn` picks it per frame (on by default when built) */
+  cliffRuleBuilt = false;
+  cliffRuleOn = false;
+  /** the variant's pipeline creation time, ms (made in parallel with the default textured pipelines) */
+  cliffRuleCompileMs = 0;
+  private cliffRuleLv = 1;
+  private texPipes: { box: GPURenderPipeline; sheet: GPURenderPipeline; sky: GPURenderPipeline; sheet4?: GPURenderPipeline } | null = null;
   private texCompile: Promise<void> | null = null;
   /** (round 20) the textured pipelines' creation time, ms (asynchronous, after the first frame) */
   texCompileMs = 0;
@@ -234,8 +255,17 @@ export class Renderer {
       const box: GPURenderPipelineDescriptor = { ...this.boxDesc(), label: 'nest draw boxes (textured)', fragment: { module: this.module, entryPoint: 'fsT', constants, targets: [{ format: this.format }, { format: 'rgba8unorm' }] } };
       const sd = this.sheetDesc();
       const sheet: GPURenderPipelineDescriptor = { ...sd, label: 'nest draw sheets (textured)', fragment: { module: this.module, entryPoint: 'fsST', constants, targets: [{ format: this.format }, { format: 'rgba8unorm' }] } };
-      this.texCompile = Promise.all([this.device.createRenderPipelineAsync(box), this.device.createRenderPipelineAsync(sheet), this.device.createRenderPipelineAsync(skyDesc(this.pl, this.module, this.format))]).then(([b, s, k]) => {
-        this.texPipes = { box: b, sheet: s, sky: k };
+      let p4: Promise<GPURenderPipeline | undefined> = Promise.resolve(undefined);
+      if (this.cliffRuleBuilt) {
+        this.cliffRuleLv = cliffRuleLevel(this.mpu, this.nest.k);
+        const m4 = this.device.createShaderModule({ label: 'nest draw (cliff rule)', code: cliffRuleCode(this.nest.S, this.nest.segP, this.cliffRuleLv, (64 * this.mpu) / this.nest.k ** this.cliffRuleLv) });
+        p4 = this.device.createRenderPipelineAsync({ ...sd, label: 'nest draw sheets (cliff rule)', fragment: { module: m4, entryPoint: 'fsST4', targets: [{ format: this.format }, { format: 'rgba8unorm' }] } }).then((p) => {
+          this.cliffRuleCompileMs = performance.now() - t0;
+          return p;
+        });
+      }
+      this.texCompile = Promise.all([this.device.createRenderPipelineAsync(box), this.device.createRenderPipelineAsync(sheet), this.device.createRenderPipelineAsync(skyDesc(this.pl, this.module, this.format)), p4]).then(([b, s, k, s4]) => {
+        this.texPipes = { box: b, sheet: s, sky: k, sheet4: s4 };
         this.texCompileMs = performance.now() - t0;
       });
     }
@@ -445,7 +475,7 @@ export class Renderer {
       const sp = this.smoothPipes();
       for (const lv of rest) {
         const p = begin(`L${lv.depth} sheets`);
-        p.setPipeline(t2 ? t2.sheet : tp ? tp.sheet : sp.sheet);
+        p.setPipeline(t2 ? t2.sheet : tp ? (this.cliffRuleOn && tp.sheet4 ? tp.sheet4 : tp.sheet) : sp.sheet);
         p.setBindGroup(0, this.bg!, [lv.depth * DU]);
         p.drawIndirect(this.nest.drawArgs, (MAX_LEVELS + lv.depth) * 16);
       }
@@ -588,7 +618,9 @@ export class Renderer {
       // (round 31, version 3) x a pixel's size per unit of distance (the level chosen by distance), y ?cliffPx=, z the
       // diagnostic mode (?cliffDbg=)
       // (cl2, cl3: the hashed split, sink share, mask period, gap share; the gap's depth: draw.wgsl DrawU)
-      new Float32Array(st, lv.depth * DU + 176, 12).set([this.pxAng, this.cliffPx, this.cliffDbg, this.cliffDropF, this.cliffHN, this.cliffSink, this.cliffPatch, this.cliffGap, this.cliffGapD, 0, 0, 0]);
+      // (cl3.yzw, round 32 step B1, ?cliff=4: the 16 m level's window gx, gy, n; n 0 when it has none: cliff4.wgsl)
+      const w16 = this.cliffRuleBuilt ? this.nest.wins[this.cliffRuleLv] : null;
+      new Float32Array(st, lv.depth * DU + 176, 12).set([this.pxAng, this.cliffPx, this.cliffDbg, this.cliffDropF, this.cliffHN, this.cliffSink, this.cliffPatch, this.cliffGap, this.cliffGapD, w16 ? w16.gx : 0, w16 ? w16.gy : 0, w16 ? w16.n : 0]);
     }
     this.device.queue.writeBuffer(this.ubuf, 0, st);
   }

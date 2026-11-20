@@ -28547,3 +28547,26 @@ further back; tame, dramatic15, coarse50, amp8half).
   slots are rare at 15 %); coarse50 shows 8 / 4 m stepped recesses with overhangs, lit, not dark caves; amp8half gives
   broader, calmer slabs.
 - Typecheck clean; test/unit/nested-cliffrule.test.ts 8/8 (only this file run).
+
+## 2026-11-20 — Nested scales lab, round 32 (step B1): the cliff rule in the fragment shader on the real 16 m columns
+
+**Why.** The riskiest part of putting step A's rule on screen: can the terrain fragment shader read the real stored 16 m
+heights round a pixel and get exactly the TS integers, within the existing bind groups, at a bearable cost? No march yet.
+
+**What.** src/nested/gpu/cliffrule.wgsl (the port, `cr` prefix; dTheta 0), src/nested/gpu/cliff4.wgsl (fsST4: heights
+from the 16 m level's pages per pixel, the rule painted as a plan-view map on the textured sheets), render.ts
+cliffRuleCode (a separate module variant built only with `?cliff=4`, so the default module's source is unchanged),
+test/gpu/nested-cliffrule-wgsl.test.ts (WGSL against TS on Dawn; NESTED_B1_COST=1 times compiles), the synthetic field
+moved to test/support/nested-cliffield.ts, scripts/nested-rB1-stills.mjs (stills, a one-time heights dump, the bench).
+
+**Measured.**
+- Exactness: synthetic (origin -20, -16; 215 split cells, 880,640 fine columns) and the real 16 m window (256 x 256 at
+  1072, 3072; 2,625 split cells, 10,752,000 fine columns): 0 mismatches in cell records and up / down.
+- Fragment storage buffers 5 before and after; no new buffer (the window in the uniform's unused cl3.yzw).
+- side2 GPU passes 5.11 / 5.02 / 5.12 ms off, 8.83 / 8.02 / 7.86 on (L2 sheets 3.29 -> 5.8, L1 1.19 -> 1.6); page frame
+  9.9 ms both (display-pinned).
+- Compile (Dawn, 7 alternating rounds, medians, two runs): default sheets 335 / 326 ms, fsST from the variant module
+  354 / 332, fsST4 588 / 623. In the page the variant pipeline took 1,650 ms; the load's worst frame was 6.7 s (NS-287).
+- Real terrain: 4 % of cells split; whole steep faces split cell after cell, each 16 m row its own band (stills
+  local/nested/rB1-side2-*, rB1-above-*). The side16 pair was shot with only the root open (the script now waits for the
+  16 m level).

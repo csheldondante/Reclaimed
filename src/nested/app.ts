@@ -165,6 +165,9 @@ export class App {
     this.render.cliff = cv === '1' || cv === '2' || cv === '3';
     this.render.cliffV = cv === '3' ? 3 : cv === '2' ? 2 : 1;
     this.render.cliffV3Built = cv === '3';
+    // (round 32 step B1) ?cliff=4: the cliff rule (gpu/cliffrule.wgsl) painted on the textured sheets, a module variant
+    // compiled only then (render.ts cliffRuleCode); the other cliff looks stay off
+    this.render.cliffRuleBuilt = this.render.cliffRuleOn = cv === '4';
     if (q.has('cliffPx')) this.render.cliffPx = Number(q.get('cliffPx'));
     // (version 3, step 4b) ?cliffDropF= the drop's growth per level; ?cliffHN= the children's hashed split (0..1)
     if (q.has('cliffDropF')) this.render.cliffDropF = Number(q.get('cliffDropF'));
