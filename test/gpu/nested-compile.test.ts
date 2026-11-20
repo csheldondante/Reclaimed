@@ -68,10 +68,13 @@ it('nested: both modules compile; every pipeline within its compile budget', asy
   await timed('genFill', () => device.createComputePipelineAsync({ layout: 'auto', compute: { module: gen, entryPoint: 'genFill' } }));
   // (round 26) the field mesh (?field= only, made after every other pipeline): its compute module (nest.wgsl +
   // field.wgsl) and its draw module (the draw module + fielddraw.wgsl)
-  const fieldC = await mod('field', `const TCAP: u32 = ${TCAP}u;\n${segWgsl(4, 64, false)}\n${storeWgsl}\n${nestWgsl}\n${fieldWgsl}`);
+  // (round 29: FLINE, ?fedge, compiled in; the default false, and fieldBake with it true timed as fieldBakeEdge)
+  const fieldC = await mod('field', `const TCAP: u32 = ${TCAP}u;\nconst FLINE: bool = false;\n${segWgsl(4, 64, false)}\n${storeWgsl}\n${nestWgsl}\n${fieldWgsl}`);
+  const fieldE = await mod('field edge', `const TCAP: u32 = ${TCAP}u;\nconst FLINE: bool = true;\n${segWgsl(4, 64, false)}\n${storeWgsl}\n${nestWgsl}\n${fieldWgsl}`);
   const fieldD = await mod('field draw', fieldDrawCode(4, 64));
   expect(errs, errs.join('\n')).toEqual([]);
   for (const e of ['fieldBake', 'fieldRelease', 'fieldDirClear', 'fieldDirBuild', 'fieldDirFinish', 'fieldFlip']) await timed(e, () => device.createComputePipelineAsync({ layout: 'auto', compute: { module: fieldC, entryPoint: e } }));
+  await timed('fieldBakeEdge', () => device.createComputePipelineAsync({ layout: 'auto', compute: { module: fieldE, entryPoint: 'fieldBake' } }));
   await timed('drawField', () => device.createRenderPipelineAsync(fieldDesc('auto', fieldD, 'bgra8unorm', 'fsField')));
   await timed('drawFieldTex', () => device.createRenderPipelineAsync(fieldDesc('auto', fieldD, 'bgra8unorm', 'fsFieldT')));
   await timed('drawFieldTex2', () => device.createRenderPipelineAsync(fieldDesc('auto', fieldD, 'bgra8unorm', 'fsFieldT2')));

@@ -28230,3 +28230,60 @@ remain. Still wrong in the field mesh: tall thin spires and long straight walls 
 NS-227's flattened extremum cells and the parent cells' staircase, NS-211), and on a near-vertical cliff the material
 reads as a coarse sand/stone checker of 0.5 m cells (the lookup's jitter cells, NS-207). The sheet and field runs land
 their windows apart, so the per-level pairs are not the same ground.
+
+## 2026-11-20 — Nested scales lab, round 29: the field mesh reads the stored edge line (`?fedge=1`, default 0)
+
+**Why.** The owner's diagnosis: incomplete columns carry no x-y direction, and the stored edge sample (a line and its
+normal, round 22) could give it. The field mesh built its field from vertical distances only, so a column cut by a rim
+counted as a full square. One question: with the field reading the line, does a carved rim follow it instead of the grid?
+
+**What.** NESTED_SCALES.md "Round 29 plan" / "As built (round 29)": a column's contribution uses the line on the run
+boundary it measures from; its own vertical distance on its centre's side, the across column's beyond, bounded by the
+horizontal distance to the line. Reference fieldsel.ts (runDistE, edgeUse, edgeMix, colContrib; support adds across
+columns); GPU field.wgsl (FLINE compiled in; run cache 2 words a boundary; fColLine, fAcross, swAddOnce).
+
+**Selection (exact).** test/unit/nested-field.test.ts now also runs every case on stacks with random edge samples (any
+angle, d over +-2, half the records): missing 0 everywhere. Its cost there: one level, warp 0, margin 0: 12.46 -> 16.32
+cells a column selected (crossed 12.32 -> 12.34); child in parent 49.6 -> 67.1. On the carve scenes 1.49 -> 2.25 (ball
+5.3, warp 0), 2.45 -> 3.25 (warp 0.45). In the page (whole windows, mostly uncut ground): levels 1-3 2.217 / 6.885 /
+2.729 -> 2.217 / 6.885 / 2.758.
+
+**The rim, reference (test/unit/nested-fedge.test.ts; flat ground, the mesh cut 0.75 columns under the top; distance to
+the true outline at that height, columns, max / RMS; fedge 0 -> 1):**
+- ball r 5.3, warp 0: 0.273 / 0.134 -> 0.227 / 0.104; warp 0.45: 0.596 / 0.236 -> 0.360 / 0.159
+- ball r 20.7, warp 0: 0.525 / 0.246 -> 0.378 / 0.124; warp 0.45: 0.714 / 0.359 -> 0.488 / 0.171
+- trench at 27 degrees (r 4), warp 0: 0.143 / 0.095 -> 0.141 / 0.090; warp 0.45: 0.354 / 0.154 -> 0.340 / 0.147
+- deeper (1.75 under the top) no gain: r 5.3 0.122 -> 0.106 RMS, r 20.7 0.111 -> 0.108 (max 0.261 -> 0.407): the line
+  holds the rim at the original top; below it the ball curves inward and the cut square forces a wall at the line.
+- with every crossing bisected along its cell edge instead of interpolated (measurement only): r 5.3 RMS 0.090, r 20.7
+  0.107 at fedge 1: the crossing rule is not what is left. What is left is one vertex a cell at the mean of its
+  crossings: a cell holding the wall and the floor (or the top) averages them, so the rim stays rounded by about half a
+  cell.
+- with no edge sample anywhere, fedge 1 is bit-identical to 0 (4,000 points, warp 0 and 0.45).
+
+**The rim, GPU (test/gpu/nested-fedge.test.ts, Dawn; level 1 by the field mesh, warp 0, the flattest root block; the
+baked quads read back once a scene):** the GPU's cut equals the reference's on the same read-back columns to 3 decimals
+in every case. Ball r 5.3 (ground spread 0.03): 0.255 / 0.117 -> 0.219 / 0.093; r 20.7 (spread 0.77): 0.554 / 0.207 ->
+0.426 / 0.117; trench (spread 0.22): 0.176 / 0.083 -> 0.187 / 0.076. fieldMiss 0. Whole-level rebuild (64 chunks, one
+submit, wall ms, back to back 0,1,0,1): ball 3.2-5.1 -> 4.3-6.2; trench 2.8-3.5 -> 3.5-3.7. In the page (level 3, whole
+window, 3 runs): 21-62 -> 23-76 ms (tex=0 pair 21-75 -> 15-73; noisy, the first of each variant includes other work).
+
+**Two rims crossing** (reference, r 5.3, centres 6.63 apart): elsewhere 0.130 -> 0.089 RMS; within 2 columns of the
+crossing points 0.177 -> 0.173 (max 0.43 both): no gain there. The second carve rewrites each column's one line with its
+own circle (at the column's top after the first carve), so near the crossing the columns hold one circle's line or the
+other's and the corner between the two arcs is not represented. In the stills (r29-cross) a small notch stays at each
+crossing and a faint ridge runs across the floor where the first bowl's line was overwritten.
+
+**Compile** (Dawn, the compile gate): fieldBake 2,189 ms with FLINE false (cold 4,577), fieldBakeEdge (FLINE true) 3,898
+(cold 7,652): +78 %, within the 5,600 budget warm (the cold run went over; the rerun passed).
+
+**Frame** (scripts/nested-r28-frame.mjs, the phone's three poses, ?field=1,2,3, back to back): total GPU 6.05 / 7.43 /
+7.21 ms -> 6.05 / 7.47 / 7.33; wall 9.9 both. The draw is unchanged (the mesh has as many triangles; only the bake reads
+the line).
+
+**Stills** (local/nested/r29-<rimAbove|rimGraze|trench|cross>-fedge_<0|1>[_tex_0].png, scripts/nested-r29-stills.mjs;
+each looked at; the windows pinned so each pair is the same ground; hole pixels 0 at every pose, both settings). From
+above, fedge 1's bowl rim is a crisper, rounder outline where fedge 0's is a soft band; but the wall shows small facets
+and bright shards on its shaded side (more so textured): the rim corner's cells, where the field's switch between two
+columns' distances meets the vertex's averaging. Grazing: nearly the same picture. The trench's upper wall is a straighter
+edge with small notches. Default stays 0.

@@ -182,6 +182,8 @@ export class App {
     }
     // (round 26) the field mesh on trial: ?field=<levels, comma separated> or finest (the ladder's last, ?depth); its dials
     // ?warp= (columns, 0 off), ?ffade= (columns), ?fmargin= (cells), ?fskirt= (columns), ?fjitter= (columns)
+    // (round 29) ?fedge=1: the field reads the stored edge lines (compiled into the field's module; also with the button)
+    this.nest.fieldOpt.edge = q.get('fedge') === '1';
     const fq = q.get('field');
     if (fq) {
       const levels = fq === 'finest' ? [this.maxDepth] : fq.split(',').map(Number);

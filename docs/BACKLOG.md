@@ -832,6 +832,25 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   level 1, NS-198). Smallest correct change (not made: it changes every level's look and needs the zoom gates run on
   it; out of this round's budget): at an extremum whose curvatures disagree keep a peaked parabola (aL, aR from the
   edge values clamped to the cell's mean side) instead of a flat one; mean-preserving, so restrict(enhance) is unchanged.
+- NS-230 (look, round 29) With `?fedge=1` the rim stays rounded by about half a cell: the field mesh's one vertex a cell
+  at the mean of its crossings averages the wall with the floor or top in the same cell (bisected crossings measured:
+  no gain). A vertex placed from the stored line and the cell's crossings' normals (2D or 3D dual contouring) is the next
+  step if the line is to show. Also the shaded wall's small shards at the rim corner (r29-rimAbove-fedge_1.png).
+- NS-231 (limit, round 29) One edge line a record: where two carved rims cross, each column holds one circle's line,
+  so the corner between the arcs is not represented (a notch at each crossing, a faint ridge where the first line was
+  overwritten; DEVLOG round 29). Also a stroke made of several edits rewrites a column's line with each later segment's
+  (the nearest ball of that segment, not the stroke's axis).
+- NS-232 (hack, round 29) FLINE's sweep cursors are capped at 48 (support 4 x 4 + 3 x 3 plus each one's across columns;
+  the worst case is 61); overflow is counted in ctl 14 (fieldMiss, 0 in every run), never silent. Make the across
+  columns part of a fixed grown support (6 x 6 + 5 x 5) or page the cursors if the line is kept.
+- NS-233 (limit, round 29) The line governs only the boundary it sits on, and a cut column's wall is vertical at the
+  line from its floor to the across column's top: below a ball's rim the true wall curves inward, so deeper than about
+  one column the fedge wall is no closer than without it (r 20.7 at 1.75 under the top: max 0.26 -> 0.41).
+  Finer levels deriving heights from the line (the parked round 24 work) and generated lines are out of this round.
+- NS-234 (hack, round 29, test only) test/gpu/nested-fedge.test.ts measures on the root's flattest block (no flat
+  ground in the GPU lab) and keeps cut points within 1.5 columns of the true outline (the ground beyond the rim crosses
+  the cut plane elsewhere); its proof is the equality with the reference on the same columns, the flat-ground numbers
+  are the unit test's.
 - NS-229 (perf, round 28) The boot gate's "every boot pipeline" is the first frame's pipelines and then derive's compile
   (7.6-9.1 s in Chrome, 2.4 s in Dawn), which grew with rounds 25 and 27; the 512 MB reload read 17,971 and 19,409 ms
   against 19,000 this round. Cut derive's compile (the generator and material code out of the layer pass's unrolled

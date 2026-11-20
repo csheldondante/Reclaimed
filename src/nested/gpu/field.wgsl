@@ -32,8 +32,15 @@ const FVW: u32 = 6u;
 const FVPP: u32 = 2090u;
 /** computing cell columns of a chunk at most (38 x 38: 16 + 1 + 2 x OVER + 1 with OVER <= k / 2 + 2 = 10 at k 16) */
 const FA_N: u32 = 1444u;
-/** support columns at most: 4 x 4 own + 3 x 3 parent */
-const FCUR: u32 = 25u;
+/** support columns at most: 4 x 4 own + 3 x 3 parent; (round 29, FLINE) + their across columns (a line's: at most the
+ *  6 x 6 ring round the own 4 x 4 and 5 x 5 round the parent's 3 x 3; counted in ctl 14 past it, never silent) */
+const FCUR: u32 = select(25u, 48u, FLINE);
+// (round 29, docs/design/NESTED_SCALES.md "Round 29 plan"; fieldsel.ts colContrib) FLINE, prepended by GpuNest.
+// prepareField from ?fedge: the field reads each run boundary's edge line. The run cache then keeps 2 words a boundary
+// (its top, its record's edge field), FRS; fColDist leaves the edge of the boundary it measured from in fLastE.
+const FRS: u32 = select(1u, 2u, FLINE);
+const FREACH: f32 = 1.5;
+var<private> fLastE: u32;
 
 // u for the field passes: a.w the level; r.x the bake slot; e.x mode (0 hash skip, 1 forced, 2 ring chunks only), e.y
 // rows a band | bands << 16, e.z band + 1 (0: one band), e.w field levels (bits 0-7) | margin << 8 | inside test << 12;
@@ -136,7 +143,10 @@ fn fRunsOf(lv: u32, X: i32, Y: i32, at: u32, write: bool) -> vec2<u32> {
       sn = fInside(nxt.y);
     }
     if (sn != s) {
-      if (write) { pgStore(fRunW(at + c), cur.x); }
+      if (write) {
+        pgStore(fRunW(at + c * FRS), cur.x);
+        if (FLINE) { pgStore(fRunW(at + c * FRS + 1u), cur.y & EDGE_MASK); }
+      }
       c++;
     }
   }
@@ -148,27 +158,36 @@ fn fRunAt(t: i32) -> vec3<u32> {
   return vec3<u32>(pgLoad(fRunW(u32(t) * 2u)), w1 & 0x7fffffffu, w1 >> 31u);
 }
 /** a column's vertical signed distance to its inside runs at z (negative inside), clamped to +-FFAR; 0 on a boundary */
+/** (round 29, FLINE) and leaves in fLastE the edge field of the boundary it measured from (the nearer; the upper on a
+ *  tie; 0: none; fieldsel.ts runDistE) */
 fn fColDist(lv: u32, X: i32, Y: i32, z: f32) -> f32 {
+  if (FLINE) { fLastE = 0u; }
   let t = fRunT(lv, X, Y);
   if (t >= 0) {
     let r = fRunAt(t);
     var s = r.z == 1u;
     var lo = -1e30;
     for (var j = 0u; j < r.y; j++) {
-      let b = bitcast<f32>(pgLoad(fRunW(r.x + j)));
+      let b = bitcast<f32>(pgLoad(fRunW(r.x + j * FRS)));
       if (z < b) {
         let d = min(min(z - lo, b - z), FFAR);
+        if (FLINE) {
+          let jj = select(j, j - 1u, j > 0u && z - lo < b - z);
+          fLastE = pgLoad(fRunW(r.x + jj * FRS + 1u));
+        }
         return select(d, -d, s);
       }
       lo = b;
       s = !s;
     }
     if (r.y == 0u) { return select(FFAR, -FFAR, s); }
+    if (FLINE) { fLastE = pgLoad(fRunW(r.x + (r.y - 1u) * FRS + 1u)); }
     return min(z - lo, FFAR);
   }
   let n = fCount(lv, X, Y);
   if (n == 0u) { return FFAR; }
   var lo = -1e30;
+  var le = 0u;
   var nxt = fRec(lv, X, Y, 0u);
   for (var j = 0u; j < n; j++) {
     let cur = nxt;
@@ -182,11 +201,14 @@ fn fColDist(lv: u32, X: i32, Y: i32, z: f32) -> f32 {
       let t = bitcast<f32>(cur.x);
       if (z < t) {
         let d = min(min(z - lo, t - z), FFAR);
+        if (FLINE) { fLastE = select(cur.y & EDGE_MASK, le, lo > -1e29 && z - lo < t - z); }
         return select(d, -d, s);
       }
       lo = t;
+      if (FLINE) { le = cur.y & EDGE_MASK; }
     }
   }
+  if (FLINE) { fLastE = le; }
   return min(z - lo, FFAR);
 }
 fn fClampCol(lv: u32, c: vec2<i32>) -> vec2<i32> {
@@ -206,10 +228,64 @@ fn fBil(lv: u32, I: vec2<i32>, f: vec2<f32>, z: f32) -> f32 {
     let wy = select(1.0 - t.y, t.y, o.y == 1u);
     if (wx * wy > 0.0) {
       let q = fClampCol(lv, i0 + vec2<i32>(o));
-      d += wx * wy * fColDist(lv, q.x, q.y, z);
+      if (FLINE) {
+        d += wx * wy * fColLine(lv, q, vec2<f32>(I - q) + f - 0.5, z);
+      } else {
+        d += wx * wy * fColDist(lv, q.x, q.y, z);
+      }
     }
   }
   return d;
+}
+/** (round 29, FLINE) the across column of a line (edge field e) seen from column q: the column holding the point
+ *  centre + sign(d) (|d| + 0.5) n (clamped as the field reads); x = 1 << 30 when the line does not count (none, or |d|
+ *  past FREACH) (fieldsel.ts edgeUse) */
+fn fAcross(lv: u32, q: vec2<i32>, e: u32) -> vec2<i32> {
+  if ((e & EDGE_ON) == 0u) { return vec2<i32>(1 << 30); }
+  let d = edgeD(e);
+  if (!(abs(d) < FREACH)) { return vec2<i32>(1 << 30); }
+  let a = edgeAng(e);
+  let g = select(-1.0, 1.0, d > 0.0) * (abs(d) + 0.5);
+  return fClampCol(lv, q + vec2<i32>(floor(0.5 + g * vec2<f32>(cos(a), sin(a)))));
+}
+/** (round 29, FLINE) column q's contribution at rel (the point minus q's centre), height z: a square cut by the line of
+ *  the boundary its vertical distance is measured from; its own distance on its centre's side, the across column's on
+ *  the other, bounded by the horizontal distance to the line (fieldsel.ts colContrib, edgeMix). One fColDist call site:
+ *  pass 0 the column, pass 1 the across column. */
+fn fColLine(lv: u32, q: vec2<i32>, rel: vec2<f32>, z: f32) -> f32 {
+  var c = q;
+  var D = 0.0;
+  var DA = 0.0;
+  var t = 0.0;
+  var own = true;
+  var cut = false;
+  for (var s = 0u; s < 2u; s++) {
+    let dd = fColDist(lv, c.x, c.y, z);
+    if (s == 1u) {
+      DA = dd;
+      break;
+    }
+    D = dd;
+    let e = fLastE;
+    let ac = fAcross(lv, q, e);
+    if (ac.x >= (1 << 29)) { break; }
+    let d = edgeD(e);
+    let a = edgeAng(e);
+    t = d - dot(vec2<f32>(cos(a), sin(a)), rel);
+    own = (t > 0.0) == (d > 0.0);
+    cut = true;
+    c = ac;
+  }
+  if (!cut) { return D; }
+  var dS = D;
+  var dO = DA;
+  if (!own) {
+    dS = DA;
+    dO = D;
+  }
+  let at = abs(t);
+  let m = select(sqrt(at * at + dO * dO), at, (dS < 0.0) != (dO < 0.0));
+  return select(min(dS, m), -min(-dS, m), dS < 0.0);
 }
 
 // ---- the warp (fortress terrainWarp, in column units; fieldsel.ts warpXY) -----------------------------------------------
@@ -284,14 +360,14 @@ fn fField(I: vec2<i32>, f: vec3<f32>) -> f32 {
 }
 
 // ---- the selection: the merge sweep over a cell column's support ------------------------------------------------------
-var<private> swLv: array<u32, 25>;
-var<private> swX: array<i32, 25>;
-var<private> swY: array<i32, 25>;
-var<private> swN: array<u32, 25>;
-var<private> swJ: array<u32, 25>;
-var<private> swS: array<bool, 25>;
-var<private> swB: array<f32, 25>;
-var<private> swO: array<u32, 25>;
+var<private> swLv: array<u32, FCUR>;
+var<private> swX: array<i32, FCUR>;
+var<private> swY: array<i32, FCUR>;
+var<private> swN: array<u32, FCUR>;
+var<private> swJ: array<u32, FCUR>;
+var<private> swS: array<bool, FCUR>;
+var<private> swB: array<f32, FCUR>;
+var<private> swO: array<u32, FCUR>;
 var<private> swCount: u32;
 var<private> swIn: u32;
 var<private> swPrev: f32;
@@ -306,7 +382,7 @@ fn swAdvance(i: u32) {
   // (B2 step 3: a cached column's next boundary is its next stored one)
   if (swO[i] != NONE) {
     if (j < n) {
-      var z = bitcast<f32>(pgLoad(fRunW(swO[i] + j)));
+      var z = bitcast<f32>(pgLoad(fRunW(swO[i] + j * FRS)));
       if (lv != u.a.w) { z = (z - zOrigin(u.a.w)) * f32(u.a.x); }
       swB[i] = z;
       swJ[i] = j + 1u;
@@ -356,6 +432,14 @@ fn swAdd(lv: u32, c: vec2<i32>) {
   swAdvance(i);
   swCount = i + 1u;
 }
+/** (round 29) swAdd unless the column is a cursor already, or c is fAcross's none */
+fn swAddOnce(lv: u32, c: vec2<i32>) {
+  if (c.x >= (1 << 29)) { return; }
+  for (var i = 0u; i < swCount; i++) {
+    if (swLv[i] == lv && swX[i] == c.x && swY[i] == c.y) { return; }
+  }
+  swAdd(lv, c);
+}
 /** the sweep over cell column (X, Y)'s support set up */
 fn swInit(X: i32, Y: i32) {
   let L = u.a.w;
@@ -397,6 +481,28 @@ fn swInit(X: i32, Y: i32) {
     let p1 = vec2<i32>(ceil((vec2<f32>(f32(X), f32(Y)) + b) / k - 0.5));
     for (var y = p0.y; y <= p1.y; y++) {
       for (var x = p0.x; x <= p1.x; x++) { swAdd(L - 1u, fClampCol(L - 1u, vec2<i32>(x, y))); }
+    }
+  }
+  // (round 29, FLINE) every support column's across columns (each boundary's line in reach): a contribution's sign is
+  // its own or its across column's vertical distance's, so with these the sweep stays exact (fieldsel.ts support)
+  if (FLINE) {
+    let n0 = swCount;
+    for (var i = 0u; i < n0; i++) {
+      let lv = swLv[i];
+      let q = vec2<i32>(swX[i], swY[i]);
+      let t = fRunT(lv, q.x, q.y);
+      if (t >= 0) {
+        let r = fRunAt(t);
+        for (var j = 0u; j < r.y; j++) { swAddOnce(lv, fAcross(lv, q, pgLoad(fRunW(r.x + j * FRS + 1u)))); }
+      } else {
+        let n = fCount(lv, q.x, q.y);
+        for (var j = 0u; j < n; j++) {
+          let cur = fRec(lv, q.x, q.y, j);
+          var sn = false;
+          if (j + 1u < n) { sn = fInside(fRec(lv, q.x, q.y, j + 1u).y); }
+          if (sn != fInside(cur.y)) { swAddOnce(lv, fAcross(lv, q, cur.y & EDGE_MASK)); }
+        }
+      }
     }
   }
   var low = 1e30;
@@ -897,7 +1003,7 @@ fn fieldBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_in
     let c = fRunCol(t);
     let r = fRunsOf(u32(c.x), c.y, c.z, 0u, false);
     pgStore(fRunW(t * 2u + 1u), r.x | (r.y << 31u));
-    tb += r.x;
+    tb += r.x * FRS;
   }
   let rs = wgScan(li, tb);
   if (li == 0u) {
@@ -920,7 +1026,7 @@ fn fieldBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_in
     let n = pgLoad(fRunW(t * 2u + 1u)) & 0x7fffffffu;
     pgStore(fRunW(t * 2u), toff);
     fRunsOf(u32(c.x), c.y, c.z, toff, true);
-    toff += n;
+    toff += n * FRS;
   }
   storageBarrier();
   workgroupBarrier();

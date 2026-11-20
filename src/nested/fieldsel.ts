@@ -12,11 +12,24 @@
 // boundary, every sample has that state's sign (a weighted mean of same-sign values), so the cell cannot be crossed.
 // One merge sweep over the support's boundaries gives the candidate set (where they disagree, and the boundaries).
 
+//
+// Round 29 (docs/design/NESTED_SCALES.md "Round 29 plan"), `fedge`: a column's contribution reads the edge line stored on
+// the run boundary its vertical distance is measured from (edge.ts): the column is a square cut by that line, its own
+// vertical distance on its centre's side, the ACROSS column's on the other, combined with the horizontal distance to the
+// line (edgeMix). The selection's support then holds every support column's across columns too.
+
+import { EDGE_MASK, edgeDec } from './edge';
+
 export const FAR = 3;
-/** a column's partition (bottom up): each record's top and material; the first record is open downward, air above */
+/** (round 29) a line counts for its column only within this distance of the centre, columns (past it no point the
+ *  column's bilinear weight reaches, |p - centre| < sqrt 2 per the 4 nearest, lies across it) */
+export const EDGE_REACH = 1.5;
+/** a column's partition (bottom up): each record's top and material; the first record is open downward, air above.
+ *  (round 29) a record's edge field: `edge[j]` (the oracle's parallel array) or the material word's bits 8-29 (GPU) */
 export interface PCol {
   top: ArrayLike<number>;
   mat: ArrayLike<number>;
+  edge?: ArrayLike<number>;
 }
 /** which records count as inside (round 26: solid; water later is a different test, same mesher) */
 export type Inside = (m: number) => boolean;
@@ -26,19 +39,52 @@ export const solidInside: Inside = (m) => (m & 0xff) !== 0;
 export interface Runs {
   bottomIn: boolean;
   b: number[];
+  /** (round 29) per boundary, the edge field (bits 8-29) of the record whose top it is (0: none) */
+  e?: number[];
 }
 export function runsOf(c: PCol | null, inside: Inside): Runs {
   const b: number[] = [];
-  if (!c || c.mat.length === 0) return { bottomIn: false, b };
+  const e: number[] = [];
+  if (!c || c.mat.length === 0) return { bottomIn: false, b, e };
   const bottomIn = inside(c.mat[0]);
   let s = bottomIn;
   for (let j = 0; j < c.mat.length; j++) {
     // (above record j: record j + 1, or air)
     const next = j + 1 < c.mat.length ? inside(c.mat[j + 1]) : false;
-    if (next !== s) b.push(c.top[j]);
+    if (next !== s) {
+      b.push(c.top[j]);
+      e.push(((c.edge?.[j] ?? 0) | c.mat[j]) & EDGE_MASK);
+    }
     s = next;
   }
-  return { bottomIn, b };
+  return { bottomIn, b, e };
+}
+/** (round 29) runDist and the edge field of the boundary it is measured from (the nearer; the upper on a tie; 0: none) */
+export function runDistE(r: Runs, z: number): [number, number] {
+  const n = r.b.length;
+  const ed = (i: number) => r.e?.[i] ?? 0;
+  if (n === 0) return [runDist(r, z), 0];
+  let lo = -Infinity;
+  for (let i = 0; i < n; i++) {
+    if (z < r.b[i]) return [runDist(r, z), i > 0 && z - lo < r.b[i] - z ? ed(i - 1) : ed(i)];
+    lo = r.b[i];
+  }
+  return [runDist(r, z), ed(n - 1)];
+}
+/** (round 29) the line's use for one column: none (null), or its decoded line, the across column's offset (global
+ *  columns) and whether the column's centre is inside the brush */
+export function edgeUse(e: number): { nx: number; ny: number; d: number; ax: number; ay: number } | null {
+  const s = edgeDec(e);
+  if (!s || !(Math.abs(s.d) < EDGE_REACH)) return null;
+  const g = (s.d > 0 ? 1 : -1) * (Math.abs(s.d) + 0.5);
+  return { nx: s.nx, ny: s.ny, d: s.d, ax: Math.floor(0.5 + g * s.nx), ay: Math.floor(0.5 + g * s.ny) };
+}
+/** (round 29) a cut column's contribution: dS the vertical distance of p's side, dO the other side's, t p's horizontal
+ *  distance to the line. A wall at the line (signs differ): |t| bounds it; else the other side's surface, hypot(t, dO) */
+export function edgeMix(dS: number, dO: number, t: number): number {
+  const at = Math.abs(t);
+  const m = dS < 0 !== dO < 0 ? at : Math.hypot(at, dO);
+  return dS < 0 ? -Math.min(-dS, m) : Math.min(dS, m);
 }
 /** vertical signed distance at z (negative inside), clamped to +-FAR; on a boundary 0 (outside) */
 export function runDist(r: Runs, z: number): number {
@@ -103,15 +149,33 @@ export interface FieldSpec {
   warp: number;
   /** the fade's width, columns (w = 0 within 1 column of the window edge, 1 from 1 + fade in) */
   fade: number;
+  /** (round 29) read the stored edge lines (?fedge=1) */
+  fedge?: boolean;
 }
 const clampI = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
-function bil(lv: FieldLevel, x: number, y: number, z: number): number {
+/** (round 29) the across column of a support column's line (clamped as the field reads it) */
+const clampCol = (lv: FieldLevel, X: number, Y: number): [number, number] => [clampI(X, lv.gx, lv.gx + lv.n - 1), clampI(Y, lv.gy, lv.gy + lv.n - 1)];
+/** (round 29) column (X, Y)'s contribution at point (x, y, z) with its line read (edgeUse, edgeMix) */
+export function colContrib(lv: FieldLevel, X: number, Y: number, x: number, y: number, z: number): number {
+  const [D, e] = runDistE(lv.runs(X, Y), z);
+  const u = edgeUse(e);
+  if (!u) return D;
+  // (t > 0: p on the brush's inside of the line)
+  const t = u.d - (u.nx * (x - (X + 0.5)) + u.ny * (y - (Y + 0.5)));
+  const [ax, ay] = clampCol(lv, X + u.ax, Y + u.ay);
+  const DA = runDist(lv.runs(ax, ay), z);
+  return t > 0 === u.d > 0 ? edgeMix(D, DA, t) : edgeMix(DA, D, t);
+}
+function bil(lv: FieldLevel, x: number, y: number, z: number, fedge = false): number {
   const i = Math.floor(x - 0.5);
   const j = Math.floor(y - 0.5);
   const fx = x - 0.5 - i;
   const fy = y - 0.5 - j;
   // (columns outside the window clamped to it: the root's edge; a child never reads outside, w = 0 there)
-  const c = (X: number, Y: number) => runDist(lv.runs(clampI(X, lv.gx, lv.gx + lv.n - 1), clampI(Y, lv.gy, lv.gy + lv.n - 1)), z);
+  const c = (X: number, Y: number) => {
+    const [cx, cy] = clampCol(lv, X, Y);
+    return fedge ? colContrib(lv, cx, cy, x, y, z) : runDist(lv.runs(cx, cy), z);
+  };
   let d = 0;
   if (fx < 1 && fy < 1) d += (1 - fx) * (1 - fy) * c(i, j);
   if (fx > 0 && fy < 1) d += fx * (1 - fy) * c(i + 1, j);
@@ -132,10 +196,10 @@ export function fieldAt(s: FieldSpec, x: number, y: number, z: number): number {
   const [qx, qy] = warpXY(x, y, z, s.warp);
   const w = fadeW(s, qx, qy);
   let f = 0;
-  if (w > 0) f += w * bil(s.own, qx, qy, z);
+  if (w > 0) f += w * bil(s.own, qx, qy, z, s.fedge);
   if (w < 1 && s.parent) {
     const P = s.parent;
-    const dp = bil(P.lv, qx / P.k, qy / P.k, z / P.k + P.zo) * P.k;
+    const dp = bil(P.lv, qx / P.k, qy / P.k, z / P.k + P.zo, s.fedge) * P.k;
     f += (1 - w) * clampI(dp, -FAR, FAR);
   }
   return f;
@@ -179,6 +243,26 @@ export function support(s: FieldSpec, X: number, Y: number): { own: [number, num
   };
   const own = wantOwn ? cols(a[0], b[0], a[1], b[1], o, !s.parent) : [];
   const parent = wantPar && s.parent ? cols(a[0] / s.parent.k, b[0] / s.parent.k, a[1] / s.parent.k, b[1] / s.parent.k, s.parent.lv, true) : [];
+  if (s.fedge) {
+    // (round 29) each column's across columns (a line on any of its boundaries, in reach): a contribution's sign is its
+    // own or its across column's vertical distance's, so with these the sweep stays exact
+    const across = (lst: [number, number][], lv: FieldLevel) => {
+      const seen = new Set(lst.map(([x, y]) => `${x},${y}`));
+      for (const [x, y] of lst.slice())
+        for (const e of lv.runs(x, y).e ?? []) {
+          const u = edgeUse(e);
+          if (!u) continue;
+          const c = clampCol(lv, x + u.ax, y + u.ay);
+          const key = `${c[0]},${c[1]}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            lst.push(c);
+          }
+        }
+    };
+    across(own, o);
+    if (s.parent) across(parent, s.parent.lv);
+  }
   return { own, parent };
 }
 /** the candidate cells of cell column (X, Y): ranges [k0, k1] (inclusive, ascending, disjoint), with `margin` cells more

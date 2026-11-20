@@ -50,6 +50,8 @@ export const BUDGET_MS: Record<string, number> = {
   // field draws 199 / 352, the rest under 200)
   // (B2: 3,696 ms with the flat candidate pass, the shared samples and the run cache)
   fieldBake: 5600,
+  // (round 29) fieldBake with FLINE (?fedge=1): the field reads the stored edge lines
+  fieldBakeEdge: 5600,
   fieldRelease: 400,
   fieldDirClear: 400,
   fieldDirBuild: 400,

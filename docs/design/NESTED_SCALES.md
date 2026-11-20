@@ -1628,6 +1628,36 @@ the sheets on the desktop at the phone's poses).
   last second's mean and worst. `?tex=2`'s textures are generated when first wanted.
 - *Found, not changed:* the 2 m level's square pillars are derive's limiter at extremum cells (NS-227); the material
   checkerboards are per-column decisions (NS-216); the textured shading is the largest cost (NS-226).
+
+**Round 29 plan (written before the code): the field reads the stored edge line, `?fedge=0|1` (default 0).** The owner:
+"columns do not hold x-y plane directional data for incomplete columns ... store the 2d edge crossing points and normal".
+- *Which line.* A column's contribution at height z uses the edge sample of the run boundary its vertical distance is
+  measured from (the nearest; a boundary is a record's top), so a rim's line governs the rim's heights only.
+- *The cut square.* The line splits the column: on the side holding the column's centre (d > 0: inside the brush; d <= 0:
+  outside) the column's own vertical distance D_own applies; across it the ACROSS column's, the one holding the point
+  centre + sign(d) (|d| + 0.5) n (brief: "the column the normal points to"; generalised so an outside column, d < 0,
+  looks inward, and a line up to 1.5 columns off still lands across it). Only |d| < 1.5 counts (past that no point the
+  column's bilinear weight reaches can be across).
+- *The distance.* p's side S, the other O, t its horizontal distance to the line: signs of D_S and D_O differ (a wall
+  stands at the line at this height): sign(D_S) min(|D_S|, |t|); same sign: sign(D_S) min(|D_S|, hypot(t, D_O)). Both
+  are continuous across the line and 0 on the wall, so the 4 columns round a rim agree on where it stands.
+- *Selection.* Each contribution's sign is D_own's or D_across's, so adding every support column's across columns (each
+  boundary's line in reach) to the sweep keeps it exact; the brute walk test is extended to edge-carrying stacks.
+- *Switch.* compiled in (`const FLINE`), so with `?fedge=0` the field is the old expressions, bit for bit.
+
+**As built (round 29).** As planned; default `?fedge=0`. Measurements in DEVLOG round 29.
+- *Sources.* fieldsel.ts runDistE, edgeUse, edgeMix, colContrib, EDGE_REACH, FieldSpec.fedge, support's across columns;
+  field.wgsl FLINE (prepended by GpuNest.prepareField from fieldOpt.edge, App ?fedge), FRS (the run cache keeps 2 words
+  a boundary: top, edge field), fLastE (fColDist leaves the measured boundary's edge), fColLine (one fColDist call site:
+  the column, then its across), fAcross, swAddOnce; FCUR 48 cursors with FLINE (overflow counted in ctl 14, 0 in every
+  run). Tests: test/unit/nested-field.test.ts (edge stacks), test/unit/nested-fedge.test.ts (the rim, the reference
+  mesher in test/support/nested-fieldref.ts), test/gpu/nested-fedge.test.ts (the GPU's baked quads against it).
+- *Answer.* The rim follows the line better just under the top (RMS -22 % at r 5.3, -50 % at r 20.7; GPU equal to the
+  reference), not deeper (the line is the rim's, not the wall's), and not where two rims cross (one line a record). What
+  bounds it now is the mesher: one vertex a cell at the mean of its crossings rounds the rim corner by about half a cell
+  (bisected crossings changed nothing). Cost: bake +30-60 %, fieldBake compile +78 %, frame unchanged.
+- *Departures.* The across column is the one holding centre + sign(d) (|d| + 0.5) n (the brief: "the column the normal
+  points to"): an outside column (d < 0) looks inward, and a line more than half a column off still lands across it.
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

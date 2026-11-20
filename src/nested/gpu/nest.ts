@@ -414,8 +414,8 @@ export class GpuNest {
   /** levels drawn by the field mesh (bit L); 0: none, and nothing of it is made */
   fieldMask = 0;
   /** the field's dials (set before the first field bake): warp and fade in columns, the selection's margin in cells, the
-   *  skirt's depth in columns */
-  readonly fieldOpt = { warp: 0.45, fade: 4, margin: 0, skirt: 3, cellNormals: false, stop: 0 };
+   *  skirt's depth in columns; (round 29) edge: the field reads the stored edge lines (?fedge=1; set before prepareField) */
+  readonly fieldOpt = { warp: 0.45, fade: 4, margin: 0, skirt: 3, cellNormals: false, stop: 0, edge: false };
   /** the field's page list (8 counts, then per level `cap` entries of 3 words) and its draw arguments (a level 16 bytes) */
   fieldDir: GPUBuffer | null = null;
   fieldArgs: GPUBuffer | null = null;
@@ -521,7 +521,8 @@ export class GpuNest {
    *  page in the background, or at once in tests); nothing is drawn or baked by it until a mask is set */
   prepareField(): void {
     if (this.fieldArgs) return;
-    const module = this.device.createShaderModule({ label: 'nest field', code: `const TCAP: u32 = ${TCAP}u;\n${segWgsl(this.S, this.segP, false)}\n${storeWgsl}\n${nestWgsl}\n${fieldWgsl}` });
+    // (round 29) ?fedge: the field reads the stored edge lines, compiled in (FLINE false: the round 28 expressions)
+    const module = this.device.createShaderModule({ label: 'nest field', code: `const TCAP: u32 = ${TCAP}u;\nconst FLINE: bool = ${this.fieldOpt.edge};\n${segWgsl(this.S, this.segP, false)}\n${storeWgsl}\n${nestWgsl}\n${fieldWgsl}` });
     for (const e of GpuNest.FIELD_PIPES) this.specs[e] = { label: `nest ${e}`, layout: e.startsWith('fieldDir') ? this.plDir : this.plMain, compute: { module, entryPoint: e } };
     if (!this.asyncPipes) for (const e of GpuNest.FIELD_PIPES) this.pipes[e] = this.device.createComputePipeline(this.specs[e]!);
     // (round 28: an indexed indirect draw a level, 8 words apart)
