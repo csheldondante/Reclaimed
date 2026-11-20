@@ -646,6 +646,14 @@ fn shCol3(si: ShadeIn, k: i32, steps: i32, drop: u32, pxAng: f32, pxT: f32, dbg:
   if (dbg == 2u) { r.dbg = l; }
   if (dbg == 3u) { r.dbg = select(select(select(2, 1, abs(hn.x) > 0.5), 0, hn.z > 0.5), 3, back); }
   if (dbg == 4u) { r.dbg = i32(round((tops[0] + zAbs) * 2.0)) % 6 + 6; }
+  // (4c, NS-256) 9 the hit cell's hash mod 6 (one colour over many pixels = one cell), 10 |t| along the ray in quarter
+  // level-0 cells (0..5), 11 level-0 cells crossed (0..5), 12 march steps / 8 (0..5), 13 the hit's depth under its cell's
+  // top in that cell's widths (0..5); 14, 15 below
+  if (dbg == 9u) { r.dbg = i32(key[l] % 6u); }
+  if (dbg == 10u) { r.dbg = min(i32(abs(t) * 4.0), 5); }
+  if (dbg == 11u) { r.dbg = min(n0, 5); }
+  if (dbg == 12u) { r.dbg = min(its / 8, 5); }
+  if (dbg == 13u) { r.dbg = clamp(i32((tops[l] - v.z * t) / max(min(bhi[l].x - blo[l].x, bhi[l].y - blo[l].y), 1e-6)), 0, 5); }
   // ---- the hit, as version 2, at the hit's level; the finest level's lines and tint grown in by its share
   // (the hit cell's extent along the face's tangent: cells have hashed widths with ?cliffHN=)
   let xFace = abs(hn.x) > 0.5;
@@ -675,6 +683,9 @@ fn shCol3(si: ShadeIn, k: i32, steps: i32, drop: u32, pxAng: f32, pxT: f32, dbg:
   // (inside or at the back of a notch: recessed, a further 0.6 on the depth darkening)
   let recess = select(1.0, 0.6, inRec);
   r.ao = select((1.0 - 0.6 * edge) * recess * select(mix(1.0, 0.5, smoothstep(0.0, 1.0, abs(t))), 1.0, dbg == 7u), 1.0, dbg == 5u);
+  // (4c) 14 the columns' weight w in sixths, 15 the occlusion ao in sixths
+  if (dbg == 14u) { r.dbg = min(i32(w * 6.0), 5); }
+  if (dbg == 15u) { r.dbg = min(i32(r.ao * 6.0), 5); }
   return r;
 }
 

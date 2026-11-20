@@ -28446,3 +28446,43 @@ not yet (4c).
 
 **Reading.** Default view (mask on) reads as nested columns with varied depth; full fine drops bring back black ovals
 (NS-256); notches are small at side2. Limits NS-256..NS-260.
+
+## 2026-11-20 — Nested scales lab, round 31 (version 3, step 4c): the black ovals diagnosed; frame time; NS-260 measured
+
+**Why.** Step 4c is diagnosis and measurement, no new looks: the black ovals of NS-256, the frame-time numbers owed to
+the owner, whether the default pipelines pay for version 3's code (NS-260), and a self-test run (none since round 28).
+
+**What.** Debug modes 9-15 in shCol3 (behind ?cliffDbg=, CLIFF_DBG; flat unlit colours from mode 9): the hit cell's
+hash, |t|, level-0 crossings, steps, depth under the top, the columns' weight w, the occlusion. test/gpu/
+nested-v3-cost.test.ts (on demand: NESTED_V3_COST=1) times the default textured pipelines with and without the version 3
+section. Nothing in the look changed.
+
+**Measured.**
+- Ovals (side2, `?cliffPatch=0&cliffDropF=2`; stills local/nested/r31d-side2-*.png, crop r31d-side2-ovals-crop.png):
+  mode 14 (w) is full exactly inside each oval and near 0 elsewhere; hit kind, cell, steps, crossings show nothing at the
+  ovals (no misses, no cap). Cause: the steepness gate shSteep(geometric normal, cliffT 2, fade 1.6..2.5) on a wall whose
+  slope sits near the threshold: the column look comes fully on only on the bumps' steeper sides, where the faces seen
+  turn from the sun (mode 5 black) and are darkened by depth. `?cliffT=1`: w full everywhere, no ovals. Not fixed: which
+  threshold, band or fill is a look decision.
+- Frame time (desktop proxy, 960 x 640, dpr 1, alternating 3 s each, 3 rounds; frame ms / GPU passes ms):
+
+  | view | cliff=0 | cliff=2 | cliff=3 | cliff=3 gap 30 dropF 2 |
+  |---|---|---|---|---|
+  | side16 | 9.9 / 3.17 3.39 3.18 | 9.9 / 3.20 3.40 3.32 | 9.9 / 3.48 3.53 3.63 | 9.9 / 3.59 3.53 3.79 |
+  | side2 | 9.9 / 4.94 5.68 5.37 | 9.9 / 6.28 6.10 6.19 | 9.9 (10.5 once) / 6.47 7.22 6.43 | 9.9 / 6.75 6.62 6.39 |
+
+  The page frame is pinned at the display rate; the GPU difference is in the finest level's sheets (side2 L2 sheets 4.15
+  off, 4.94 v2, 5.29 v3, 5.34 v3 gap). The page was loaded with ?cliff=3 (V3 compiled in) for every state. First switch
+  to cliff=3 at side2 (cliff off from load): worst frame 10.7 ms, no hitch. Two minutes at side2, cliff=3, the camera
+  sweeping (D 1.2-2.4, along +-0.6): 3 levels throughout, no stall (frames advanced every 50 ms poll), worst frame 88 ms,
+  p99 10.5 ms for 90 s then 40-43 ms in the last 30 s (the closest part of the sweep), never over 100 ms. (Two first
+  attempts "hung": the script returned Object.assign's result, the whole render object, to puppeteer; fixed in the
+  script, not the page.)
+- NS-260 (Dawn, 7 rounds alternating, a fresh device each, two runs): medians default sheetsTex 320 / 316 ms with the real
+  module, 278 / 283 with the version 3 section stubbed; boxesTex 321 / 311 against 279 / 278; with CLIFF_V3 359-369 /
+  356-363. So the default pipelines pay about 35-40 ms (12 %) for version 3's source although the override skips it.
+  Within budget at the median; nested-compile.test.ts failed 2 of 3 runs today at the 400 ms floor (drawSheetsTex 404-407,
+  drawBoxesTex 405, drawFieldTex 612 once), the run-to-run noise of NS-253 plus this cost.
+- Typecheck clean; unit nested-* 91/91. Self-test (nested-selftest.mjs, port 5461): killed at the 10 minute limit while
+  in the smooth half ("smooth coverage in the rim shaft" the last step logged), no pass/fail line; no page errors besides
+  the usual 404, no odd edges or holes in the steps it logged. Not retried.

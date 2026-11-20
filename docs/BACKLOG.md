@@ -910,6 +910,10 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   tell columns apart, step 4b.)
 - NS-256 (look, round 31) `?cliff=3` with full fine drops (`?cliffPatch=0`, any `?cliffDropF=`) shows smooth black
   ovals at side2 where the smooth shading has its dark bump sides; with the mask on they mostly go. Not diagnosed (4c).
+  (4c: diagnosed, ?cliffDbg=14: the steepness gate. The wall's geometric slope sits near ?cliffT=2, so the column weight
+  w is full only on the bumps' steeper sides; there the faces turned from the sun show, unlit and depth-darkened. Not a
+  march fault. ?cliffT=1 removes them. Open: a look choice for the owner (threshold, fade band, or a fill on faces turned
+  from the sun); still local/nested/r31d-side2-ovals-crop.png)
 - NS-257 (hack, round 31) The fine-detail mask is evaluated once per level-0 cell (heights stay functions of cells), so
   it steps by small amounts between neighbouring 16 m columns instead of varying continuously inside one.
 - NS-258 (limit, round 31) Notches start only at a side hit of a cell entered by crossing at the finest level: the start
@@ -919,6 +923,17 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
 - NS-260 (test, round 31) Compile, Dawn, after 4b: one run default textured boxes / sheets 473 / 534 (over 400) with
   V3 597 / 609 (budget 600) and Tex2 normal, the next run all within; not settled whether the V3 code costs the default
   pipelines anything (they should not contain it).
+  (4c: measured, test/gpu/nested-v3-cost.test.ts: they do. Median default sheets / boxes 316-321 / 311-321 ms with the
+  real module against 278-283 / 278-279 with the version 3 section stubbed, 7 rounds x 2 runs: ~35-40 ms, 12 %. A fix
+  would build the textured draws' module text with the version 3 section only under ?cliff=3: a second draw module,
+  a structural choice not made here)
+- NS-261 (test, round 31) nested-selftest.mjs did not finish in 10 minutes (4c, its first run since round 28): killed in
+  the smooth half after "smooth coverage in the rim shaft", no failures logged up to there. Either it grew past 10
+  minutes or a later step stalls; split it or time its steps.
+- NS-262 (test, round 31) nested-compile.test.ts failed 2 of 3 runs in 4c at the 400 ms floor (drawSheetsTex 404-407,
+  drawBoxesTex 405, drawFieldTex 612 once) while their medians alone are ~320: the noise of NS-253 plus NS-260's cost.
+- NS-263 (limit, round 31) The 4c frame times are the desktop proxy with the page pinned at the display rate (9.9 ms in
+  every state): only the GPU pass times separate the looks (side2: 5.0-5.7 off, 6.1-6.3 v2, 6.4-7.2 v3). No phone bench.
 - NS-253 (test, round 31) Compile times swing 1.5-2.5x between runs on this machine (drawFieldTex 295-820 ms with no
   change); version 3's textured variants (drawBoxesTexV3 / drawSheetsTexV3) got a 600 ms budget from 341-457 / 401-535 ms.
 - NS-254 (hack, round 31) The pixel's size per unit of distance (draw uniform cl.x) is written by the app each frame

@@ -1789,6 +1789,28 @@ Stills local/nested/r31b-side2-* / -side16-* (base, dropF1, dropF2, mask, sink-s
 notch rewrite) and local/nested/r31c-*-gap0 / gap15 / gap30 (notches, mask 4, dropF 2). With the mask off and full fine
 drops (base, dropF2) black ovals return at side2 (4c); with the mask on the default view reads well; notches at side2
 are small lit ledges and dark slots, subtle at this distance.
+
+**As built (round 31, version 3, step 4c: diagnosis and measurement; no look changed).** More `?cliffDbg=` modes (flat,
+unlit colours): 9 the hit cell's hash, 10 |t| along the ray, 11 level-0 cells crossed, 12 march steps / 8, 13 the hit's
+depth under its cell's top, 14 the columns' weight w, 15 the occlusion ao.
+- The black ovals (NS-256) are not a march fault. Mode 14 at side2 (`?cliffPatch=0&cliffDropF=2`) shows w, the columns'
+  weight, near 0 over most of the wall and full exactly inside each oval, with smooth rings between: w is shSteep of the
+  pixel's geometric normal, and this wall's slope sits near the threshold (`?cliffT=2`, faded in over 1.6..2.5), so the
+  column look switches fully on only where the real 2 m geometry's bumps steepen the surface. Inside, the faces seen are
+  the -x faces turned from the sun (mode 5: unlit) with depth darkening, hence dark; outside, the sheet keeps its own
+  normal. Hit kinds, cells, steps and level-0 crossings show nothing special at the ovals (no misses, no iteration cap).
+  With `?cliffT=1` the weight is full over the whole wall and the ovals are gone (one even column wall). The fix is a
+  look choice (the threshold or its fade band, or a gentler fill on faces turned from the sun), not made here.
+  Stills local/nested/r31d-side2-ovals-crop.png (plain / w / cliffT 1), r31d-side2-*.png per mode.
+- Frame time (desktop, 960 x 640, ?gputime=1, alternating 3 s each, 3 rounds; DEVLOG round 31 4c): the page's frame is
+  pinned at ~9.9 ms (the display rate) in every state; the GPU passes at side2 5.0-5.7 (off), 6.1-6.3 (v2), 6.4-7.2 (v3),
+  6.4-6.8 ms (v3 with gap 30 and dropF 2); at side16 3.2-3.4 / 3.2-3.4 / 3.5-3.6 / 3.5-3.8. No hitch on the first switch
+  to v3 (worst frame 10.7 ms); two minutes at side2 with the camera sweeping: no stall, worst frame 88 ms.
+- NS-260: the default textured pipelines DO carry version 3's cost: on Dawn (test/gpu/nested-v3-cost.test.ts, on demand)
+  the default sheets / boxes pipelines compile in a median 316-321 / 311-321 ms with the real module and 278-283 / 278-279
+  ms with the version 3 section replaced by a stub (two runs of 7 rounds, a fresh device each): about 35-40 ms (12 %).
+  The override (CLIFF_V3 false) skips the call at run time but the code is still compiled. Within the 400 ms floor in the
+  medians; single runs still spike to 600-730 ms (NS-253).
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

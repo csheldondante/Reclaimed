@@ -730,7 +730,8 @@ fn texOut(q: vec3<f32>, zo: f32, ng: vec3<f32>, mat: u32, pxL: f32, toEye: vec3<
     // column's normal; mode 5: grey lit by the column's normal alone (no material, edge lines or tint)
     let lit = max(dot(si.colN, si.sun), 0.0);
     if (dbgI >= 0) {
-      col = TINTS[u32(dbgI) % 6u] * (0.45 + 0.55 * lit);
+      // (modes 9 and up, 4c: flat colours, unlit, so a value reads the same on faces turned from the sun)
+      col = TINTS[u32(dbgI) % 6u] * select(0.45 + 0.55 * lit, 0.9, u32(d.cl.z) >= 9u);
     } else if (u32(d.cl.z) == 5u && si.colW > 0.0) {
       col = vec3<f32>(0.08 + 0.8 * lit);
     }
