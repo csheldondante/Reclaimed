@@ -1035,6 +1035,18 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   per pixel by height (the pixel's own and facing neighbour columns' surfMatD at the pixel's z: the column holding z,
   else the nearest surface; a blend band as tex2's), estimated well under 0.5 ms; alternative a per-cluster material
   weight in the bake. The scripts/nested-rB5-skirt.mjs "above" pose is badly framed (eye near the dome's surface).
+- NS-305 (hack, round 32 B6) ?cliff=5 notches are decided per march node at the level of detail (the node's centre
+  column, its margin with the finer offsets as zero), not per column as cliffrule.ts does: finer levels' notches are
+  evaluated at a coarse node's centre and may alias or shift with distance.
+- NS-306 (test, round 32 B6) No WGSL-equals-TS test of the notches (the B1 test covers the up / down rule only).
+- NS-307 (perf, round 32 B6) The notch test's cost: per solid node below H up to 6 levels x ~10 spans x 17 (the merge
+  rounds), and with notches on, all-up nodes below H descend to the level of detail (more march steps). Measure the box
+  pass and the 96-step cap.
+- NS-308 (look, round 32 B6) Thin bright vertical lines on column faces in ?cliff=5 (with and without notches, both
+  block levels); not explained yet.
+- NS-309 (look, round 32 B6) Notch floors (ledges) are shaded as stone, not the ground material; erosion is not ported.
+- NS-310 (hack, round 32 B6) The ?cliff=5 sheet pipeline's module declares the notch uniform (group 1 binding 1) that
+  its layout does not have; valid only because no sheet entry point uses it.
 
 - NS-253 (test, round 31) Compile times swing 1.5-2.5x between runs on this machine (drawFieldTex 295-820 ms with no
   change); version 3's textured variants (drawBoxesTexV3 / drawSheetsTexV3) got a 600 ms budget from 341-457 / 401-535 ms.

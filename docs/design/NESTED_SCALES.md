@@ -2048,6 +2048,34 @@ pixel), less work. Two pipeline overrides of cliff5.wgsl, both on (cliffbox.ts `
   - CPU scene: a dome (sphere add, radius 40 m) beside the bowl (test/support/nested-cliffield.ts, `dome`, off by
     default so the other numbers stay); pictures rA6-domes|domesAbove-T2|T4 (RA_PICS=1 RA_PREFIX=rA6). The side view's
     framing is poor; the view from above shows the dome's flanks split into columns at T 2, none at T 4.
+
+**As built (round 32, step B6): notches in the ?cliff=5 march (the owner wants to see the overhangs in the real shader).**
+- *The port* (cliff5.wgsl cr5NotchLv / cr5Notch): cliffrule.ts notchLevel's notchFrac branch (the face from L cut into
+  consecutive spans of a hashed 0.1-0.9 of H - L, at least one cell of the level, each span a notch with the level's
+  share times the mask, cut back under the level's top cell; the key a slot of 2^slotLog cells along the face and the
+  coarse cell across it) with the O(1) margin depth test (depth 1..notchDepthL[l] cells), and notchAt's union over the
+  levels merged up and down (8 rounds). Erosion is not ported (off on the CPU too).
+- *In the march* (cr5March): a node decided solid below H is tested at the ray's height with the node's centre column
+  and its margin at that level (cr5MarginLod: crIsUpLod's score, the finer offsets as zero); a notch makes it air between
+  the notch's floor and ceiling: the ray falls onto the floor (hit kind 5, a lit ledge, stone, normal up), rises into the
+  ceiling (6, normal down, half the light) or crosses into the next node; a solid node reached from a notch is its back
+  (7, shaded as a column side). Kinds 5-7 are darkened by the notch's depth into the face (0.85 -> 0.35 at 32 fine
+  columns, 8 m). With notches on, a node all up below H still descends to the level the distance asks for (its notches
+  are per column).
+- *Settings* (cliffbox.ts NotchSet, NOTCH_SETS; a uniform of the box pass, group 1 binding 1, written by setNotch when
+  they change, never per frame; no storage buffer added): `?cliffGap=1` with `?cliff=5`, `?cliffNotch=middle` (default:
+  8 m 25 % depth <= 2, 4 m 25 % <= 3) | `many` (50 % / 40 %, depth 4) | `every` (30/25/20/15/15/15 %, depths 2/3/4/4/4/4);
+  `?cliffNotchP=` / `?cliffNotchD=` per level (7 numbers, index 0 unused). The rB6 script's `fine` set: 30/25/25/20/20/20 %.
+- *The block level* (`?cliffWLv=`, cliffrule.ts wLevel: 3 = 2 m blocks, the default; 5 = 0.5 m): CR_WSH / CR_BS moved
+  from cliffrule.wgsl into cliffRulePrefix. The owner's "fine columns": `&cliffAmp=0,256,256,256,256,256,256&cliffWLv=5&
+  cliffPx=2` (a full cell at every level down to 0.25 m).
+- *Checks*: the WGSL-equals-TS test still passes (synthetic T 2 / T 4 and the real window: 0 mismatches; it covers the
+  up / down rule, not the notches). Holes 0 in every rB6 still (side2, side16, foot; none / middle / many / every at
+  default columns, none / fine with fine columns; T 2).
+- *Limits*: notches are decided per node at the level of detail, not per column (the TS uses the column's full margin):
+  finer levels' notches are evaluated at a coarse node's centre and can alias with distance; no WGSL-equals-TS test of
+  the notches; notch floors are stone, not the ground material; the sheet pipeline declares the notch uniform without
+  binding it (no sheet entry point uses it). Stills local/nested/rB6-*, rB6fine-T2-* (scripts/nested-rB6-notch.mjs).
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

@@ -13,7 +13,7 @@ import cliffRuleWgsl from './gpu/cliffrule.wgsl?raw';
 import cliff4Wgsl from './gpu/cliff4.wgsl?raw';
 import { MAX_LEVELS, SEG_BASE, TCAP, TPP, segWgsl, type GpuNest } from './gpu/nest';
 import { TexGen, TEX_TILE_M } from './texgen';
-import { CLIFF_AMP_B2, CliffBox } from './cliffbox';
+import { CLIFF_AMP_B2, CliffBox, type NotchSet } from './cliffbox';
 
 /** the draw module's source (the page and the compile gate): the pages' segments, the store, (round 20) the detail
  *  bands and the textured shading, then the draws; (round 27) the tiling textures and their entry points (?tex=2) */
@@ -29,9 +29,11 @@ export function cliffRuleCode(S: number, segP: number, lv: number, upl: number, 
 /** step A's default per-level amplitudes (cliffrule.ts defaultParams().ampL) */
 export const CLIFF_AMP_DEFAULT = [0, 256, 256, 256, 24, 16, 8];
 /** (step B2) the constants every cliff rule module is given: the 16 m level, units a local unit, the amplitudes */
-export function cliffRulePrefix(lv: number, upl: number, ampL: number[]): string {
+export function cliffRulePrefix(lv: number, upl: number, ampL: number[], wLevel = 3): string {
   if (ampL.length !== 7 || ampL.some((v) => !Number.isInteger(v) || v < 0 || v > 256)) throw new Error(`the cliff amplitudes need 7 integers 0..256: ${ampL.join(',')}`);
-  return `const CR_LV: u32 = ${lv}u;\nconst CR_UPL: f32 = ${upl.toFixed(1)};\nconst CR_AMPL = array<i32, 7>(${ampL.join(', ')});`;
+  if (!Number.isInteger(wLevel) || wLevel < 0 || wLevel > 6) throw new Error(`the cliff block level needs an integer 0..6: ${wLevel}`);
+  // (B6) the up / down block decision's level (cliffrule.ts wLevel: 3 = 2 m blocks, 5 = 0.5 m)
+  return `const CR_LV: u32 = ${lv}u;\nconst CR_UPL: f32 = ${upl.toFixed(1)};\nconst CR_AMPL = array<i32, 7>(${ampL.join(', ')});\nconst CR_WSH: u32 = ${6 - wLevel}u;\nconst CR_BS: i32 = ${64 >> wLevel};`;
 }
 /** the depth of the 16 m level (the rule's coarse cells) for root columns of mpu metres and k children an axis */
 export function cliffRuleLevel(mpu: number, k: number): number {
@@ -255,6 +257,10 @@ export class Renderer {
   /** ?cliffAmp= the per-level amplitudes (7 integers /256; default amp8half) */
   cliffAmp = CLIFF_AMP_B2;
   cliffBox: CliffBox | null = null;
+  /** (step B6) ?cliffGap=1 with ?cliff=5: the notches' parameters given to the box pass when it is made (null: none) */
+  cliffNotch: NotchSet | null = null;
+  /** (step B6) ?cliffWLv= the ?cliff=5 rule's up / down block level (3: 2 m blocks, the default; 5: 0.5 m) */
+  cliffWLv = 3;
   /** (step B2) ?cliffStrata=0|1: strata on the column faces (default on; a uniform, switchable at run time) */
   cliffStrata = true;
   /** (step B2) ?cliffT= the steep threshold for ?cliff=5, cell widths (default 2; the table is rebuilt on a change) */
@@ -277,7 +283,8 @@ export class Renderer {
       // (step B2, ?cliff=5: the table, the box list and the variant's pipelines, made beside these; drawn once ready)
       if (this.cliffBoxBuilt && !this.cliffBox) {
         this.cliffRuleLv = cliffRuleLevel(this.mpu, this.nest.k);
-        this.cliffBox = new CliffBox(this.device, this.nest, this.cliffRuleLv, (64 * this.mpu) / this.nest.k ** this.cliffRuleLv, this.cliffAmp, this.layout, sd, this.format, { buffer: this.ubuf, size: DU_SIZE });
+        this.cliffBox = new CliffBox(this.device, this.nest, this.cliffRuleLv, (64 * this.mpu) / this.nest.k ** this.cliffRuleLv, this.cliffAmp, this.layout, sd, this.format, { buffer: this.ubuf, size: DU_SIZE }, this.cliffWLv);
+        if (this.cliffNotch) this.cliffBox.setNotch(this.cliffNotch);
       }
       if (this.cliffRuleBuilt) {
         this.cliffRuleLv = cliffRuleLevel(this.mpu, this.nest.k);

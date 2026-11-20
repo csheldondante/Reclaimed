@@ -21,6 +21,8 @@ import { CLIFF_AMP_B2, cliffBoxCode, cliffBuildCode } from '../../src/nested/cli
 
 const HARNESS = `
 const CR_AMPL = array<i32, 7>(${defaultParams().ampL.join(', ')});
+const CR_WSH: u32 = ${defaultParams().fineLevel - defaultParams().wLevel}u;
+const CR_BS: i32 = ${(1 << defaultParams().fineLevel) >> defaultParams().wLevel};
 @group(0) @binding(0) var<storage, read> hz: array<f32>;
 @group(0) @binding(1) var<uniform> U: array<vec4<i32>, 2>;
 @group(0) @binding(2) var<storage, read> splits: array<vec2<i32>>;

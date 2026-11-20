@@ -28672,3 +28672,19 @@ level tint; with ?field=1,2,3 the field mesh and its dbg 1 / 2. A transect of th
 column staircase in plan (dense where the rim is diagonal to the grid, long lobes along an axis). ?tex=2 and the field
 mesh keep them (plan-only lookups). Proposed fix and its cost: BACKLOG NS-304.
 
+## 2026-11-20 — Nested scales lab, round 32 (step B6): notches in the ?cliff=5 march, fine columns by URL
+
+**Why.** The owner wants to see and judge the horizontal notches that make overhangs in the real shader on real terrain
+(only CPU pictures so far), and prefers "the finer columns and more notches which make the surface noisy and read as
+stone".
+
+**What.** cliffrule.ts notchLevel / notchAt (spans from the drop, the margin depth test) ported into cliff5.wgsl's
+march behind ?cliffGap=1, with floor / ceiling / back hit kinds darkened by depth; named sets in a small uniform
+(?cliffNotch=middle|many|every, per-level ?cliffNotchP= / ?cliffNotchD=); the block level ?cliffWLv= (CR_WSH / CR_BS
+into cliffRulePrefix; the WGSL test's harness defines them). scripts/nested-rB6-notch.mjs. NESTED_SCALES "As built
+(round 32, step B6)".
+
+**Measured.** WGSL = TS unchanged (0 mismatches: synthetic T 2, T 4, the real window). Holes 0 in all 18 stills
+(side2, side16, foot; default columns none / middle / many / every, fine columns none / fine; T 2). Cost not measured
+yet (NS-307). Open: NS-305..NS-310.
+

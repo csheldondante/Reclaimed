@@ -27,14 +27,34 @@ export interface BoxOpt {
   cull: boolean;
   order: boolean;
 }
+/** (B6) the notch parameters' uniform (cliff5.wgsl Cr5NU: pct, dep as 2 vec4 each, then f) */
+const NOTCH_BYTES = 80;
+/** (B6) notches in the ?cliff=5 march (cliffrule.ts notchLevel's notchFrac branch with the margin depth test): per level
+ *  0..6 (index 0 unused: 8 m, 4 m, 2 m, 1 m, 0.5 m, 0.25 m) the percent of spans that are notches and the depth at most
+ *  in that level's cells; frac the span heights as a share of the drop; slotLog the key's slot along the face */
+export interface NotchSet {
+  on: boolean;
+  pct: number[];
+  dep: number[];
+  frac: [number, number];
+  slotLog: number;
+}
+/** (B6) the named sets the owner asked to see (?cliffNotch=): coarse only "middle" (cliffrule.ts defaultParams), coarse
+ *  only "many", and "every" level 15-30 % down to the finest */
+export const NOTCH_SETS: Record<string, NotchSet> = {
+  none: { on: false, pct: [0, 0, 0, 0, 0, 0, 0], dep: [0, 1, 1, 1, 1, 1, 1], frac: [0.1, 0.9], slotLog: 2 },
+  middle: { on: true, pct: [0, 25, 25, 0, 0, 0, 0], dep: [0, 2, 3, 4, 4, 4, 4], frac: [0.1, 0.9], slotLog: 2 },
+  many: { on: true, pct: [0, 50, 40, 0, 0, 0, 0], dep: [0, 4, 4, 4, 4, 4, 4], frac: [0.1, 0.9], slotLog: 2 },
+  every: { on: true, pct: [0, 30, 25, 20, 15, 15, 15], dep: [0, 2, 3, 4, 4, 4, 4], frac: [0.1, 0.9], slotLog: 2 },
+};
 /** step B2's default amplitudes: step A's with the 8 m level at half a cell (amp8half, the calmer look) */
 export const CLIFF_AMP_B2 = [0, 128, 256, 256, 24, 16, 8];
 
-export function cliffBuildCode(S: number, segP: number, lv: number, upl: number, ampL: number[]): string {
-  return `const TCAP: u32 = ${TCAP}u;\n${segWgsl(S, segP, true)}\n${storeWgsl}\n${cliffRulePrefix(lv, upl, ampL)}\n${cliffRuleWgsl}\n${cliffBuildWgsl}`;
+export function cliffBuildCode(S: number, segP: number, lv: number, upl: number, ampL: number[], wLevel = 3): string {
+  return `const TCAP: u32 = ${TCAP}u;\n${segWgsl(S, segP, true)}\n${storeWgsl}\n${cliffRulePrefix(lv, upl, ampL, wLevel)}\n${cliffRuleWgsl}\n${cliffBuildWgsl}`;
 }
-export function cliffBoxCode(S: number, segP: number, lv: number, upl: number, ampL: number[]): string {
-  return `${drawModuleCode(S, segP)}\n${cliffRulePrefix(lv, upl, ampL)}\n${cliffRuleWgsl}\n${cliff5Wgsl}`;
+export function cliffBoxCode(S: number, segP: number, lv: number, upl: number, ampL: number[], wLevel = 3): string {
+  return `${drawModuleCode(S, segP)}\n${cliffRulePrefix(lv, upl, ampL, wLevel)}\n${cliffRuleWgsl}\n${cliff5Wgsl}`;
 }
 
 export class CliffBox {
@@ -75,6 +95,20 @@ export class CliffBox {
   private key = '';
   private bgs: { sheet1: GPUBindGroup; box0: GPUBindGroup; box1: GPUBindGroup } | null = null;
   readonly whenReady: Promise<void>;
+  /** (B6) the notches' parameters (?cliffGap=1, ?cliffNotch=; cliff5.wgsl Cr5NU); set with setNotch */
+  notch: NotchSet = { ...NOTCH_SETS.none };
+  private nbuf!: GPUBuffer;
+  /** (B6) the notches' parameters: written to their uniform now (only when they change, never per frame) */
+  setNotch(n: NotchSet): void {
+    this.notch = { ...n, pct: [...n.pct], dep: [...n.dep], frac: [n.frac[0], n.frac[1]] };
+    const a = new Int32Array(NOTCH_BYTES / 4);
+    for (let l = 0; l < 7; l++) {
+      a[l] = n.pct[l] ?? 0;
+      a[8 + l] = n.dep[l] ?? 1;
+    }
+    a.set([Math.round(n.frac[0] * 256), Math.round(n.frac[1] * 256), n.on ? 1 : 0, n.slotLog], 16);
+    this.device.queue.writeBuffer(this.nbuf, 0, a);
+  }
 
   constructor(
     private device: GPUDevice,
@@ -87,12 +121,23 @@ export class CliffBox {
     format: GPUTextureFormat,
     /** the draw's uniform buffer and its binding size (the boxes' own group 0 binds it with the level's offset) */
     private drawU: { buffer: GPUBuffer; size: number },
+    /** (B6) the up / down block decision's level (?cliffWLv=, default 3: 2 m blocks) */
+    wLevel = 3,
   ) {
     const V = GPUShaderStage.VERTEX;
     const F = GPUShaderStage.FRAGMENT;
     const ro = { type: 'read-only-storage' as const };
     this.sheetG1 = device.createBindGroupLayout({ label: 'cliff sheets g1', entries: [{ binding: 0, visibility: F, buffer: ro }] });
-    this.boxG1 = device.createBindGroupLayout({ label: 'cliff boxes g1', entries: [{ binding: 0, visibility: V | F, buffer: ro }] });
+    // (B6: binding 1, the notch parameters, a uniform: no storage buffer added)
+    this.boxG1 = device.createBindGroupLayout({
+      label: 'cliff boxes g1',
+      entries: [
+        { binding: 0, visibility: V | F, buffer: ro },
+        { binding: 1, visibility: F, buffer: { type: 'uniform' } },
+      ],
+    });
+    this.nbuf = device.createBuffer({ label: 'cliff notch params', size: NOTCH_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.setNotch(this.notch);
     this.boxG0 = device.createBindGroupLayout({
       label: 'cliff boxes g0',
       entries: [
@@ -117,8 +162,8 @@ export class CliffBox {
     this.args = device.createBuffer({ label: 'cliff box args', size: ARGS_BYTES, usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
     this.ubuf = device.createBuffer({ label: 'cliff build uniform', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const t0 = performance.now();
-    const mb = device.createShaderModule({ label: 'cliff table build', code: cliffBuildCode(nest.S, nest.segP, lv, upl, ampL) });
-    const md = device.createShaderModule({ label: 'nest draw (cliff boxes)', code: cliffBoxCode(nest.S, nest.segP, lv, upl, ampL) });
+    const mb = device.createShaderModule({ label: 'cliff table build', code: cliffBuildCode(nest.S, nest.segP, lv, upl, ampL, wLevel) });
+    const md = device.createShaderModule({ label: 'nest draw (cliff boxes)', code: cliffBoxCode(nest.S, nest.segP, lv, upl, ampL, wLevel) });
     const targets = [{ format }, { format: 'rgba8unorm' as GPUTextureFormat }];
     this.md = md;
     this.targets = targets;
@@ -273,7 +318,14 @@ export class CliffBox {
     const tab = this.tab;
     this.bgs ??= {
       sheet1: this.device.createBindGroup({ label: 'cliff sheets g1', layout: this.sheetG1, entries: [{ binding: 0, resource: { buffer: tab } }] }),
-      box1: this.device.createBindGroup({ label: 'cliff boxes g1', layout: this.boxG1, entries: [{ binding: 0, resource: { buffer: tab } }] }),
+      box1: this.device.createBindGroup({
+        label: 'cliff boxes g1',
+        layout: this.boxG1,
+        entries: [
+          { binding: 0, resource: { buffer: tab } },
+          { binding: 1, resource: { buffer: this.nbuf } },
+        ],
+      }),
       box0: this.device.createBindGroup({
         label: 'cliff boxes g0',
         layout: this.boxG0,

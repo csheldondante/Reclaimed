@@ -6,6 +6,7 @@ import { GpuNest, PW, type Op, type Win } from './gpu/nest';
 import { Renderer, type DrawLevel } from './render';
 import { coverage, holePixels, lastImage, manifold, rayDiag, rimJunctions, unionClosure } from './watertight';
 import { NestGen, labAtlasParams } from './gen';
+import { NOTCH_SETS } from './cliffbox';
 
 /** a root column, in metres (the info line; round 25: 128 with the generator, 3.2 the toy root of ?gen=0; set once by
  *  the App's constructor, one page one App) */
@@ -179,6 +180,19 @@ export class App {
     // is not a local top or bottom and not flat with its 4 neighbours splits: the owner's "boxels everywhere" experiment)
     if (cv === '5' && q.has('cliffT')) this.render.cliffBoxT = Math.max(0, Math.round(Number(q.get('cliffT'))));
     if (q.has('cliffPx')) this.render.cliffPx = Number(q.get('cliffPx'));
+    // (round 32 step B6) ?cliffGap=1 with ?cliff=5: notches in the march (cliffbox.ts NOTCH_SETS); ?cliffNotch=middle (the
+    // default) | many | every; ?cliffNotchP= / ?cliffNotchD= the per-level percent / depth (7 numbers, index 0 unused)
+    if (cv === '5' && q.get('cliffGap') === '1') {
+      const name = q.get('cliffNotch') ?? 'middle';
+      const set = NOTCH_SETS[name];
+      if (!set || !set.on) throw new Error(`?cliffNotch=${name}: one of ${Object.keys(NOTCH_SETS).filter((k) => NOTCH_SETS[k].on).join(', ')}`);
+      const n = { ...set, pct: [...set.pct], dep: [...set.dep] };
+      if (q.has('cliffNotchP')) n.pct = q.get('cliffNotchP')!.split(',').map(Number);
+      if (q.has('cliffNotchD')) n.dep = q.get('cliffNotchD')!.split(',').map(Number);
+      this.render.cliffNotch = n;
+    }
+    // (B6) ?cliffWLv= the up / down block decision's level with ?cliff=5 (3: 2 m blocks, default; 5: 0.5 m)
+    if (cv === '5' && q.has('cliffWLv')) this.render.cliffWLv = Number(q.get('cliffWLv'));
     // (version 3, step 4b) ?cliffDropF= the drop's growth per level; ?cliffHN= the children's hashed split (0..1)
     if (q.has('cliffDropF')) this.render.cliffDropF = Number(q.get('cliffDropF'));
     if (q.has('cliffHN')) this.render.cliffHN = Number(q.get('cliffHN'));

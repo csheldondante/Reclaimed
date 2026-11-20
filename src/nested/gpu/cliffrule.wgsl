@@ -19,8 +19,8 @@ const CR_U: i32 = 1024; // COARSE_U: a coarse cell's width in units (16 m x 64)
 const CR_LF: u32 = 6u;
 const CR_N: i32 = 64; // 1 << fineLevel
 const CR_MASKFROM: u32 = 4u;
-const CR_WSH: u32 = 3u; // wShift: fineLevel - min(wLevel, fineLevel)
-const CR_BS: i32 = 8; // N >> min(wLevel, fineLevel)
+// (CR_WSH, wShift = fineLevel - min(wLevel, fineLevel), and CR_BS = N >> min(wLevel, fineLevel) come from the includer:
+// render.ts cliffRulePrefix, wLevel 3 (2 m blocks) by default; B6: ?cliffWLv=)
 const CR_MASKP: i32 = 4;
 const CR_SEED: i32 = 1;
 const CR_TIE: i32 = 4096;

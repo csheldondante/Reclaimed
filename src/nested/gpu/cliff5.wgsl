@@ -13,6 +13,84 @@
 // vertex stage beside the camera and the registry: cliffbox.ts)
 @group(1) @binding(0) var<storage, read> crTab: array<u32>;
 
+// ---- (round 32 step B6) notches, ?cliffGap=1 with ?cliff=5: cliffrule.ts notchLevel / notchAt (notchFrac spans, the
+// O(1) margin depth test, no erosion) in the march. Parameters in a small uniform of the box pass (cliffbox.ts setNotch:
+// written when they change, never per frame): pct / dep per level 1..6 (index l: [l >> 2][l & 3]); f = (notchFrac[0] and
+// [1] x 256, on, slotLog)
+struct Cr5NU {
+  pct: array<vec4<i32>, 2>,
+  dep: array<vec4<i32>, 2>,
+  f: vec4<i32>,
+}
+@group(1) @binding(1) var<uniform> crN: Cr5NU;
+fn cr5Pct(l: u32) -> i32 { return crN.pct[l >> 2u][l & 3u]; }
+fn cr5Dep(l: u32) -> i32 { return crN.dep[l >> 2u][l & 3u]; }
+/** notchLevel (notchFrac branch, notchMargin): level l's notch air [lo, hi) at z (units) in fine column (gx, gy, global) of
+ *  split cell r, given the column's margin over the threshold; x > y for none */
+fn cr5NotchLv(r: CrCell, cx: i32, cy: i32, gx: i32, gy: i32, z: i32, l: u32, margin: i32) -> vec2<i32> {
+  let none = vec2<i32>(1, 0);
+  let pct = cr5Pct(l);
+  if (pct <= 0) { return none; }
+  let c = CR_U >> l;
+  let ksh = CR_LF - l;
+  let alongX = abs(r.a) < abs(r.b);
+  let ka = select(gy, gx, alongX) >> (ksh + u32(crN.f.w));
+  let kb = select(cx, cy, alongX);
+  let ks = 1 << ksh;
+  let mk = crMaskAt(2 * (gx >> ksh) * ks + ks, 2 * (gy >> ksh) * ks + ks);
+  // (this level's top cell is never a notch; erosion is off)
+  let topLim = r.H - c;
+  if (z < r.L || z >= topLim) { return none; }
+  let D = r.H - r.L;
+  let f0 = crN.f.x;
+  let f1 = max(f0, crN.f.y);
+  var s0 = r.L;
+  for (var k = 0; k < 64; k++) {
+    let hk = crHash3(ka, kb, crSalt(0x400 + i32(l)) ^ bitcast<i32>(u32(k) * 0x27d4eb2du));
+    let len = max(c, (D * (f0 + i32((hk >> 8u) % u32(f1 - f0 + 1)))) >> 8u);
+    if (z < s0 + len) {
+      if (hk % 25600u >= u32(pct * mk)) { return none; }
+      let h2 = crMix(hk);
+      let dC = 1 + i32((h2 >> 16u) % u32(max(1, cr5Dep(l))));
+      if (margin < dC * ks * 2 * r.A * CR_TIE) { return vec2<i32>(s0, min(s0 + len, topLim)); }
+      return none;
+    }
+    s0 += len;
+  }
+  return none;
+}
+fn cr5NotchAny(r: CrCell, cx: i32, cy: i32, gx: i32, gy: i32, z: i32, margin: i32) -> vec2<i32> {
+  for (var l = 1u; l <= CR_LF; l++) {
+    let n = cr5NotchLv(r, cx, cy, gx, gy, z, l, margin);
+    if (n.x < n.y) { return n; }
+  }
+  return vec2<i32>(1, 0);
+}
+/** notchAt: the union of every level's notch air round z, merged with overlapping ones above and below */
+fn cr5Notch(r: CrCell, cx: i32, cy: i32, gx: i32, gy: i32, z: i32, margin: i32) -> vec2<i32> {
+  var n = cr5NotchAny(r, cx, cy, gx, gy, z, margin);
+  if (n.x >= n.y) { return n; }
+  for (var i = 0; i < 8; i++) {
+    let b = cr5NotchAny(r, cx, cy, gx, gy, n.x - 1, margin);
+    let a = cr5NotchAny(r, cx, cy, gx, gy, n.y, margin);
+    let hb = b.x < b.y;
+    let ha = a.x < a.y;
+    if (!hb && !ha) { break; }
+    if (hb) { n.x = min(n.x, b.x); }
+    if (ha) { n.y = max(n.y, a.y); }
+  }
+  return n;
+}
+/** a level-l node's margin over the threshold (TIE units) at its centre, the finer offsets as zero (crIsUpLod's score) */
+fn cr5MarginLod(r: CrCell, cx: i32, cy: i32, l: u32, jx: i32, jy: i32, known: i32) -> i32 {
+  let s = CR_N >> l;
+  let inBlock = l >= CR_LF - CR_WSH;
+  let pc = select(2 * jx * s + s - CR_N, crWCentre((jx * s) >> CR_WSH), inBlock);
+  let qc = select(2 * jy * s + s - CR_N, crWCentre((jy * s) >> CR_WSH), inBlock);
+  let tie = select(CR_TIE >> 1u, crTieOf((cx << CR_LF) + jx, (cy << CR_LF) + jy), s == 1);
+  return (r.a * pc + r.b * qc + known) * CR_TIE + tie - crThetaUsed(r);
+}
+
 /** (cliffrule.wgsl's crKindOf needs a height source; the draw never derives a cell, it reads the table) */
 fn crH(x: i32, y: i32) -> i32 { return 0; }
 fn crT() -> i32 { return 2; }
@@ -292,6 +370,8 @@ struct Cr5M {
   steps: i32,
   start: vec3<f32>,
   eyeP: vec3<f32>,
+  /** (B6) the last notch's depth into the face at its node, fine columns (the hollow's darkening) */
+  nd: f32,
 }
 
 @fragment
@@ -311,7 +391,7 @@ fn fsBox5(v: VBox) -> FOut {
   if (u32(d.cl.z) == 12u || u32(d.cl.z) == 13u) {
     var o: FOut;
     let t = f32(steps) / f32(CR5_CAP);
-    o.color = vec4<f32>(select(vec3<f32>(t, 1.0 - abs(2.0 * t - 1.0), 1.0 - t), TINTS[hk], u32(d.cl.z) == 13u), 1.0);
+    o.color = vec4<f32>(select(vec3<f32>(t, 1.0 - abs(2.0 * t - 1.0), 1.0 - t), TINTS[hk % 6u], u32(d.cl.z) == 13u), 1.0);
     o.info = vec4<f32>(1.0, f32(d.lvl.w) / 8.0, f32(steps) / 255.0, 0.5);
     // (13: a miss is discarded as in the plain draw, so coplanar faces of neighbouring boxes do not fight)
     if (hk == 0u && u32(d.cl.z) == 13u) { discard; }
@@ -321,13 +401,19 @@ fn fsBox5(v: VBox) -> FOut {
   var nrm = vec3<f32>(0.0, 0.0, 1.0);
   // (4: a sheet neighbour's edge wall, shaded as a column side)
   if (hk == 4u) { hk = 1u; }
-  if (hk == 1u) { nrm = select(vec3<f32>(0.0, -sign(dir.y), 0.0), vec3<f32>(-sign(dir.x), 0.0, 0.0), axis == 0u); }
+  if (hk == 1u || hk == 7u) { nrm = select(vec3<f32>(0.0, -sign(dir.y), 0.0), vec3<f32>(-sign(dir.x), 0.0, 0.0), axis == 0u); }
+  // (B6) a notch's ceiling faces down; its floor (a ledge) up
+  if (hk == 6u) { nrm = vec3<f32>(0.0, 0.0, -1.0); }
   let q = vec3<f32>(hp.xy / 64.0 + v.org, hp.z / 64.0);
   let toEye = (eyeP - hp) / 64.0;
   let dE = length(toEye);
   // the recess: darker the further the hit lies in from where the ray entered the box (plan distance, fine columns)
-  let ao = mix(1.0, 0.55, smoothstep(0.0, 32.0, length((hp - m.start).xy)));
-  let col = cr5Shade(q, v.zo, nrm, select(mat, 1u, hk == 1u), d.cl.x * dE, toEye, dE, hk == 1u, ao);
+  var ao = mix(1.0, 0.55, smoothstep(0.0, 32.0, length((hp - m.start).xy)));
+  // (B6) inside a notch (floor, ceiling, back): darker by its depth into the face (fine columns; 32 = 8 m), the ceiling
+  // darker still
+  let stone = hk == 1u || hk >= 5u;
+  if (hk >= 5u) { ao *= mix(0.85, 0.35, smoothstep(0.0, 32.0, m.nd)) * select(1.0, 0.5, hk == 6u); }
+  let col = cr5Shade(q, v.zo, nrm, select(mat, 1u, stone), d.cl.x * dE, toEye, dE, stone, ao);
   var o: FOut;
   o.color = vec4<f32>(col, 1.0);
   o.info = vec4<f32>(1.0, f32(d.lvl.w) / 8.0, 0.0, 1.0);
@@ -401,6 +487,10 @@ fn cr5March(v: VBox) -> Cr5M {
   var hp = p;
   var steps = 0;
   var solid = false;
+  // (B6, ?cliffGap=1) notches: the node's air interval [lo, hi) in units when it is a notch; whether the ray came from one
+  let notchOn = crN.f.z != 0;
+  var wasNotch = false;
+  res.nd = 0.0;
   loop {
     if (steps >= CR5_CAP) { break; }
     let dist = length(p - eyeP) / 64.0;
@@ -408,13 +498,15 @@ fn cr5March(v: VBox) -> Cr5M {
     l = min(l, lt);
     // descend from level l (known[] valid down to it) to the node that decides; every node looked at is a step
     solid = false;
+    // (B6: with notches on, a node all up below H still descends to the level wanted: its notches are per column)
+    let deep = notchOn && p.z < Hf;
     loop {
       steps++;
       let jx = ix >> (6u - l);
       let jy = iy >> (6u - l);
       let nb = crNodeUp(r, l, jx, jy, known[l], ra[l]);
       if (!nb.x) { break; }
-      if (nb.y) {
+      if (nb.y && !(deep && l < lt)) {
         solid = true;
         break;
       }
@@ -425,10 +517,25 @@ fn cr5March(v: VBox) -> Cr5M {
       l++;
       known[l] = known[l - 1u] + crLevelOff(r, cx, cy, l, ix >> (6u - l), iy >> (6u - l));
     }
+    // (B6) a solid node below H may be a notch at the ray's height: the node's centre column, its margin at this level
+    var nl = vec2<i32>(1, 0);
+    if (solid && deep) {
+      let s = 64 >> l;
+      let jx = ix >> (6u - l);
+      let jy = iy >> (6u - l);
+      let mg = cr5MarginLod(r, cx, cy, l, jx, jy, known[l]);
+      nl = cr5Notch(r, cx, cy, (cx << 6u) + jx * s + (s >> 1), (cy << 6u) + jy * s + (s >> 1), i32(floor(p.z * 16.0)), mg);
+      if (nl.x < nl.y) {
+        solid = false;
+        res.nd = f32(mg) / f32(2 * max(r.A, 1) * CR_TIE);
+      }
+    }
+    let inN = nl.x < nl.y;
     if (solid && p.z <= Hf + 1e-3) {
       if (axis == 3u) { break; }
-      // (entered from the box's top above H: the column's top, reached by falling onto it)
-      hk = select(1u, 2u, axis == 2u);
+      // (entered from the box's top above H: the column's top, reached by falling onto it; B6: from a notch's air, its
+      // back)
+      hk = select(select(1u, 7u, wasNotch), 2u, axis == 2u);
       hp = p;
       break;
     }
@@ -441,13 +548,23 @@ fn cr5March(v: VBox) -> Cr5M {
     let ty = select(select(1e30, (y0 - p.y) / dir.y, dir.y < 0.0), (y0 + f32(s) - p.y) / dir.y, dir.y > 0.0);
     let tEx = max(min(tx, ty), 0.0);
     if (dir.z < 0.0) {
-      let tF = (select(Lf, Hf, solid) - p.z) / dir.z;
+      // (B6: in a notch, its floor)
+      let tF = (select(select(Lf, Hf, solid), f32(nl.x) / 16.0, inN) - p.z) / dir.z;
       if (tF <= tEx) {
-        hk = select(3u, 2u, solid);
+        hk = select(select(3u, 2u, solid), 5u, inN);
         hp = p + dir * max(tF, 0.0);
         break;
       }
-    } else if (dir.z > 0.0 && (Htf - p.z) / dir.z <= tEx) { break; }
+    } else if (dir.z > 0.0) {
+      // (B6: in a notch, its ceiling)
+      if (inN && (f32(nl.y) / 16.0 - p.z) / dir.z <= tEx) {
+        hk = 6u;
+        hp = p + dir * max((f32(nl.y) / 16.0 - p.z) / dir.z, 0.0);
+        break;
+      }
+      if ((Htf - p.z) / dir.z <= tEx) { break; }
+    }
+    wasNotch = inN;
     p += dir * tEx;
     let ox = ix;
     let oy = iy;
