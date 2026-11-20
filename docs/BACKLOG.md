@@ -1044,6 +1044,19 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   of detail (0.25 m near the eye) for up to 4 cells of the notch's level; plus the per-node notch test (up to 6 levels x
   ~10 spans x 17 merge calls) and all-up nodes below H descending. Candidate: cross a notch's air at its own level's
   cells (its extent is known: the slot along the face, the depth by the margin).
+  **Done (round 32 B8, see the commit adding NESTED_SCALES "As built (round 32, step B8)")**: notches tested
+  coarse-first in the hierarchy; foot box pass 20.5 -> 4.5-5.0 ms, 38 % -> 0 at the cap; side2 10.5-11.2 -> 6.5-6.8 ms.
+- NS-311 (perf, round 32 B8) side2 with notches still costs 0.3-2.8 ms over no notches (target well under 2): steps
+  are nearly plain columns', so it is per-step work: the per-level loop at every descent step re-tests coarser levels
+  (carry a "still partial" mask down the descent), the span lookups (mask + span hashes). Also the no-notch baseline
+  moved 3.75 <-> 7.0 ms between runs: measure on a quiet GPU / more rounds before tuning.
+- NS-312 (hack, round 32 B8) The B6 march is kept in cliff5.wgsl (cr5MarchB6, override CR5_NOTCH_B6, BoxOpt notchB6)
+  only to measure before / after; remove once NS-311 is settled.
+- NS-313 (look, round 32 B8) Notches finer than the level of detail are not drawn (B6 drew them at a coarse node's
+  centre column). A change from B6, closer to the per-column definition at the pixel size; the owner's "fractal down to
+  pixel size" may want sub-pixel notches shown statistically (darkening) instead. Owner to judge rB8 stills.
+- NS-314 (test, round 32 B8) Unverified: the foot view with notches measures cheaper than without; explanation (fewer
+  box fragments march behind a notch ceiling) not checked with the overdraw count pass (render.cliffCount).
 - NS-308 (look, round 32 B6) Thin bright vertical lines on column faces in ?cliff=5 (with and without notches, both
   block levels): ?cliffDbg=13 shows column-side hits (kind 1), not seams or misses; most likely sunlit side faces where
   the face steps back by a column. Not confirmed with a normal debug.

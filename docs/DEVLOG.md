@@ -28702,3 +28702,24 @@ notches 38 % of box pixels reach the 96-step cap (none in the other settings). C
 the level of detail (NS-307). T 0 fine + notches: SPLIT 54,508 / 54,011 / 54,011, holes 133 / 0 / 0 (side16 / side2 /
 foot). The thin bright vertical lines are column-side hits (?cliffDbg=13), not seams (NS-308). WGSL = TS test passes.
 
+## 2026-11-20 — Nested scales lab, round 32 (step B8): notches coarse-first in the hierarchy (NS-307)
+
+**Why.** Fine columns + notches at every level cost 11 / 19 ms in the box pass (side2 / foot) and 38 % of the foot's
+pixels hit the step cap and drew wrong boxy blocks; the owner expected a notch to be one more column subtraction walked
+coarse-first, a few steps a level.
+
+**What.** cliff5.wgsl cr5MarchCF: level l's notch is looked up once at its level-l ancestor node (the span round the
+ray's height, cached while the ray stays in that cell and span); at each node the bound of its columns' margins says, per
+level, all air (cross the node in one step, or to the notch's floor / ceiling plane and decide again there), untouched,
+or partly (descend). Notches finer than the level of detail are not drawn (a change from B6, which tested all six levels
+at a coarse node's centre column). The cap is checked inside the descent, and a capped pixel is the surface at the point
+reached. The B6 march stays behind the override CR5_NOTCH_B6 (BoxOpt notchB6) for before / after. Scripts
+nested-rB8-notch.mjs, nested-png-diff.mjs.
+
+**Measured** (desktop D3D11, one page, fine columns, `every` notches, T 2; box pass GPU ms median, frame ms, steps mean /
+max / at the cap): side2 B6 10.54-11.20, 13.3-14.2, 16.4 / 80 / 0 -> B8 6.51-6.80, 9.9-10.2, 11.3 / 61 / 0 (no notches
+3.75-7.00; that baseline swung between runs). foot B6 20.46-20.87, 23.8-24.2, 52.8 / 102 / 148,235 of 389,738 -> B8
+4.53-4.97, 10.0-10.7, 8.9 / 54 / 0 (no notches 5.5-5.7). Holes 0 in all six stills. Hit-kind stills differ from B6 by
+0.3 % (side16), 1.1 % (side2: fewer notch floors, the sub-LOD notches) and 28.6 % (foot: B6's capped pixels resolved).
+WGSL = TS test passes; typecheck clean. Open: NS-311..NS-314.
+

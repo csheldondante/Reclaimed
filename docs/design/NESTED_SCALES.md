@@ -2089,6 +2089,48 @@ pixel), less work. Two pipeline overrides of cliff5.wgsl, both on (cliffbox.ts `
     cap (the cap's fallback draws a column or the floor). NS-307.
   - T 0 with fine columns + notches (stills rB7-{side16,side2,foot}-fineN0): SPLIT 54,508 / 54,011 / 54,011 of 65,536;
     holes 133 / 0 / 0.
+
+**As built (round 32, step B8): notches tested coarse-first inside the hierarchy (NS-307).** The owner: "every pixel can
+walk in column space ... it walks bigger column subtraction first and so is logarithmic in steps". A notch is one more
+subtraction in the quadtree.
+- *The test* (cliff5.wgsl cr5MarchCF, cr5Span, cr5MarginRange, cr5MaxT): level l's notch is keyed on level-l cells, so
+  the march looks it up once, at its level-l ancestor node, as the span of that cell round the ray's height (the span's
+  z range whether it is a notch or not, and its depth threshold T), cached per level while the ray stays in that cell and
+  span. At a node of level l, crNodeUp's bound of every descendant column's margin over the threshold [mMin, mMax]
+  decides each level k <= l: mMax < T, every column in the node is air at this height (up and notched, or down): the
+  node is crossed in one step, to its side or to the notch's floor / ceiling plane, whichever comes first; mMin >= T,
+  that level does not touch the node; otherwise the node is descended. An all-up node no notch touches is solid at that
+  level unless a finer level's deepest notch could reach it (mMin < fineT). A level whose deepest notch is shallower than
+  the node's mMin is not looked up at all.
+- *Floors and ceilings*: when the ray reaches the notch's floor (ceiling) plane inside an air node it steps onto it
+  (entry axis 4 / 5) and the same node is decided again just past the plane: another level's notch may go on (the
+  union and merge of notchAt fall out of this), else the column under (over) it is the floor (kind 5) or ceiling (6) hit.
+  A solid node entered from notch air through a side is the back (7). Kinds unchanged.
+- *At the level of detail* a node is one column, its centre margin decides (crIsUpLod's score, as B6), against the
+  notches of levels up to the level of detail only. **Change from B6**: B6 tested every level 1..6 at the node's centre
+  column, so at a distance a 0.25 m notch could hollow a whole 2 m node; B8 does not draw notches finer than the level of
+  detail (they are under the pixel size asked for). Where both decide, they decide the same (the bound brackets the
+  centre margin). Measured difference (?cliffDbg=13 hit-kind stills, scripts/nested-png-diff.mjs): side16 0.3 %, side2
+  1.1 % of pixels (notch-floor pixels 10,051 -> 7,737 there), foot 28.6 % (the B6 cap's fallback pixels, 118k "floor"
+  pixels, now resolved: notch ceilings, column sides, edge walls).
+- *The cap*: 96 steps, checked inside the descent too (B6 reached 102). Reached, the pixel is the surface at the point
+  reached (the kind its entry axis gives), never a floor moved under the ray. Not reached in any measured view.
+- *Kept for measurement*: the B6 march as cr5MarchB6 behind the override CR5_NOTCH_B6 (BoxOpt `notchB6`).
+- *Measured* (scripts/nested-rB8-notch.mjs; one page with fine columns from the URL, `?cliffNotch=every`, T 2; desktop
+  D3D11, 960 x 640, 3-4 interleaved rounds of 2.5 s; box pass GPU ms median / frame ms median / steps mean, max, at cap):
+  - side2: fine no notches (B6 march) 3.75-7.00 / 9.9-12.2 / 10.8, 61, 0 (two runs; the no-notch number moved between
+    runs by nearly 2x, the others did not); fine no notches (B8 march) 4.20-6.54; notches B6 10.54-11.20 / 13.3-14.2 /
+    16.4, 80, 0; **notches B8 6.51-6.80 / 9.9-10.2 / 11.3, 61, 0**.
+  - foot: fine (B6 march) 5.52-5.61 / 11.1-11.2 / 3.6, 28, 0; fine (B8 march) 5.60-5.71; notches B6 20.46-20.87 /
+    23.8-24.2 / 52.8, 102, 148,235 of 389,738 (38 %); **notches B8 4.53-4.97 / 10.0-10.7 / 8.9, 54, 0**.
+  - Holes 0 in all six stills (side16, side2, foot; B6 and B8). Stills local/nested/rB8-{side16,side2,foot}-{b6,cf}.png
+    and -kind.png.
+- *Limits*: at side2 the notches still add 0.3-2.8 ms over no notches (the no-notch baseline is noisy); the steps are
+  nearly those of plain columns (11.3 vs 10.8), so what remains is the per-step work (the level loop, the span lookups).
+  At the foot the notched view measured cheaper than the plain one: probably fewer box fragments march (a ray stops in
+  the first box's notch ceiling instead of passing through to the next box) — the steps statistic counts only the
+  fragment that wrote the pixel; not checked with the overdraw count pass. Notches are still decided at the node's
+  centre at the level of detail (NS-305, narrowed); no WGSL-equals-TS test of the notches (NS-306).
   - The thin bright vertical lines on the faces (NS-308): ?cliffDbg=13 (rB7-side2-def-kind, crops *-crop.png) shows them
     as column-side hits (kind 1), not seams, misses or side walls: thin sunlit side faces, most likely where the face
     steps back by a column (not confirmed with a normal debug).

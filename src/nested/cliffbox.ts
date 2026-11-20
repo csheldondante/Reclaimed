@@ -29,6 +29,9 @@ export interface BoxOpt {
   /** (B6, measurement) the rule's amplitudes and block level as pipeline overrides (absent: the module's, from the URL) */
   amp?: number[];
   wLevel?: number;
+  /** (B8, measurement) the march as step B6 built it (cliff5.wgsl CR5_NOTCH_B6): notch air walked at the level of
+   *  detail, the BEFORE of NS-307 */
+  notchB6?: boolean;
 }
 /** (B6) the notch parameters' uniform (cliff5.wgsl Cr5NU: pct, dep as 2 vec4 each, then f) */
 const NOTCH_BYTES = 80;
@@ -191,10 +194,10 @@ export class CliffBox {
   }
   private optKey(): string {
     const o = this.opt;
-    return `${+o.cull}${+o.order}${o.amp ? `a${o.amp.join(',')}` : ''}${o.wLevel !== undefined ? `w${o.wLevel}` : ''}`;
+    return `${+o.cull}${+o.order}${o.amp ? `a${o.amp.join(',')}` : ''}${o.wLevel !== undefined ? `w${o.wLevel}` : ''}${o.notchB6 ? 'n6' : ''}`;
   }
   private constants(o: BoxOpt): Record<string, number> {
-    const c: Record<string, number> = { CR5_CULL: +o.cull, CR5_ORDER: +o.order };
+    const c: Record<string, number> = { CR5_CULL: +o.cull, CR5_ORDER: +o.order, CR5_NOTCH_B6: +!!o.notchB6 };
     // (B6, measurement) the rule's amplitudes / block level for this pipeline
     if (o.amp || o.wLevel !== undefined) Object.assign(c, cliffRuleOverrides(o.amp ?? this.ampL, o.wLevel ?? this.wLevel));
     return c;
