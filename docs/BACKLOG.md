@@ -1055,6 +1055,27 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
 - NS-313 (look, round 32 B8) Notches finer than the level of detail are not drawn (B6 drew them at a coarse node's
   centre column). A change from B6, closer to the per-column definition at the pixel size; the owner's "fractal down to
   pixel size" may want sub-pixel notches shown statistically (darkening) instead. Owner to judge rB8 stills.
+- NS-315 (fault, round 32 C0) Rule v2 (cliffrule2.ts) does not keep material connected, A as well as B (flood fill:
+  A 133 / 86 floating pieces at 0.25 m, 237 / 179 at 1/32 m; B more, and B cuts the main face through). Cause:
+  independent row / column cut depths enclose cells at convex corners; the 2 m base staircase is all corners at level 1.
+  Proposed clamp (NESTED_SCALES.md step C0): y-face depths non-decreasing toward an x face within dMax + 1 cells; base
+  aligned with the cuts at level 1. Owner to decide before building.
+- NS-316 (fault, round 32 C0) Sheet cells are never subtracted, so where the subtraction carves a split cell back to the
+  coarse border the sheet cell's side shows as a smooth wall (near-A strips, trench end, most of close-B; B reaches
+  ~16 m). Fix: cut faces in the bordering cell's side too, or confine the reach to the split cell.
+- NS-317 (look, round 32 C0) Floors and ceilings of removed spans are flat stone (tops and floors are never sources, as
+  briefed); against "no smooth stone surfaces at all". Owner to rule.
+- NS-318 (limit, round 32 C0) Rule v2 is not O(1) per point: unmemoised ~13^(l-1) evaluations for A; the CPU memoises.
+  A shader needs the window pass (levels x 9 x (1 + 4 dMax) lookups) or the clamp's parent-local form; not built.
+- NS-319 (limit, round 32 C0) Rule v2 departures to confirm: base stepped at 2 m (not a continuous line), neighbour air
+  tested at slab mid-height, span grids phase-shifted per face cell, no slow variation, the mean not kept after
+  subtraction (removed volume uncompensated; base block mean within 0.78 % of H - L).
+- NS-320 (hack, round 32 C0) cliffview2.ts: the memo is dropped above 4 M cells; recess terms sampled at the 0.25 m
+  level, not the hit's; the shadow start offset scales with the cell (capped at 2 cm); the render2 `dbg` hook and the
+  RA_DIAG test are diagnostics left in.
+- NS-321 (test, round 32 C0) Connectivity probes are small (16 m and 2 m squares); pieces touching a probe's boundary
+  count as connected, so the counts are lower bounds. The test reports, does not assert.
+- NS-322 (hack, round 32 C0) nested-cliffrule2.test.ts copies the PNG writer of nested-cliffrule.test.ts.
 - NS-314 (test, round 32 B8) Unverified: the foot view with notches measures cheaper than without; explanation (fewer
   box fragments march behind a notch ceiling) not checked with the overdraw count pass (render.cliffCount).
 - NS-308 (look, round 32 B6) Thin bright vertical lines on column faces in ?cliff=5 (with and without notches, both

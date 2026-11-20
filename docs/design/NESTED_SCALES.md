@@ -2134,6 +2134,72 @@ subtraction in the quadtree.
   - The thin bright vertical lines on the faces (NS-308): ?cliffDbg=13 (rB7-side2-def-kind, crops *-crop.png) shows them
     as column-side hits (kind 1), not seams, misses or side walls: thin sunlit side faces, most likely where the face
     steps back by a column (not confirmed with a normal debug).
+
+**As built (round 32, step C0: rule v2 on the CPU).** The owner's model: "a fractal of column subtraction so that there
+are no smooth stone surfaces at all"; subtraction under half a cell per level "should always leave contiguous
+material"; 4 depths per 8x level (0..3) against 2 per 2x level (0..1); below 0.25 m keep subdividing to pixel size.
+Code: `src/nested/exp/cliffrule2.ts` (the rule), `src/nested/exp/cliffview2.ts` (CPU march),
+`test/unit/nested-cliffrule2.test.ts` (tests; pictures `local/nested/rC-<near|far|trench|above|close>-<A|B|C>.png` with
+`RA_PICS=1`; diagnostics with `RA_DIAG=1`). `cliffrule.ts` is untouched and still v1's definition. CPU only, not in the
+game, no shader.
+- *Base* (reuses v1's kinds, H / L, direction (a, b), sheets, hashes): a split 16 m cell is 8 x 8 blocks of 2 m; a block
+  is up (top H) when its score (a wc(bx) + b wc(by)) TIE + tie(block) is among the round(64 (h - L) / (H - L)) highest of
+  the 64, else down (top L). No per-level offsets: a clean straight boundary in 2 m steps. Block mean vs h: worst 0.76 m,
+  0.78 % of H - L (one block is 1.56 %). Sheet cells are drawn smooth as in v1; for the subtraction their blocks count
+  with the sheet height at the block centre. Level 0 solid = z < baseTop(block). Heights in 1/4096 m (integers).
+- *Subtraction*, level l = 1..maxLevel, cell s_l = 16 m / 2^(l qPer): A qPer 3, levels to 5 (16, 2, 0.25, 1/32, 1/256,
+  1/2048 m), dMax 3; B qPer 1, levels to 15 (16 m / 2^l), dMax 1. Plan cells at depth max(l qPer, 3) (never coarser
+  than a base block, so a level's column is constant in plan); z in slabs of s_l on a global grid. A point p in a split
+  cell, in level-l slab k with mid-height zm, is REMOVED at level l when: (k + 1) s_l <= baseTop(p) - s_l (the top layer,
+  1-2 cells, is never cut); p is solid at level l-1 at zm; and for some axis direction n and j in 1..dMax the points
+  p + i s_l n (i < j) are solid and p + j s_l n is air at level l-1 at zm, and d(f, zm) >= j, f = the level-l face cell
+  containing p + (j-1) s_l n. d is hashed per face cell and per z span: the face cell's blocks of 4 slabs (its grid
+  shifted by a hashed 0..3 slabs) are cut once at a hashed slab or not, so spans are 1-4 slabs; each span's d is uniform
+  in 0..dMax (share cut: A 75 %, B 50 %). Solid at level l = solid at l-1 and not removed at l. Horizontal only.
+- *Departures from the brief*: (1) the clean boundary is stepped at 2 m blocks, not a continuous line; (2) neighbour air
+  is tested at the slab's mid-height, not per point; (3) each face cell's span grid is phase-shifted (on one global grid
+  every span end lies on the 4-slab lattice); (4) removal only inside split cells (sheet cells are never cut: fault NS-316);
+  (5) no slow variation; (6) the mean is not kept after subtraction (the removed volume is not compensated); (7) tops and
+  floors are never sources, as briefed, so floors and ceilings of removed spans are flat stone (NS-317, against "no smooth
+  stone surfaces at all": owner to rule).
+- *Connectivity: NOT kept, in A as well as B* (flood fill, reported not asserted). 0.25 m probe (16 x 16 m, whole drop,
+  grounded = reached from the bottom layer) / 1/32 m probe (2 x 2 x 8 m at mid-height, enclosed pieces): A main wall 133
+  pieces, 941 voxels of 259k solid / 237, 1,632; A trench 86, 206 / 179, 1,027; B main 173, 1,437 plus 94,577 voxels
+  reachable only through the probe's sides (B cuts the face through within 16 m) / 349, 9,074; B trench 93, 520 / 92,
+  1,792. *Cause*: row cuts (from x faces) and column cuts (from y faces) have independent hashed depths, so near a convex
+  corner of the coarser material they can enclose a cell. The half-cell bound keeps every coarser cell's core (rows and
+  columns 3..4 of 0..7 for A) and the bridges between neighbouring cores, but not a fringe cell's path to its core. At
+  level 1 it is worse: the 2 m base staircase is made of level-1-sized steps, all corners.
+- *Proposed clamp (not built; owner to decide)*: within dMax + 1 cells of an x face, the y faces' cut depths may not
+  decrease toward that x face: eff_N(col) = min of d_N over that column and the columns between it and the x face. Then a
+  survivor reaches its parent's core along its row (contiguous from the x face) and then down its column (contiguous from
+  the y face, and no deeper toward the corner than the survivor's own column). Level 1 also needs the base aligned with
+  the cuts (or the same clamp on the staircase).
+- *The bound* (per node of level l at least 2 m, at height z): AIR at every finer level where level l is air (finer
+  levels only remove); SOLID at every finer level when the node and its 8 neighbours are solid at level l over
+  [z - rz, z + rz], rz = sum over m > l of s_m / 2 (finer levels reach under s_l horizontally: A 3/7 s_l, B < s_l; the
+  slab mids drift at most rz in z); else MIXED. Cost: 9 cells x 1-2 slab tests. Tested: 1,752 finer points under
+  sure-solid claims, none air.
+- *Cost of one point*: removed(m) needs level m-1 at up to 1 + 4 dMax neighbours, recursively: unmemoised ~13^(l-1)
+  evaluations for A. The CPU memoises per (level, cell, slab). *For a shader*: a window pass coarse to fine at one
+  slab-mid height per level (slabs nest, so every level-m cell is read at the same height): at each level only the 3 x 3
+  cells round the point's ancestor are needed (offsets <= dMax s_m stay within one parent neighbour), about levels x 9 x
+  (1 + 4 dMax) lookups (~600 for A at 5 levels). For A it narrows to the parent and its 4 neighbours, since level l-1 is
+  constant per parent in plan.
+- *The march* (cliffview2.ts): coarse DDA; sheets as v1; split cells descend the rule's own levels (8 x 8 children per
+  node for A, 2 x 2 for B, DDA inside the node); a node is skipped above its base top or when air at its level over the
+  ray's z range; a sure-solid node ends the ray with a side hit; the leaf (cell about 1 px at the node's own entry
+  distance, not the coarse cell's: a camera inside a coarse cell had taken the finest level everywhere) walks its column
+  in z coarse-first (an air slab removed at level m is crossed to that slab's end). Cap 4000 nodes, never reached.
+- *Measured*, nodes per pixel mean / max (slab queries mean), 960 x 640, px 1, shadow rays excluded; C = v1 render with
+  full-cell fine amplitudes, wLevel 5, notches "every": near A 23.6 / 83 (5.2), B 27.0 / 94 (9.8), C 32.3 / 154; far A
+  20.8 / 88 (1.1), B 22.4 / 110 (2.6), C 21.9 / 86; trench A 24.1 / 98 (2.8), B 26.1 / 133 (6.1), C 26.9 / 297; above A
+  12.8 / 64 (0.8), B 13.6 / 77 (2.1), C 13.7 / 127; close (eye 3 m from each variant's wall at 56.7 m) A 12.8 / 50
+  (13.0, leaf level 3 = 1/32 m), B 17.4 / 90 (16.0, levels 10-11), C 10.4 / 22. CPU time ~85 s for the 15 pictures.
+- *Faults in the pictures*: smooth vertical strips in near-A, at the trench's end and over most of close-B are the sides
+  of sheet cells (hits from the sheet march), exposed when the subtraction carves the split cell back to the coarse
+  border (B's reach is ~16 m) (NS-316); flat stone floors and ceilings of removed spans (NS-317); close-C is one flat
+  face (v1 stops at 0.25 m; reference only). Owner to judge A vs B, the clamp, floors / ceilings.
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

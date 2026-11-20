@@ -28723,3 +28723,26 @@ max / at the cap): side2 B6 10.54-11.20, 13.3-14.2, 16.4 / 80 / 0 -> B8 6.51-6.8
 0.3 % (side16), 1.1 % (side2: fewer notch floors, the sub-LOD notches) and 28.6 % (foot: B6's capped pixels resolved).
 WGSL = TS test passes; typecheck clean. Open: NS-311..NS-314.
 
+## 2026-11-20 — Nested scales lab, round 32 (step C0): cliff rule v2 on the CPU, the fractal of column subtraction
+
+**Why.** The owner's model replaces the accumulated settings: "a fractal of column subtraction so that there are no
+smooth stone surfaces at all", subtraction under half a cell per level leaving contiguous material, 4 depths per 8x
+level vs 2 per 2x level, subdividing below 0.25 m to pixel size. Built on the CPU first to see the look and test the
+connectivity claim before any shader.
+
+**What.** `src/nested/exp/cliffrule2.ts`: a clean 2 m-block base per split cell (v1's H / L, direction, exact block
+count), then per level horizontal subtraction from every face of the coarser material, depth hashed per face cell and z
+span (A: 8x levels, d 0..3; B: 2x levels, d 0..1), tops never cut; a node bound (air / sure solid via the 3 x 3 at the
+node's level / mixed). `src/nested/exp/cliffview2.ts`: CPU march over the rule's own levels, leaf at ~1 px, columns walked
+coarse-first in z. `test/unit/nested-cliffrule2.test.ts`: base, bound, connectivity (flood fill), determinism; pictures
+`local/nested/rC-*` for A, B and C (v1 fine + notches "every"). Precise rule, departures and numbers: NESTED_SCALES.md
+"As built (round 32, step C0)".
+
+**Measured.** Nodes per pixel mean (max): near A 23.6 (83), B 27.0 (94), C 32.3 (154); far 20.8 / 22.4 / 21.9; trench
+24.1 / 26.1 / 26.9; above 12.8 / 13.6 / 13.7; close 12.8 / 17.4 / 10.4; cap never reached. Bound: 1,752 finer points
+under sure-solid claims, none air. **Connectivity fails in A and B**: 0.25 m probes A 133 / 86 floating pieces (main /
+trench), B 173 / 93 and B's main face cut through; 1/32 m probes A 237 / 179, B 349 / 92. Cause: independent row and
+column cut depths enclose cells at convex corners (and the 2 m base staircase is all corners at level 1). A clamp is
+proposed, not built. Picture faults: smooth sheet-cell sides exposed (NS-316), flat floors / ceilings (NS-317). Owner to
+judge A vs B, the clamp and floors before anything else is built. Open: NS-315..NS-322.
+
