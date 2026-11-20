@@ -102,6 +102,21 @@ Round 32, the real thing:
   complaints in the owner's phone screenshots of round 27. The "rule at the 2 m level" round was started and
   stopped before any edit; it may still be wanted for real cliffs that exist only at 2 m.
 
+- **The owner's stated taste (2026-11-20, last message before handoff):** "So far my preferences have been the
+  finer columns and more notches which make the surface noisy and read as stone to me. I actually loved the
+  look where it was boxels everywhere but I do think that varying it by material could help. Sand and dirt have
+  angle of repose and can't really get the crease artifact that motivated this all and the more recent sphere
+  pictures don't have the artifact that motivated this whole exploration". Coarse notches on the trench "looks
+  good"; notches at every level did not read in the old CPU picture because "the columns look very flat and
+  like they are not notched at fine detail".
+  Direction this implies (orchestrator's reading, to confirm with the owner): draw style by MATERIAL. Stone is
+  drawn as boxel columns (possibly at every slope, i.e. the T=0 look for stone), fine and heavily notched.
+  Loose materials (sand, dirt) stay smooth sheets and get their shape from the simulation's angle of repose, so
+  they never hold the vertical wall that makes creases; this ties the look to the first simulation slice
+  (slumping). The brushed dirt sphere standing vertical is then a simulation matter, and its remaining visual
+  fault is only the material-boundary teeth. Not designed yet: which material decides a column's style where
+  cover lies over stone, and how a sheet of cover meets boxel stone.
+
 ## Open decisions for the owner
 1. Threshold default: 2 or 4.
 2. Notches: port coarse ones to the shader, or drop (orchestrator's view from the CPU pictures: drop for now).
