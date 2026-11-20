@@ -900,6 +900,14 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   patch and thin black vertical slivers remain unexplained (stills local/nested/r31s-side2-w16s1.png, -w8s1.png).
 - NS-251 (test, round 31) sheetBake (nest.wgsl, not touched this round) went over its 1000 ms compile budget on 3 of
   6 runs (1020-1177 ms) while the round 31 draws stayed within: noise on this machine or a budget too tight.
+- NS-252 (look, round 31) `?cliff=3` still shows thin regular vertical stripes on walls at side2 with the finest cells at
+  6-10 px by distance: the distance rule ignores how much a wall seen at a grazing plan angle squeezes a cell on screen
+  (suspected, not measured). Same per-pixel plane as version 2 (NS-246): neighbouring pixels on different triangles
+  disagree on level 0's tops.
+- NS-253 (test, round 31) Compile times swing 1.5-2.5x between runs on this machine (drawFieldTex 295-820 ms with no
+  change); version 3's textured variants (drawBoxesTexV3 / drawSheetsTexV3) got a 600 ms budget from 341-457 / 401-535 ms.
+- NS-254 (hack, round 31) The pixel's size per unit of distance (draw uniform cl.x) is written by the app each frame
+  from FOVY and the canvas height (one scalar) rather than taken from the camera pass's own projection.
 - NS-229 (perf, round 28) The boot gate's "every boot pipeline" is the first frame's pipelines and then derive's compile
   (7.6-9.1 s in Chrome, 2.4 s in Dawn), which grew with rounds 25 and 27; the 512 MB reload read 17,971 and 19,409 ms
   against 19,000 this round. Cut derive's compile (the generator and material code out of the layer pass's unrolled

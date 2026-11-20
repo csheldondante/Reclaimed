@@ -1737,6 +1737,18 @@ uniform's threshold went to x 100 in bits 0-11 to make room: bits 12-15 the drop
 local/nested/r31s-*: with smooth tops most of the wall goes back to the plain sheet (the plane's own slope along the
 contour is under n, so neighbours join); faces stand only where the wall is steepest, as thin shards and slivers.
 Version 3 (nested levels, `?cliff=3`) is parked on `exp/nested-cliff-levels` (7f0d8b9b), to return next.
+
+**As built (round 31, version 3 back, step 4a: aliasing): `?cliff=3`, `?cliffPx=` (default 6).** The owner: the nested
+levels "look fine aside from the alias artifacts and not enough vertical noise". shade.wgsl shCol3 / sc3Top, compiled into
+the textured box and sheet pipelines only when the page loads with `?cliff=3` (override CLIFF_V3, as CLIFF_CUT), so the
+other looks keep their compile time. Changes from the parked version: the finest level and its share come from the
+distance to the eye (a new uniform vec4 `cl` at byte 176 of the draw uniform: x a pixel per unit of distance, set by the
+app from the field of view and the canvas height; y `?cliffPx=`), not from the pixel's derivatives; the floor is 6 px a
+finest cell; a child's top is its parent's less its own hashed drop (no re-snap of the plane per level); the finest
+level's edge lines and tint grow in with its share; the climb back up to the parent is a bounded loop (it was an
+unbounded `loop`). Uniform word bit 29 (with bit 30) selects it; `?cliffDrop=` is per level in that level's cells.
+Stills local/nested/r31v3a-*: the large black ovals of the parked version are gone at side2; thin regular vertical stripes
+remain at px 3, 6 and 10 (suspected: walls seen at a grazing plan angle squeeze a cell's width on screen).
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

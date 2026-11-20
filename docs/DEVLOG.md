@@ -28386,3 +28386,22 @@ side2 (rounds 1-2); the page frame stays at the 10 ms vsync.
 contour neighbours join, and only where the wall's slope passes n along a grid axis do faces stand, now as thin shards and
 slivers rather than columns. `?cliffDrop=4` brings more faces back (more columns pass the threshold by hash). An oval dark
 patch and thin black vertical slivers at side2 are not explained yet. Limits NS-248..NS-251.
+
+## 2026-11-20 — Nested scales lab, round 31 (version 3 back, step 4a): the nested columns' aliasing (`?cliff=3`)
+
+**Why.** The owner on the parked version 3: "the nested levels actually look fine aside from the alias artifacts and not
+enough vertical noise". Step 4a takes the aliasing: suspected causes were finest cells of 1-3 px, the level chosen from
+per-pixel derivatives (neighbouring pixels disagree) and children re-snapping the sloped plane at their own size.
+
+**What.** NESTED_SCALES.md "As built (round 31, version 3 back, step 4a)": level by distance (new uniform vec4 at byte
+176, DU_SIZE 192), floor 6 px (`?cliffPx=`), children = parent less own hashed drop, the finest level's lines and tint by
+its share, a bounded climb loop, CLIFF_V3 override so only `?cliff=3` pays its compile time. The compile test times the
+V3 variants (drawBoxesTexV3, drawSheetsTexV3, budget 600 ms). Code in 9290e9ab (these notes missed that commit).
+
+**Measured.** Compile (Dawn), three runs, ms: default textured boxes / sheets / field 425 / 487 / 566, 276 / 302 / 339,
+391 / 406 / 820 (the Tex2 draws, untouched, moved 220-325 / 285-434 at the same time: machine noise); V3 variants boxes
+457 / 341 / 414, sheets 535 / 402 / 401. Frame time not yet taken (step 4c).
+
+**Reading.** Stills local/nested/r31v3a-side2-px3 / px6 / px10 and -side16-px6 against the parked r31v3-side2-cliff1:
+the large black ovals are gone; at side16 the columns read cleanly; at side2 thin regular vertical stripes remain at
+every floor tried. Limits NS-252..NS-254.
