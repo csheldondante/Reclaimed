@@ -88,7 +88,8 @@ it('nested: a world point shades the same from every level (bands=all)', async (
       const u = rnd();
       const px = far ? 0.02 * Math.pow(100, u) : 0.3 * Math.pow(pxMin / 0.3, u);
       new Float32Array(qb, j * 64, 10).set([...ng, 0, ...view, 0, px, 2000 * px]);
-      new Uint32Array(qb, j * 64 + 40, 1).set([1 + (j % 4)]);
+      // (round 25: plants, material 5, carry the canopy now; soil is plain dirt)
+      new Uint32Array(qb, j * 64 + 40, 1).set([1 + (j % 5)]);
       new Float32Array(qb, j * 64 + 44, 2).set([split ? 1 : 0, canopy]);
     }
     const buf = (data: ArrayBuffer | null, size: number, usage: number) => {

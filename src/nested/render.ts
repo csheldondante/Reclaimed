@@ -15,7 +15,7 @@ export function drawModuleCode(S: number, segP: number): string {
 }
 
 const DU = 256;
-const DU_SIZE = 160;
+const DU_SIZE = 176;
 /** a grid's model matrix: one root grid at the world origin today (identity); another grid would carry its rigid frame */
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
@@ -118,8 +118,9 @@ export class Renderer {
   /** (round 20) the textured draw wanted (?tex=1, default; the "Textured" button). Drawn once its pipelines are made;
    *  the flat draw meanwhile */
   tex = true;
-  /** (round 22) ?slide=0|1, the "Round edges" button: the sheets' vertices slide sideways onto the edge samples' lines */
-  slide = true;
+  /** (round 22) ?slide=0|1, the "Round edges" button: the sheets' vertices slide sideways onto the edge samples' lines
+   *  (round 25: off by default) */
+  slide = false;
   /** (round 20) ?bands=split: only the bands finer than 2 columns of the drawn level; else every band (the default) */
   bandsSplit = false;
   /** (round 20) ?texbands=N: the textured draw's band window (N + 1 band noises a pixel at most); 0 its default (6) */
@@ -129,6 +130,12 @@ export class Renderer {
   /** (round 21) ?canopyfade=: the canopy's crossover footprint, world units a pixel (canopy over twice it, grass under
    *  half: with 2-unit crown cells, 0.1 puts the crossover at cells of 10-40 pixels) */
   canopyFade = 0.1;
+  /** (round 25) metres a world unit (a root column: 128 with the generator, 3.2 the toy root) */
+  mpu = 3.2;
+  /** (round 25) ?fog=: the fog's distance, metres (full at about it); 0: round 21's haze (the toy root) */
+  fogM = 0;
+  /** (round 25) the textured shading's scale: its bands and materials in world units / 2^shadeS */
+  shadeS = 0;
   private texPipes: { box: GPURenderPipeline; sheet: GPURenderPipeline; sky: GPURenderPipeline } | null = null;
   private texCompile: Promise<void> | null = null;
   /** (round 20) the textured pipelines' creation time, ms (asynchronous, after the first frame) */
@@ -261,6 +268,8 @@ export class Renderer {
       // (round 11, NS-97) the live child's window: the parent's rim vertices are placed in its units
       const c = this.nest.wins[lv.depth + 1];
       new Int32Array(st, lv.depth * DU + 144, 4).set(c ? [c.gx, c.gy, c.n, 1] : [0, 0, 0, 0]);
+      // (round 25) metres a world unit, the fog's distance (metres), the shading's scale
+      new Float32Array(st, lv.depth * DU + 160, 4).set([this.mpu, this.fogM, this.shadeS, 0]);
     }
     this.device.queue.writeBuffer(this.ubuf, 0, st);
   }

@@ -18,6 +18,10 @@ struct DrawU {
   // (round 11, NS-97) the live child's window (gx0, gy0, n, live): the parent's vertices on its rim lines are placed in
   // the child's units through the child's view-projection
   kid: vec4<i32>,
+  // (round 25) x metres a world unit (a root column), y the fog's distance in metres (0: round 21's haze, the toy root),
+  // z the textured shading's scale: its bands and materials in world units / 2^z (5 at 128 m: 4 m, near the 3.2 m root
+  // column their constants were tuned at)
+  geo: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> d: DrawU;
@@ -69,15 +73,27 @@ fn vpOf(L: u32) -> mat4x4<f32> {
     vec4<f32>(cam[b + 12u], cam[b + 13u], cam[b + 14u], cam[b + 15u]));
 }
 
-fn matColor(m: u32, nz: f32) -> vec3<f32> {
+/** a material's colour (round 25: the material alone; soil was green where the normal was up: the owner, "terrain layers
+ *  should not have multiple materials by normal") */
+fn matColor(m: u32) -> vec3<f32> {
   switch (m) {
     case 1u: { return vec3<f32>(0.47, 0.45, 0.43); }
-    case 2u: { return select(vec3<f32>(0.45, 0.36, 0.24), vec3<f32>(0.36, 0.52, 0.24), nz > 0.5); }
+    case 2u: { return vec3<f32>(0.45, 0.36, 0.24); }
     case 3u: { return vec3<f32>(0.80, 0.70, 0.48); }
     case 4u: { return vec3<f32>(0.62, 0.38, 0.30); }
+    case 5u: { return vec3<f32>(0.30, 0.42, 0.18); }
     default: { return vec3<f32>(1.0, 0.0, 1.0); }
   }
 }
+/** (round 25) the fog's share at a distance of dEye in level L's units: full at about d.geo.y metres (1 - e^-4 there,
+ *  a quarter of it at half the distance); 0 with no fog distance (the toy root: round 21's haze in the textured draw) */
+fn fogAt(L: u32, dEye: f32) -> f32 {
+  if (d.geo.y <= 0.0) { return 0.0; }
+  let m = dEye / pow(d.misc.w, f32(L)) * d.geo.x / d.geo.y;
+  return 1.0 - exp(-4.0 * m * m);
+}
+/** the flat draws' fog colour (the clear colour) */
+const FOG_FLAT = vec3<f32>(0.62, 0.71, 0.78);
 const NRM = array<vec3<f32>, 6>(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(-1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, -1.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(0.0, 0.0, -1.0));
 
 /** triangle slot `tri` of face page `slot` of the level's list: its vertex v (local units), or none */
@@ -158,7 +174,7 @@ fn vs(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VOu
   o.pos = pc.pos;
   o.local = c.lp.xy;
   o.nrm = n;
-  o.col = matColor(c.mat, n.z);
+  o.col = matColor(c.mat);
   // (diagnostics, Renderer.diag) 1: the triangle slot's parity, 2: the face kind
   if (d.misc.x == 1.0) { o.col = select(vec3<f32>(1.0, 0.2, 0.2), vec3<f32>(0.2, 0.4, 1.0), ((vv / 3u) & 1u) == 1u); }
   if (d.misc.x == 2.0) { o.col = abs(n) * 0.8 + select(vec3<f32>(0.0), vec3<f32>(0.2), n.x + n.y + n.z < 0.0); }
@@ -427,8 +443,9 @@ fn fsS(v: VOutS) -> FOut {
   // (round 17, NS-123 (b)) a sky / ground ambient instead of the flat 0.35 less 0.12 for a face turned down: walls away
   // from the sun read at 0.47 of full light (was 0.35), undersides 0.40 (was 0.23; nearly black on stone)
   let lit = mix(0.40, 0.52, 0.5 + 0.5 * n.z) + 0.55 * max(dot(n, sun), 0.0);
-  var col = matColor(v.mat, n.z) * (0.84 + 0.32 * pat) * lit;
+  var col = matColor(v.mat) * (0.84 + 0.32 * pat) * lit;
   if (d.misc.z > 0.5) { col = mix(col, TINTS[u32(d.lvl.w) % 6u] * lit * 0.8, 0.55); }
+  col = mix(col, FOG_FLAT, fogAt(u32(d.lvl.w), v.dEye));
   var o: FOut;
   o.color = vec4<f32>(col, 1.0);
   let coarse = d.want.x > 0.0 && v.dEye < d.want.x;
@@ -505,6 +522,7 @@ fn flatOut(v: VOut, px: f32) -> FOut {
   let lit = 0.35 + 0.65 * max(dot(n, sun), 0.0) + 0.12 * n.z;
   var col = v.col * (0.84 + 0.32 * pat) * lit;
   if (d.misc.z > 0.5) { col = mix(col, TINTS[u32(d.lvl.w) % 6u] * lit * 0.8, 0.55); }
+  col = mix(col, FOG_FLAT, fogAt(u32(d.lvl.w), v.dEye));
   var o: FOut;
   o.color = vec4<f32>(col, 1.0);
   // info: r a surface was drawn, g the level, b not yet sharp: a parent where its child is wanted, i.e. nearer the eye
@@ -522,10 +540,14 @@ fn flatOut(v: VOut, px: f32) -> FOut {
 /** a level's s: log2 of its columns a world unit (k a power of two: BACKLOG NS-146) */
 fn levelS() -> i32 { return i32(d.lvl.w) * i32(round(log2(d.misc.w))); }
 fn texOut(q: vec3<f32>, zo: f32, ng: vec3<f32>, mat: u32, pxL: f32, toEye: vec3<f32>, dEye: f32) -> FOut {
-  let s = levelS();
+  // (round 25) in shading units of a world unit / 2^geo.z: s less it, the z origin times it (exact: powers of two)
+  let gz = i32(d.geo.z);
+  let s = levelS() - gz;
   let sc = ldexp(1.0, -s);
   var si: ShadeIn;
-  si.p = DPt(d.lvl.xy, s, zo, q);
+  si.p = DPt(d.lvl.xy, s, ldexp(zo, gz), q);
+  // (the fog by metres; 0 keeps round 21's haze)
+  si.fog = select(-1.0, fogAt(u32(d.lvl.w), dEye), d.geo.y > 0.0);
   si.ng = ng;
   si.mat = mat;
   si.pxW = pxL * sc;

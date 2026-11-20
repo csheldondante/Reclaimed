@@ -97,7 +97,8 @@ async function main(): Promise<void> {
       const res: { pass: boolean; name: string; detail: string }[] = [];
       if (q.get('wt') !== '0') {
         const { App } = await import('./app');
-        await App.start(device, new URLSearchParams('k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140'));
+        // (round 25: the toy root, gen=0: the suite's scene and poses are its)
+        await App.start(device, new URLSearchParams('k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140&gen=0'));
         const api = (window as unknown as { nested: { app: { frameCount: number; pipesReady: boolean } } }).nested;
         while (api.app.frameCount < 60 || !api.app.pipesReady) await new Promise((r) => setTimeout(r, 50));
         await new Promise((r) => setTimeout(r, 1500));
@@ -149,7 +150,8 @@ async function main(): Promise<void> {
         const { setTraceNew } = await import('./gpu/nest');
         setTraceNew(rootTracer((s) => console.log(`[suite] trace ${s}`)).fn);
       }
-      await App.start(device, new URLSearchParams('k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140'));
+      // (round 25: the toy root, gen=0: the suite's scene and poses are its)
+      await App.start(device, new URLSearchParams('k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140&gen=0'));
       const api = (window as unknown as { nested: Parameters<typeof watertightSuite>[0] }).nested;
       while (api.app.frameCount < 60 || !(api.app as unknown as { pipesReady: boolean }).pipesReady) await new Promise((r) => setTimeout(r, 50));
       await new Promise((r) => setTimeout(r, 1500));

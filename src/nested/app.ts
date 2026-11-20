@@ -5,9 +5,16 @@
 import { GpuNest, type Op, type Win } from './gpu/nest';
 import { Renderer, type DrawLevel } from './render';
 import { coverage, holePixels, lastImage, manifold, rayDiag, rimJunctions, unionClosure } from './watertight';
+import { NestGen, labAtlasParams } from './gen';
 
-/** a root column, in metres (the info line) */
-const ROOT_COLUMN_M = 3.2;
+/** a root column, in metres (the info line; round 25: 128 with the generator, 3.2 the toy root of ?gen=0; set once by
+ *  the App's constructor, one page one App) */
+let ROOT_COLUMN_M = 3.2;
+/** (round 25) the generator's root column, metres (the plan's ladder: 128, 16, 2, 0.25 with k = 8) */
+const GEN_ROOT_M = 128;
+/** (round 25) where the root window's centre sits on the atlas by default, root columns: an 8 km square with 589 m of
+ *  relief, a coast and a 208 m step between two root columns (test/gpu/nested-gen.test.ts NESTED_GEN_SCAN=1) */
+const GEN_AT: [number, number] = [144, 432];
 const FOVY = (50 * Math.PI) / 180;
 /** a number with two significant decimals at most */
 const A2 = (v: number) => (v >= 10 ? v.toFixed(0) : v.toFixed(2));
@@ -156,8 +163,31 @@ export class App {
     // (round 21) the forest canopy from afar: ?canopy=0 off; ?canopyfade= its crossover footprint (world units a pixel)
     this.render.canopy = q.get('canopy') !== '0';
     if (q.has('canopyfade')) this.render.canopyFade = Number(q.get('canopyfade'));
+    // (round 25) the terrain from the atlas's ground (?gen=0: the toy root, which the self-test's oracle knows). The root
+    // window sits over ?at=x,y (root columns of its centre); fog by metres (?fog=, default 8 km)
+    this.genOn = q.get('gen') !== '0';
+    if (this.genOn) {
+      ROOT_COLUMN_M = GEN_ROOT_M;
+      this.render.mpu = GEN_ROOT_M;
+      this.render.fogM = Number(q.get('fog') ?? 8000);
+      this.render.shadeS = Math.round(Math.log2(GEN_ROOT_M / 3.2));
+      this.nest.detailAmp = Number(q.get('detail') ?? 0);
+      const at = (q.get('at') ?? GEN_AT.join(',')).split(',').map(Number);
+      this.rootAt = [Math.round((at[0] - this.rootN / 2) / 16) * 16, Math.round((at[1] - this.rootN / 2) / 16) * 16];
+    }
     this.q = q;
   }
+  /** (round 25) the generator on (?gen=0: off), and made (the atlas built and the root made from it) */
+  readonly genOn: boolean;
+  genReady = false;
+  /** (round 25) the generator once built, until the root is made from it */
+  private genMade: NestGen | null = null;
+  private genAsked = 0;
+  /** (round 25) ms after the page opened: the atlas built (and its fill compiled), the root made from it */
+  genAt = 0;
+  terrainAt = 0;
+  /** (round 25) the root window's corner, root columns */
+  rootAt: [number, number] = [0, 0];
   private q: URLSearchParams;
   /** (round 19, NS-141) the pipelines the first frame uses (GpuNest.firstUse at the first frame), made before it */
   static readonly BOOT = ['rootGen', 'pack', 'dilate', 'faceBake', 'faceBakeRim', 'tabOut', 'tabIn', 'dirClear', 'dirBuild', 'dirFinish', 'merge', 'camera'];
@@ -183,8 +213,11 @@ export class App {
       clearInterval(tick);
     }
     this.bootAt = performance.now();
-    this.nest.root(this.rootN);
-    this.place(Number(this.q.get('tx') ?? 128), Number(this.q.get('ty') ?? 128), Number(this.q.get('d') ?? 260));
+    // (round 25: the toy root first, over the same window the generator's root will take; it is the first view's
+    // placeholder until the atlas is built, BACKLOG NS-186)
+    this.nest.root(this.rootN, undefined, this.rootAt[0], this.rootAt[1]);
+    const c = [this.rootAt[0] + this.rootN / 2, this.rootAt[1] + this.rootN / 2];
+    this.place(Number(this.q.get('tx') ?? c[0]), Number(this.q.get('ty') ?? c[1]), Number(this.q.get('d') ?? (this.genOn ? 12 : 260)));
     this.bornAt[0] = this.nest.now();
     this.ui();
   }
@@ -489,6 +522,22 @@ export class App {
   }
   private levels(): void {
     const now = this.nest.now();
+    // (round 25) the generator's root follows the eye too, by the same lead and bands; its entering strips are generated,
+    // its leaving columns kept where edited (nest.ts slide, rootGen mode 1). The toy root (?gen=0) stays put.
+    if (this.genOn && this.genReady) {
+      const [fx, fy] = this.focus(0);
+      const at = (f: number) => Math.max(0, Math.round((f - this.rootN / 2) / 16) * 16);
+      const cur = this.nest.wins[0]!;
+      const want = { gx: at(fx), gy: at(fy), n: this.rootN };
+      const go = (d: number, v: number) => Math.abs(d) >= App.SLIDE_BACK || (Math.abs(d) >= App.SLIDE_AHEAD && Math.sign(d) === Math.sign(v) && Math.abs(v) > 0.02 * this.n);
+      const gx = go(want.gx - cur.gx, this.vx);
+      const gy = go(want.gy - cur.gy, this.vy);
+      if (gx || gy) {
+        const to = { gx: gx ? want.gx : cur.gx, gy: gy ? want.gy : cur.gy, n: cur.n };
+        this.timed('slide', 0, () => this.nest.slide(0, to));
+        return;
+      }
+    }
     for (let m = 1; m <= this.maxDepth; m++) {
       const live = this.nest.live;
       const W = this.width(m);
@@ -583,10 +632,38 @@ export class App {
   private compileAt = 0;
   /** between ops and not switching the smooth draw: a level op, an edit or a shrink may run */
   private get free(): boolean {
-    return this.pipesDone && this.nest.settled && !this.nest.switching;
+    return this.pipesDone && this.nest.settled && !this.nest.switching && (!this.genOn || this.genReady);
+  }
+  /** (round 25) the atlas built after the first frame (its compiles beside the rest), then, between ops, the root made
+   *  from it: every finer level dropped first (they were derived from the placeholder; no edit can have been made, the
+   *  brushes waited) */
+  private genStep(): void {
+    if (!this.genOn || this.genReady) return;
+    // (started once every boot pipeline is made: the atlas's ~20 kernels and ground() compile after them, so the staged
+    // boot's gate is not slowed by them; levels and brushes wait for the terrain anyway)
+    if (!this.genAsked && this.pipesDone) {
+      this.genAsked = performance.now();
+      void NestGen.create(this.device, labAtlasParams(this.q), { slotN: Math.max(this.rootN, this.n), levels: this.maxDepth + 1, rootM: GEN_ROOT_M, k: this.k }).then((g) => {
+        this.genMade = g;
+        this.genAt = performance.now();
+        console.log(`[gen] atlas built at ${this.genAt.toFixed(0)} ms (${g.ms.atlas.toFixed(0)} ms; ${JSON.stringify(g.atlas.timings)}), genFill compiled in ${g.ms.compile.toFixed(0)} ms`);
+      });
+    }
+    if (!this.genMade || !this.pipesDone || !this.nest.settled || this.nest.switching || this.strokeOn) return;
+    if (this.nest.live > 1) {
+      this.nest.demote(1);
+      return;
+    }
+    if (this.nest.gen !== this.genMade) this.nest.setGen(this.genMade);
+    // (refused while the pool grows ahead, as any op: tried again next frame)
+    if (!this.nest.remakeRoot(this.rootN, this.rootAt[0], this.rootAt[1])) return;
+    this.genReady = true;
+    this.terrainAt = performance.now();
+    console.log(`[gen] the root made from the atlas at ${this.terrainAt.toFixed(0)} ms`);
   }
   private frame(): void {
     this.smoothStep();
+    this.genStep();
     const t = performance.now();
     const dt = Math.min(0.1, (t - this.last) / 1000);
     this.frames.push(t - this.last);
@@ -742,6 +819,8 @@ export class App {
       const s = this.nest.pipeStatus;
       lines.push(`Preparing: ${s.made} of ${s.total} GPU programs made; levels and brushes wait for them (compiling: ${s.pending.slice(0, 3).join(', ')}${s.pending.length > 3 ? ', ...' : ''}).`);
     }
+    if (this.genOn && !this.genReady)
+      lines.push(`Preparing the terrain: building the world map (${((performance.now() - (this.genAsked || performance.now())) / 1000).toFixed(0)} s); the land shown until then is a placeholder, and levels and brushes wait for it.`);
     if (this.lifts) lines.push(`The camera was lifted out of solid ${this.lifts} times.`);
     if (st.refused || st.mismatch || st.tableFull) lines.push(`Error: ${st.refused} pages refused, ${st.mismatch} blocks mismatched, table full ${st.tableFull} times.`);
     if (st.error) lines.push(`Memory: ${st.error}`);

@@ -118,6 +118,21 @@ export interface EditSpec {
   rate?: number;
 }
 
+/** (round 25) the generator field (src/nested/gen.ts NestGen): derive and rootGen read it at binding 7 */
+export interface GenHook {
+  /** header (8 vec4: per level metres a column, the slot's n, 1 filled) then per level an n x n slot of vec4 */
+  readonly field: GPUBuffer;
+  /** encode the field's fill of level L over a rect of its global columns, in the open compute pass */
+  fill(pass: GPUComputePassEncoder, L: number, x0: number, y0: number, w: number, h: number): void;
+  /** the submit that held the fills went (their uniform slots may be reused) */
+  submitted(): void;
+}
+/** derive and rootGen (round 25): the entry points bound to the generator field */
+const GEN_ENTRIES = ['derive', 'rootGen'];
+/** (round 25) residual pages a leaving root chunk may take for each column page in its stack (nest.wgsl rootGen mode 1:
+ *  a residual page holds 16 records, two an interval; a column page up to 24 records) */
+const KEEP_PAGES = 3;
+
 let traceNew: ((nest: GpuNest, what: string) => void) | null = null;
 /** (tests only) the trace given to pools made from now on (GpuNest.trace) */
 export function setTraceNew(fn: ((nest: GpuNest, what: string) => void) | null): void {
@@ -150,6 +165,12 @@ export class GpuNest {
   private bg!: GPUBindGroup;
   private planLayout: GPUBindGroupLayout;
   private planBg!: GPUBindGroup;
+  /** (round 25) derive and rootGen: the main layout and the generator field at binding 7 */
+  private genLayout: GPUBindGroupLayout;
+  private genBg!: GPUBindGroup;
+  /** the generator (null: the toy root, the field a stand-in of zeros) */
+  gen: GenHook | null = null;
+  private genNone: GPUBuffer;
   readonly args: GPUBuffer;
   /** the draw's indirect arguments a level (written by dirFinish) and the list of face pages it instances over */
   readonly drawArgs: GPUBuffer;
@@ -231,6 +252,10 @@ export class GpuNest {
     this.layout = device.createBindGroupLayout({ label: 'nest', entries: [uniE, ...sto([1, 2, 4, 5, 6, ...segB])] });
     const module = device.createShaderModule({ label: 'nest', code: `const TCAP: u32 = ${TCAP}u;\n${segWgsl(this.S, this.segP, false)}\n${storeWgsl}\n${nestWgsl}` });
     this.planLayout = device.createBindGroupLayout({ label: 'nest plan', entries: [uniE, ...sto([1, 2, 4, 5, 6, 7, ...segB])] });
+    // (round 25) the generator field, read only, at 7 (no layout holds more than 6 storage buffers besides the segments)
+    this.genLayout = device.createBindGroupLayout({ label: 'nest gen', entries: [uniE, ...sto([1, 2, 4, 5, 6]), { binding: 7, visibility: st, buffer: { type: 'read-only-storage' } }, ...sto(segB)] });
+    this.genNone = device.createBuffer({ label: 'nest gen field (none)', size: 8 * 16, usage: GPUBufferUsage.STORAGE });
+    const gpl = device.createPipelineLayout({ bindGroupLayouts: [this.genLayout] });
     // the draw's directory passes (the face page list and the draw's arguments): their own layout, so no layout holds more
     // than 6 storage buffers besides the segments
     this.dirLayout = device.createBindGroupLayout({ label: 'nest directory', entries: [uniE, ...sto([1, 8, 9, ...segB])] });
@@ -238,7 +263,7 @@ export class GpuNest {
     const ppl = device.createPipelineLayout({ bindGroupLayouts: [this.planLayout] });
     const dpl = device.createPipelineLayout({ bindGroupLayouts: [this.dirLayout] });
     const spec = (name: string, layout: GPUPipelineLayout, entryPoint: string, constants?: Record<string, number>) => (this.specs[name] = { label: `nest ${name}`, layout, compute: { module, entryPoint, constants } });
-    for (const e of ['derive', 'restrictK', 'rootGen', 'zPick', 'release', 'resClear', 'merge', 'edit', 'meltSnap', 'meltApply', 'camera', 'pick', 'ball', 'pack', 'faceBake', 'snap', 'tabOut', 'tabIn', 'shrinkFree', 'shrinkMove', 'shrinkCopy']) spec(e, pl, e);
+    for (const e of ['derive', 'restrictK', 'rootGen', 'zPick', 'release', 'resClear', 'merge', 'edit', 'meltSnap', 'meltApply', 'camera', 'pick', 'ball', 'pack', 'faceBake', 'snap', 'tabOut', 'tabIn', 'shrinkFree', 'shrinkMove', 'shrinkCopy']) spec(e, GEN_ENTRIES.includes(e) ? gpl : pl, e);
     // (round 12, NS-103) the bake of chunks that touch a rim line: the rim rule's code compiled in (nest.wgsl BAKE_RIM)
     spec('faceBakeRim', pl, 'faceBake', { BAKE_RIM: 1 });
     for (const e of ['plan', 'dilate']) spec(e, ppl, e);
@@ -311,6 +336,7 @@ export class GpuNest {
     const segE = this.segBuffers().map((buffer, j) => ({ binding: SEG_BASE + j, resource: { buffer } }));
     this.bg = this.device.createBindGroup({ label: 'nest', layout: this.layout, entries: [...entries, ...segE] });
     this.planBg = this.device.createBindGroup({ label: 'nest plan', layout: this.planLayout, entries: [...entries, { binding: 7, resource: { buffer: this.args } }, ...segE] });
+    this.genBg = this.device.createBindGroup({ label: 'nest gen', layout: this.genLayout, entries: [...entries, { binding: 7, resource: { buffer: this.gen?.field ?? this.genNone } }, ...segE] });
     this.dirBg = this.device.createBindGroup({
       label: 'nest directory',
       layout: this.dirLayout,
@@ -320,7 +346,7 @@ export class GpuNest {
 
   /** (tests) every buffer let go: a pool made for one test and dropped */
   destroy(): void {
-    for (const b of [...this.segs, this.tab, this.ctl, this.scr, this.reg, this.args, this.drawArgs, this.dir, this.cam, this.ubuf]) b?.destroy();
+    for (const b of [...this.segs, this.tab, this.ctl, this.scr, this.reg, this.args, this.drawArgs, this.dir, this.cam, this.ubuf, this.genNone]) b?.destroy();
   }
   /** live levels: the chain's length */
   get live(): number {
@@ -414,14 +440,14 @@ export class GpuNest {
     const p = this.begin();
     this.counts.dispatches++;
     p.setPipeline(this.pipe(entry));
-    p.setBindGroup(0, entry === 'plan' || entry === 'dilate' ? this.planBg : entry.startsWith('dir') ? this.dirBg : this.bg, [off]);
+    p.setBindGroup(0, entry === 'plan' || entry === 'dilate' ? this.planBg : entry.startsWith('dir') ? this.dirBg : GEN_ENTRIES.includes(entry) ? this.genBg : this.bg, [off]);
     p.dispatchWorkgroups(x, y);
   }
   private runIndirect(entry: string, off: number, slot: number): void {
     const p = this.begin();
     this.counts.dispatches++;
     p.setPipeline(this.pipe(entry));
-    p.setBindGroup(0, this.bg, [off]);
+    p.setBindGroup(0, GEN_ENTRIES.includes(entry) ? this.genBg : this.bg, [off]);
     p.dispatchWorkgroupsIndirect(this.args, slot * 16);
   }
   /** the encoded passes submitted (the uniforms written first); `read` false: work that takes no pages (the camera), so
@@ -434,6 +460,7 @@ export class GpuNest {
     this.pass = null;
     this.enc = null;
     this.uUsed = 0;
+    this.gen?.submitted();
     this.bakeNext = BAKE_SLOT;
     this.counts.submits++;
     // (a frame's camera submit bakes nothing: the op's bakes stay readable)
@@ -958,18 +985,26 @@ export class GpuNest {
 
   // ---- operations -----------------------------------------------------------------------------------------------------
   /** the root: n x n columns (n a multiple of 16); a stripe column (self-test) of `stripe.count` intervals */
-  root(n: number, stripe?: { x: number; y: number; count: number }): void {
-    // (column pages, their TMP twins, face pages: the stripe column takes 2 + 3 more in its chunk)
+  root(n: number, stripe?: { x: number; y: number; count: number }, gx = 0, gy = 0): void {
+    // (column pages, their TMP twins, face pages: the stripe column takes 2 + 3 more in its chunk; round 25: three
+    // intervals a generated column, all in one page)
     if (!this.reserve((n / 16) ** 2 * 2 + (stripe ? 5 : 0) + this.bakeBound((n / 16) ** 2)))
       throw new Error(`The page pool cannot hold the root terrain on this device. ${this.stats.error}`);
-    this.wins[0] = { gx: 0, gy: 0, n };
-    const off = this.uni(({ e }) => e.set(stripe ? [stripe.x, stripe.y, stripe.count, 0] : [-1, -1, 0, 0]));
-    this.run('rootGen', off, n / 16, n / 16);
+    this.rootOp(n, stripe, gx, gy);
+  }
+  private rootOp(n: number, stripe: { x: number; y: number; count: number } | undefined, gx: number, gy: number): void {
+    if (gx % 16 || gy % 16) throw new Error(`root: the window is whole chunks (${gx}, ${gy})`);
+    this.wins[0] = { gx, gy, n };
+    this.lastWin[0] = { gx, gy, n };
+    const s = this.cpuSlot(0, { x0: gx / 16, y0: gy / 16, x1: (gx + n) / 16, y1: (gy + n) / 16 });
+    // (round 25) the generator's field over the window first, in the same pass
+    this.gen?.fill(this.begin(), 0, gx, gy, n, n);
+    const off = this.uni(({ r, e }) => ((r[0] = s), e.set(stripe ? [stripe.x, stripe.y, stripe.count, 0] : [-1, -1, 0, 0])));
+    this.runIndirect('rootGen', off, s);
     if (this.trace) {
       this.submit(false);
       this.trace(this, 'root: rootGen');
     }
-    const s = this.cpuSlot(0, { x0: 0, y0: 0, x1: n / 16, y1: n / 16 });
     this.pack(0, s);
     if (this.trace) {
       this.submit(false);
@@ -980,6 +1015,18 @@ export class GpuNest {
     this.mergeFrees();
     this.submit();
     this.trace?.(this,'root');
+  }
+  /** (round 25) attach the generator: derive and rootGen read its field from now on (the caller then makes the root again) */
+  setGen(g: GenHook | null): void {
+    this.gen = g;
+    this.rebind();
+  }
+  /** (round 25) the root made again over window (gx, gy) (the generator attached since): false when the pool cannot hold
+   *  it yet (it grows ahead; the caller retries), as any op */
+  remakeRoot(n: number, gx: number, gy: number): boolean {
+    if (!this.reserve((n / 16) ** 2 * 2 + this.bakeBound((n / 16) ** 2))) return false;
+    this.rootOp(n, undefined, gx, gy);
+    return true;
   }
   private mergeFrees(): void {
     this.run('merge', this.uni(), 1);
@@ -1000,6 +1047,8 @@ export class GpuNest {
     if (!overlap) this.run('zPick', this.uni(({ a }) => (a[3] = L)), 1);
     this.lastWin[L] = { ...w };
     const s = this.cpuSlot(0, { x0: w.gx / 16, y0: w.gy / 16, x1: (w.gx + w.n) / 16, y1: (w.gy + w.n) / 16 });
+    // (round 25) the generator's field over the child's window, before its derive reads it
+    this.gen?.fill(this.begin(), L, w.gx, w.gy, w.n, w.n);
     this.runIndirect('derive', this.uni(({ a, r, e }) => ((a[2] = 0), (a[3] = L), (r[0] = s), (e[0] = this.oldTop))), s);
     this.pack(L, s);
     // the child's faces, and in the same submit the parent's round the footprint (it stops drawing there, its walls
@@ -1043,7 +1092,9 @@ export class GpuNest {
   slide(L: number, w: Win): boolean {
     const o = this.wins[L]!;
     if (w.n !== o.n) throw new Error('slide: a window keeps its size');
-    this.checkWin(L, w);
+    // (round 25: the root slides too, generated where it enters; it has no parent to fit in)
+    if (L > 0) this.checkWin(L, w);
+    else if (w.gx % 16 || w.gy % 16 || w.gx < 0 || w.gy < 0) throw new Error(`root: a window is whole chunks at non-negative columns (${w.gx}, ${w.gy})`);
     const nc = { x0: w.gx / 16, y0: w.gy / 16, x1: (w.gx + w.n) / 16, y1: (w.gy + w.n) / 16 };
     const oc = { x0: o.gx / 16, y0: o.gy / 16, x1: (o.gx + o.n) / 16, y1: (o.gy + o.n) / 16 };
     // entering chunks: the new rect less the old, as up to two rects
@@ -1060,6 +1111,19 @@ export class GpuNest {
       if (nc.x1 > ix1) parts.push({ x0: ix1, x1: nc.x1, y0: iy0, y1: iy1 });
     }
     const chunks = parts.reduce((s, p) => s + (p.x1 - p.x0 + 2) * (p.y1 - p.y0 + 2), 0);
+    // (round 25) the root's leaving chunks: their edited columns are kept as the root's residual (one page a chunk at
+    // most: a generated column has three intervals, an edited one more, KEEP_PAGES covers 8 intervals a column)
+    const leaving: (typeof nc)[] = [];
+    if (L === 0) {
+      if (ix0 >= ix1 || iy0 >= iy1) leaving.push(oc);
+      else {
+        if (oc.y0 < iy0) leaving.push({ ...oc, y1: iy0 });
+        if (oc.y1 > iy1) leaving.push({ ...oc, y0: iy1 });
+        if (oc.x0 < ix0) leaving.push({ x0: oc.x0, x1: ix0, y0: iy0, y1: iy1 });
+        if (oc.x1 > ix1) leaving.push({ x0: ix1, x1: oc.x1, y0: iy0, y1: iy1 });
+      }
+    }
+    const keepPages = leaving.reduce((s, p) => s + GpuNest.area(p) * KEEP_PAGES * (1 + this.stats.maxCz), 0);
     const ringN = (4 * w.n) / 16;
     const fp = L > 0 ? this.footChunks(L, o) : null;
     const fn = L > 0 ? this.footChunks(L, w) : null;
@@ -1068,7 +1132,7 @@ export class GpuNest {
     // as its worst case, past the device's limit, and the error that left stopped every later grow (NS-88)
     const footN = fp && fn ? GpuNest.area(this.clipChunks(L - 1, fp)) + GpuNest.area(this.clipChunks(L - 1, fn)) : 0;
     // (the entering chunks' column pages and TMP twins, their faces, the edge ring's and the parent's round the footprint)
-    if (!this.reserve(chunks * (this.overflowPages() + this.tmpPages()) + this.bakeBound(chunks + ringN + footN))) return false;
+    if (!this.reserve(chunks * (this.overflowPages() + this.tmpPages()) + this.bakeBound(chunks + ringN + footN) + keepPages)) return false;
     // (round 17, NS-128) a child the new window would not hold (inside it with the margin, checkWin) is demoted in the
     // same op, before the slide: else for a frame or more (the app runs one level op a frame) the child sits outside
     // its parent, its window-edge lines see no parent columns and its whole edge is open (the selftest's 1,024 open
@@ -1081,13 +1145,22 @@ export class GpuNest {
       this.wins[L] = o;
       if (!ok) this.demote(L + 1);
     }
+    // (round 25) the root's leaving columns kept where they differ from the generated ones, before they are let go and
+    // before the entering strips' fill takes their slots of the field
+    leaving.forEach((p, i) => {
+      const s = this.cpuSlot(4 + i, p);
+      this.runIndirect('rootGen', this.uni(({ a, r, e }) => ((a[2] = 1), (r[0] = s), e.set([-1, -1, 0, 0]))), s);
+    });
     this.run('release', this.uni(({ a, e }) => ((a[3] = L), e.set([nc.x0, nc.y0, nc.x1, nc.y1]))), TCAP / 64);
     this.mergeFrees();
     this.wins[L] = { ...w };
     this.lastWin[L] = { ...w };
     const slots = parts.map((p, i) => {
       const s = this.cpuSlot(i, p);
-      this.runIndirect('derive', this.uni(({ a, r, e }) => ((a[2] = 0), (a[3] = L), (r[0] = s), (e[0] = this.oldTop))), s);
+      // (round 25) the generator's field over the entering strip (the slot is toroidal: it replaces the leaving one)
+      this.gen?.fill(this.begin(), L, p.x0 * 16, p.y0 * 16, (p.x1 - p.x0) * 16, (p.y1 - p.y0) * 16);
+      if (L === 0) this.runIndirect('rootGen', this.uni(({ r, e }) => ((r[0] = s), e.set([-1, -1, 0, 0]))), s);
+      else this.runIndirect('derive', this.uni(({ a, r, e }) => ((a[2] = 0), (a[3] = L), (r[0] = s), (e[0] = this.oldTop))), s);
       this.pack(L, s);
       return s;
     });

@@ -27771,3 +27771,59 @@ record, marked parked (BACKLOG NS-179 to NS-182). `?slide` now defaults to 0 (th
 stay). Compile gate after the removal: derive 2,043 ms, restrictK 717 (round 24 with the code: 2,316 / 820; before it
 1,985 / 661); total 15,623 ms. The budgets had not been loosened in round 24 (2,700 / 1,400 are round 19's), so none
 change. Nested unit tests 68 of 68.
+
+## 2026-11-20 — Nested scales lab, round 25, steps 1-4: the atlas's ground as the terrain, fog by metres, the root slides
+
+Why: the owner wants editing, simulation and performance over rendering polish, terrain "tens or hundreds of miles
+across" down to 0.25 m, an 8 km draw distance with fog, and the existing generation ported, not rewritten. Plan written
+first (docs/design/NESTED_SCALES.md "Round 25 plan"); as built in "As built (round 25)".
+
+**The generator, ported.** This branch already carries fortress's src/atlas and src/terrain (merge-base 555bdca3 is
+fortress's HEAD), so the lab imports them: `Atlas.build` with the game's defaults over a 65,536 x 75,712 torus (65.5 km
+a side; n 2048 as before) and zTop 2,000. `src/nested/gpu/gen.wgsl` (genFill) is appended to `Atlas.parts()` and calls
+the atlas's `ground(p)` at a level's column centres into a toroidal n x n slot a level (`src/nested/gen.ts` NestGen;
+nest.wgsl `genF` at binding 7 for derive and rootGen, the plan's dispatch arguments' binding: no entry point uses both).
+The root (128 m columns) is the field itself: stone, the region's cover (soil, or sand where its top is sand or the
+ground is wet) after colFinish's slope rule at 1 m, plants (0.5 m) where the region grows them. Finer levels: derive's
+top surface adds G_L - PPM(G_(L-1)) (the same limited PPM, one code run over two passes for FXC), and the block-mean bump
+takes its mean out, so restrict(enhance(P)) == P still holds.
+
+**Measured (test/gpu/nested-gen.test.ts, Dawn):** zoom cycle (demote 1, promote 1-3 over the same windows) 0 columns
+differ; restrict (raise by 0 at level 3) moves level 0 by 2.98e-8 units (0.004 mm), level 1 by 2.4e-7 (0.004 mm), level 2
+by 2.4e-7 (0.0005 mm). Generated detail per level (what comes back on a surface edited flat, NS-190): level 1 RMS 2.2 m
+(max 25 m), level 2 0.31 m (max 10.6 m), level 3 0.001 m (max 0.009 m: the atlas has no detail under ~2 m, NS-189). A
+full root fill (65,536 columns, five ground() calls each for the slope) 10 ms; a finer level's fill one call each (~2
+ms). Heights over the torus 1..591 m (the default spot, `?at=144,432`: an 8 km square with 589 m of relief and a 208 m
+step between two root columns, a faceted-crystal oddity). Atlas build (Dawn, cold): its kernels' compile 9.5-21.8 s,
+the passes and CPU steps ~3 s (rivers 0.6-0.7 s, sites 0.3-0.55 s).
+
+**Compile (compile gate):** genFill 9,317 ms cold, 2,711 warm (budget 13,400); a first version called ground() at four
+more sites for the slope and took 23,616 ms: FXC inlines every call, so the five evaluations are one call in a loop of
+unknown bound. derive 2,110-2,397 (was 2,043; budget 2,700 unchanged), rootGen 278-307 (was 105-148: the root's
+residual modes; floor 400), restrictK 697-872 unchanged code. Total 18.8 s warm, 26.4 s cold: TOTAL_BUDGET 31.5 -> 40 s.
+
+**In Chrome (desktop):** the atlas's kernels and genFill start once every boot pipeline is made (so the boot gate is not
+slowed by them): first frame 6.7-6.9 s, every boot pipeline 13.4-13.9 s, atlas built 43-44 s (its compile 15.6-17.3 s,
+genFill's 29.5-31.2 s in parallel), the generator's root at 43.4-44.6 s. Until then the toy root over the same window is
+shown and the HUD says so (NS-186).
+
+**Draw:** colour from the material alone (draw.wgsl matColor lost its normal argument; shade.wgsl soil is dirt, plants
+material 5 carry round 20's grass colours and round 21's canopy, by footprint only). Fog by metres, full at about
+`?fog=` (default 8,000 m): 1 - exp(-4 (d / fog)^2), in the flat and textured draws (the sky's colour in the textured
+one). The textured shading runs in units of a world unit / 32 (4 m) with the generator, near the 3.2 m its constants
+were tuned at (NS-193).
+
+**The sliding root (step 4).** The root's window follows the eye like the finer levels (the same lead and bands); its
+entering strips are filled and generated on the GPU (genFill, rootGen); its leaving chunks first run rootGen in mode 1,
+which keeps every column that differs from its generated one (an edit: heights, materials or edge samples) as a
+whole-column residual of the root (RES_ID + 0, relative to the generated top), and mode 0 writes such a column back from
+it when it enters again. Checked: a carve on the root (79 columns), slid away and back: 0 of 8,192 columns differ; a strip
+entered twice is bit-identical. The camera's clamps and its ground lookup took the root at the origin; now its window's
+corner.
+
+**Cruise (scripts/nested-cruise.mjs, desktop 960 x 640, boxes, textured; 4 s a run along +x):** at 300 m: 100 and 200
+m/s p95 10.1-10.3 ms; 400-3200 m/s p95 21-34 ms (worst 48-56): level 2 is open at 300 m (its 512 m window slides every 64
+m); at 1500 m (levels 0-1): 100-400 m/s p95 10.1-10.2 ms, 800 m/s 23.7, 1600 m/s 14.5, 3200 m/s 21.8 (worst 80-100 ms).
+The root's front edge stayed 13.1-22 km ahead of the eye in every run (fog full at 8 km: nothing ungenerated in view);
+every run reached its speed (3,232 m/s at the most). Highest speed holding 16.7 ms (p95): 200 m/s at 300 m, 1,600 m/s
+at 1,500 m (800 m/s did not: the runs are short and noisy).

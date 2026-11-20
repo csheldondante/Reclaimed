@@ -126,6 +126,7 @@ fn dbSlope(mat: u32) -> f32 {
     case 2u: { return 0.45; }
     case 3u: { return 0.25; }
     case 4u: { return 0.5; }
+    case 5u: { return 0.45; }
     default: { return 0.0; }
   }
 }

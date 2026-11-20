@@ -46,6 +46,8 @@ struct ShadeIn {
   /** (round 21) the forest canopy's crossover footprint, world units a pixel (half way between grass and canopy);
    *  0: no canopy (?canopy=0) */
   canopy: f32,
+  /** (round 25) the fog's share, 0..1, by metres (draw.wgsl fogAt); < 0: round 21's haze by world distance */
+  fog: f32,
 }
 
 // ---- (round 21) the forest canopy seen from afar (the owner: "I think we want the hills at the furthest zoom to read as
@@ -185,12 +187,14 @@ fn texShade(si: ShadeIn) -> vec3<f32> {
       }
     }
     case 2u: {
-      // soil: grass where the geometric normal is up enough, dirt on slopes; grass keeps the hollows
-      let gr = smoothstep(0.55, 0.78, ng.z - 0.10 * av + 0.07 * mv);
-      let grass = mix(vec3<f32>(0.20, 0.33, 0.11), vec3<f32>(0.42, 0.45, 0.20), clamp(0.4 + 0.8 * mv, 0.0, 1.0)) * (0.78 + 0.36 * av);
-      let dirt = vec3<f32>(0.46, 0.36, 0.25) * (0.86 + 0.22 * av);
-      alb = mix(dirt, grass, gr);
-      rough = mix(0.85, 0.95, gr);
+      // soil: dirt (round 25: no grass picked by the normal; plants are their own layer, material 5)
+      alb = vec3<f32>(0.46, 0.36, 0.25) * (0.86 + 0.22 * av);
+      rough = 0.85;
+    }
+    case 5u: {
+      // (round 25) plants: the generator's plant layer over soil, the grass colours round 20 gave up-facing soil
+      alb = mix(vec3<f32>(0.20, 0.33, 0.11), vec3<f32>(0.42, 0.45, 0.20), clamp(0.4 + 0.8 * mv, 0.0, 1.0)) * (0.78 + 0.36 * av);
+      rough = 0.95;
     }
     case 3u: {
       // sand: wind ripples (wavelength 0.04 world, along one direction, bent by the noise) on up-facing sand
@@ -210,9 +214,10 @@ fn texShade(si: ShadeIn) -> vec3<f32> {
     default: {}
   }
   // ---- (round 21) the forest canopy from afar (see shCrowns above)
+  // (round 25: on the plant layer, by the footprint alone; round 21's fade on the normal's z is gone, the material decides)
   var cw = 0.0;
-  if (si.mat == 2u && si.canopy > 0.0) {
-    cw = smoothstep(-1.0, 1.0, log2(si.pxW / si.canopy)) * smoothstep(0.62, 0.82, ng.z);
+  if (si.mat == 5u && si.canopy > 0.0) {
+    cw = smoothstep(-1.0, 1.0, log2(si.pxW / si.canopy));
   }
   if (cw > 0.0) {
     // woods and clearings: a 32 world unit noise and the broad one (beyond 4 units a pixel the broad one is gone)
@@ -264,7 +269,9 @@ fn texShade(si: ShadeIn) -> vec3<f32> {
   // ---- haze toward the sky colour along the view, by world distance (the same on every level)
   // (round 21: the light scattered in is the sky's colour along the view, dimmed and bluer, so far hills go blue-green and
   // dark rather than milky: aerial perspective, darker than the sky behind them)
-  let fog = 1.0 - exp(-si.distW * SH_HAZE);
+  // (round 25: by metres where the draw gives a fog distance, full at about 8 km by default: ?fog=)
+  var fog = 1.0 - exp(-si.distW * SH_HAZE);
+  if (si.fog >= 0.0) { fog = si.fog; }
   c = mix(c, shSky(si.view, sun) * SH_HAZE_TINT, fog);
   return shDisplay(c);
 }

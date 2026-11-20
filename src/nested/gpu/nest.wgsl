@@ -386,6 +386,8 @@ fn wgScan(li: u32, v: u32) -> vec2<u32> {
 var<workgroup> wOrigin: vec2<i32>;
 /** derive: the parent's tops round the chunk ((16 / k + 4)^2, k >= 2) */
 var<workgroup> wPTop: array<f32, 144>;
+/** (round 25) derive: the generator's heights at the same parent cells (metres) */
+var<workgroup> wPG: array<f32, 144>;
 /** derive (round 10): for each own cell (up to 64) and each cell of its 5 x 5 stencil, 1 where they share a structure */
 var<workgroup> wPSame: array<u32, 1600>;
 /** a slot's dispatch origin, uniform across the workgroup (it is read from a storage buffer) */
@@ -636,9 +638,12 @@ fn derive(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
   // the chunk are read once a workgroup (the same values: topS of the clamped column), not 25 times a column.
   let ps = 16 / k + 4;
   let p0 = vec2<i32>(cx * 16 / k - 2, cy * 16 / k - 2);
+  // (round 25) the generator's detail where both levels' fields are filled (uniform: the header)
+  let gon = genOn(L) && genOn(P);
   for (var q = li; q < u32(ps * ps); q += 256u) {
     let c = clampTo(P, p0.x + i32(q) % ps, p0.y + i32(q) / ps);
     wPTop[q] = topS(P, c.x, c.y, colCount(P, c.x, c.y));
+    if (gon) { wPG[q] = genAt(P, c.x, c.y).x; }
   }
   // (round 10) which of those cells share the structure of each parent cell the chunk's blocks hang from (the nb x nb
   // "own" cells, each against its 5 x 5 stencil). The top surface interpolates between same-structure cells
@@ -656,21 +661,39 @@ fn derive(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
     wPSame[t] = select(0u, 1u, sameMats(P, c, own, colCount(P, own.x, own.y)));
   }
   workgroupBarrier();
-  let pref = wPTop[(py - p0.y) * ps + (px - p0.x)];
+  let cref = (py - p0.y) * ps + (px - p0.x);
+  let pref = wPTop[cref];
   let ownI = (py - p0.y - 2) * nb + (px - p0.x - 2);
-  var rows = array<f32, 5>(0.0, 0.0, 0.0, 0.0, 0.0);
-  for (var j = 0; j < 5; j++) {
-    var q = array<f32, 5>(0.0, 0.0, 0.0, 0.0, 0.0);
-    for (var i = 0; i < 5; i++) {
-      let cq = (py - 2 + j - p0.y) * ps + (px - 2 + i - p0.x);
-      // (u.e.x = 1, tests only: round 9's rule, every neighbour's top, for the before stills)
-      if (u.e.x == 1 || wPSame[u32(ownI * 25 + j * 5 + i)] != 0u) { q[i] = wPTop[cq] - pref; }
+  // the limited PPM, pass 0 over the parent's tops (same-structure cells only), (round 25) pass 1 over the generator's
+  // heights at the parent's columns (every cell: the generator has no structure). One code run over the passes (a loop
+  // whose bound the compiler does not know, so FXC compiles the PPM once: round 24's lesson)
+  let gref = wPG[cref];
+  let npass = select(1u, 2u, gon);
+  var fs2 = vec2<f32>(0.0);
+  for (var pq = 0u; pq < npass; pq++) {
+    var rows = array<f32, 5>(0.0, 0.0, 0.0, 0.0, 0.0);
+    for (var j = 0; j < 5; j++) {
+      var q = array<f32, 5>(0.0, 0.0, 0.0, 0.0, 0.0);
+      for (var i = 0; i < 5; i++) {
+        let cq = (py - 2 + j - p0.y) * ps + (px - 2 + i - p0.x);
+        if (pq == 1u) {
+          q[i] = wPG[cq] - gref;
+        } else if (u.e.x == 1 || wPSame[u32(ownI * 25 + j * 5 + i)] != 0u) {
+          // (u.e.x = 1, tests only: round 9's rule, every neighbour's top, for the before stills)
+          q[i] = wPTop[cq] - pref;
+        }
+      }
+      rows[j] = ppmSub(q, f32(gA), kf);
     }
-    rows[j] = ppmSub(q, f32(gA), kf);
+    fs2[pq] = ppmSub(rows, f32(gB), kf);
   }
-  let fsum = ppmSub(rows, f32(gB), kf);
+  let fsum = fs2.x;
   let z0 = zOrigin(L);
-  var s = (pref - z0) * kf + fsum * kf + detail(gX, gY, i32(L), k, u.a.y, u.d.w);
+  // (round 25) the generator's detail at this level, local units: its height here less the same interpolation of the
+  // parent's generator heights (the bump below takes its block mean out with the rest: parent = mean of its children)
+  var gd = 0.0;
+  if (gon) { gd = (genAt(L, gX, gY).x - (gref + fs2.y)) / genF[L].x; }
+  var s = (pref - z0) * kf + fsum * kf + detail(gX, gY, i32(L), k, u.a.y, u.d.w) + gd;
   shv[li] = s;
   workgroupBarrier();
   let sum = blockSum(lid.x, lid.y, u32(k));
@@ -895,19 +918,108 @@ const MAT_STONE: u32 = 1u;
 const MAT_SOIL: u32 = 2u;
 const MAT_SAND: u32 = 3u;
 const MAT_CLAY: u32 = 4u;
+/** (round 25) the plant layer the generator lays over soil */
+const MAT_PLANT: u32 = 5u;
+
+// ---- (round 25) the generator field (gen.wgsl genFill fills it from the atlas's ground; src/nested/gen.ts) -------------
+// Bound at 7 for derive and rootGen (the plan pass binds its dispatch arguments there: no entry point uses both). Header
+// vec4 0..7: per level (metres a column, the slot's n, 1 when filled, 0); then per level an n x n toroidal slot of
+// (height m, cover m, plant m, cover material bits). A stand-in buffer of zeros when there is no generator (the toy root).
+@group(0) @binding(7) var<storage, read> genF: array<vec4<f32>>;
+const GEN_HDR: u32 = 8u;
+fn genOn(L: u32) -> bool { return genF[L].z > 0.0; }
+/** the field at level L's global column (X, Y) (inside its window: callers clamp) */
+fn genAt(L: u32, X: i32, Y: i32) -> vec4<f32> {
+  let n = i32(genF[L].y);
+  let x = ((X % n) + n) % n;
+  let y = ((Y % n) + n) % n;
+  return genF[GEN_HDR + L * u32(n * n) + u32(y * n + x)];
+}
 
 @compute @workgroup_size(16, 16)
 fn rootGen(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
-  let cx = i32(wid.x);
-  let cy = i32(wid.y);
+  // (round 25: the slot's chunks, so a root window may sit anywhere and its entering strips be generated)
+  let o = slotOrigin(u.r.x, li);
+  let cx = o.x + i32(wid.x);
+  let cy = o.y + i32(wid.y);
   let X = cx * 16 + i32(lid.x);
   let Y = cy * 16 + i32(lid.y);
   let nn = f32(u.lv[0].z);
-  let s = rootHeight(X, Y, nn, u.a.y);
-  let soil = 0.25 + 0.15 * valueNoise(f32(X) / 6.0, f32(Y) / 6.0, 7, u.a.y);
+  var s = rootHeight(X, Y, nn, u.a.y);
+  var soil = 0.25 + 0.15 * valueNoise(f32(X) / 6.0, f32(Y) / 6.0, 7, u.a.y);
+  // (round 25) from the generator: the atlas's ground in root units (one unit = one root column), its cover (gen.wgsl:
+  // forms.wgsl colFinish's slope and wet rules) and the plant layer
+  let gon = genOn(0u);
+  var plant = 0.0;
+  var cmat = MAT_SOIL;
+  if (gon) {
+    let cs = genF[0].x;
+    let g = genAt(0u, X, Y);
+    s = g.x / cs;
+    cmat = bitcast<u32>(g.w);
+    soil = select(0.0, g.y / cs, cmat != 0u);
+    if (soil > 0.0) { plant = g.z / cs; }
+  }
   let stripe = X == u.e.x && Y == u.e.y && u.e.z > 2;
+  // the generated column, bottom up (the stripe's is written below)
+  var gz = array<f32, 3>(0.0, 0.0, 0.0);
+  var gm = array<u32, 3>(MAT_STONE, MAT_SOIL, MAT_PLANT);
   var n = 2u;
+  if (gon) {
+    n = 1u;
+    gz[0] = s - soil - plant;
+    if (soil > 0.0) {
+      gz[n] = s - plant;
+      gm[n] = cmat;
+      n++;
+    }
+    if (plant > 0.0) {
+      gz[n] = s;
+      gm[n] = MAT_PLANT;
+      n++;
+    }
+  } else {
+    gz[0] = s - soil;
+    gz[1] = s;
+  }
   if (stripe) { n = u32(u.e.z); }
+  // (round 25, the sliding root) mode 1, KEEP: a leaving chunk's columns that differ from the generated ones (edits) are
+  // kept as whole-column residuals of the root (RES_ID + 0, bounds relative to the generated top), the others keep none;
+  // mode 0 writes a column from its residual where it has one, else the generated column. A column made again is
+  // bit-identical (the field is a function of position), so "differs" is exact.
+  if (u.a.z == 1u) {
+    let ln = colCount(0u, X, Y);
+    var differ = ln != n;
+    for (var i = 0u; i < ln && !differ; i++) {
+      let iv = ivlAt(0u, X, Y, i);
+      // (the material word with its edge sample, bits 0-29: a carve's rim writes samples on columns it leaves standing)
+      differ = iv.z1 != gz[min(i, 2u)] || (iv.m & 0x3fffffffu) != gm[min(i, 2u)] || (i > 0u && iv.z0 != gz[min(i, 3u) - 1u]);
+    }
+    let any = wgOr(li, select(0u, 1u, differ));
+    let needR = (2u * wgMax(li, select(0u, ln, differ)) + K - 1u) / K;
+    if (li == 0u) { ensurePages(RES_ID, cx, cy, needR, u.d.x); }
+    storageBarrier();
+    workgroupBarrier();
+    if (any == 0u) { return; }
+    setCount(RES_ID, X, Y, select(0u, 2u * ln, differ), needR);
+    // (no early return per thread here: the mode 0 code after this block has barriers, so returns stay uniform)
+    for (var i = 0u; i < select(0u, ln, differ); i++) {
+      let iv = ivlAt(0u, X, Y, i);
+      var z0 = iv.z0;
+      if (i == 0u) { z0 = s; }
+      for (var w = 0u; w < 2u; w++) {
+        let live = select(z0, iv.z1, w == 1u);
+        let hi = live - s;
+        let lo = live - (s + hi);
+        let p = pageOf(RES_ID, X >> 4, Y >> 4, (2u * i + w) / K);
+        if (p < NOT_LOADED) { pgSetIvl(p, colIn(X, Y), (2u * i + w) % K, hi, lo, WHOLE | (iv.m & 0x3fffffffu)); }
+      }
+    }
+    return;
+  }
+  // mode 0: a residual kept when this column last left the window replaces the generated column
+  let rc = colCount(RES_ID, X, Y);
+  if (rc > 0u) { n = rc / 2u; }
   let maxN = wgMax(li, n);
   let need = (maxN + K - 1u) / K;
   // (the solid view into TMP; pack makes the partition)
@@ -916,15 +1028,26 @@ fn rootGen(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) 
   storageBarrier();
   workgroupBarrier();
   setCount(T, X, Y, n, need);
-  if (stripe) {
+  if (rc > 0u) {
+    for (var i = 0u; i < n; i++) {
+      let rp = pageOf(RES_ID, X >> 4, Y >> 4, (2u * i + 1u) / K);
+      let r1 = pgIvl(rp, colIn(X, Y), (2u * i + 1u) % K);
+      var z0 = OPEN_BOTTOM;
+      if (i > 0u) {
+        let r0 = pgIvl(pageOf(RES_ID, X >> 4, Y >> 4, (2u * i) / K), colIn(X, Y), (2u * i) % K);
+        z0 = (s + r0.z0) + r0.z1;
+      }
+      setIvl(T, X, Y, i, z0, (s + r1.z0) + r1.z1, r1.m & 0x3fffffffu);
+    }
+  } else if (stripe) {
     // (alternating sand and clay: no two neighbours of one material, so no records merge)
     for (var i = 0u; i < n; i++) {
       let lo = s - 4.0 + f32(i) * 0.1;
       setIvl(T, X, Y, i, select(lo, OPEN_BOTTOM, i == 0u), s - 4.0 + f32(i + 1u) * 0.1, select(MAT_SAND, MAT_CLAY, (i & 1u) == 1u));
     }
   } else {
-    setIvl(T, X, Y, 0u, OPEN_BOTTOM, s - soil, MAT_STONE);
-    setIvl(T, X, Y, 1u, s - soil, s, MAT_SOIL);
+    // stone, the cover over it, the plants over that (each only where it has thickness)
+    for (var i = 0u; i < n; i++) { setIvl(T, X, Y, i, select(gz[max(i, 1u) - 1u], OPEN_BOTTOM, i == 0u), gz[i], gm[i]); }
   }
 }
 
@@ -1691,8 +1814,9 @@ fn ground(xh: f32, yh: f32, xl: f32, yl: f32) -> f32 {
     let ly = (yh * s - f32(w.y)) + yl * s;
     if (lx >= 1.0 && ly >= 1.0 && lx <= f32(w.z) - 1.0 && ly <= f32(w.z) - 1.0) { return zOrig(m) + surfLocal(m, lx, ly) / s; }
   }
+  // (round 25: the root window may sit anywhere, so its local point is the world point less its corner)
   let w0 = u.lv[0];
-  return surfLocal(0u, clamp(xh + xl, 1.0, f32(w0.z) - 1.0), clamp(yh + yl, 1.0, f32(w0.z) - 1.0));
+  return surfLocal(0u, clamp((xh - f32(w0.x)) + xl, 1.0, f32(w0.z) - 1.0), clamp((yh - f32(w0.y)) + yl, 1.0, f32(w0.z) - 1.0));
 }
 
 // ---- the camera: a free eye with collision ---------------------------------------------------------------------------
@@ -1868,9 +1992,11 @@ fn camera(@builtin(local_invocation_index) li: u32) {
     lo[i] = r2.y;
   }
   // inside the root's footprint, below a ceiling
+  // (round 25: the root window's own corner, not the origin)
   let n0 = f32(u.lv[0].z);
-  if (hi.x < 1.0 || hi.x > n0 - 1.0) { hi.x = clamp(hi.x, 1.0, n0 - 1.0); lo.x = 0.0; }
-  if (hi.y < 1.0 || hi.y > n0 - 1.0) { hi.y = clamp(hi.y, 1.0, n0 - 1.0); lo.y = 0.0; }
+  let g0 = vec2<f32>(u.lv[0].xy);
+  if (hi.x < g0.x + 1.0 || hi.x > g0.x + n0 - 1.0) { hi.x = clamp(hi.x, g0.x + 1.0, g0.x + n0 - 1.0); lo.x = 0.0; }
+  if (hi.y < g0.y + 1.0 || hi.y > g0.y + n0 - 1.0) { hi.y = clamp(hi.y, g0.y + 1.0, g0.y + n0 - 1.0); lo.y = 0.0; }
   if (hi.z > 600.0) { hi.z = 600.0; lo.z = 0.0; }
   for (var i = 0u; i < 3u; i++) {
     cam[20u + i] = hi[i];

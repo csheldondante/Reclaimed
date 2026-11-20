@@ -675,6 +675,42 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   slid and level-edge corners do not move; stencil: the 4 or 8 neighbouring corners (columns within 2). For the places
   edge samples do not reach: diagonal generated cliffs (phone-1119-c-cliff-1level-fangs.png), the wall foot (NS-177),
   ceilings (NS-162). Behind ?relax=1 with a fold test.
+- NS-185 (limit, round 25) The atlas is built when the page opens, the game's Atlas.build as it is: GPU passes plus the
+  CPU steps that are part of it (dense region ids, the region table, rivers and lakes (findRivers), sites, ways, giants)
+  with the readbacks they need, once, never per frame. Cost on this desktop (Dawn, cold): its kernels' compile 21.8 s,
+  the build itself ~3 s; in Chrome see the DEVLOG. Sites, ways and giants are made and unused by the lab. Not a
+  substitute: the same build; to reconcile with fortress nothing in src/atlas or src/terrain was edited.
+- NS-186 (stand-in, round 25) The first view is the toy root (rootHeight) over the generator's root window until the atlas
+  is built and the generator's root replaces it (the HUD says so; levels and brushes wait). The page never freezes, but
+  the first seconds show a placeholder land. Go when the atlas build is fast enough to wait for, or cached.
+- NS-187 (stand-in, round 25) The plant layer is 0.5 m thick wherever the region's veg is at least 0.5, on soil, above
+  freezing and under the atlas's tree line (sea + 70 m); forms.wgsl's density (moisture, woods noise) is not used, and
+  the thickness is not the atlas's (it has none: veg is a plant density). Water is not a material yet: the sea, rivers
+  and lakes are their ground (sand under the sea), next round's fluids.
+- NS-188 (limit, round 25) Materials are decided per ROOT column (128 m) and finer levels inherit the root's structure
+  through enhance (thicknesses interpolate; the count and materials are the parent's): soil and plants cover a cliff that
+  falls inside a root column, and material borders are 128 m blocks softened by the thickness interpolation. The atlas's
+  slope rule (cover less half the slope, none past 1.6) is applied at the root's 128 m spacing, where it almost never
+  bares rock. Fix: the generator's material at each level's column size as part of the residual-free derive (a
+  structure the parent does not have is a whole-column residual today, so this needs a rule; not invented here).
+- NS-189 (limit, round 25) The atlas's ground has almost no detail under ~2 m (its finest noises are metres): level 3
+  (0.25 m) adds RMS 1 mm, max 9 mm of generated detail; the 0.25 m level is the 2 m level's interpolation. The toy
+  seeded noise (`?detail=`) is off by default with the generator.
+- NS-190 (open, round 25, measured not solved: the brief's point) Generated detail comes back on a surface edited flat at
+  a coarser level, at each finer level: the bracket G_L - PPM(G_(L-1)) is RMS 2.2 m (max 25 m) at level 1, 0.31 m (max
+  10.6 m) at level 2, 0.001 m (max 0.009 m) at level 3 (the default spot's windows, test/gpu/nested-gen.test.ts).
+- NS-191 (hack, round 25) gen.ts genModuleParts calls Atlas.prototype.parts with no atlas (it reads no field of one) so
+  the compile gate can build the module text without building an atlas; a static `parts` on Atlas would be cleaner (an
+  edit to src/atlas, left for the reconcile).
+- NS-192 (limit, round 25) Positions into ground(p) wrap exactly in x (the torus is 2^16 m) but in f32 arithmetic in y
+  (75,712 rows x 0.866): deterministic, not exact; a seam where y wraps could step by f32 rounding.
+- NS-193 (hack, round 25) The textured shading runs in units of a world unit / 32 (4 m) with the generator, near the 3.2
+  m root column its round 20-21 constants were tuned at (strata, cracks, ripples, crowns); nothing re-tuned for real
+  metres. The canopy now shows on the plant material (round 21's fade by the normal's z is gone); the round 20 flat check
+  (scripts/nested-r20-flatcheck.mjs) no longer holds: soil is one colour and the flat draws fog by metres.
+- NS-194 (limit, round 25) The table's chunk keys are 16 bits a coordinate (key0 = cx | cy << 16), so global columns must
+  stay in 0..2^20 at every level: at level 3 that is 2,048 root columns (262 km) of travel from the origin in +x/+y, and
+  nothing below 0. The torus would allow wrapping the lab's coordinates; not done.
 - NS-146 (limit, round 20) The detail bands (detail.wgsl DPt) need k a power of two: a level's s is L x round(log2 k),
   so the integer window origin can be shifted into each band's lattice exactly. Another k shades with wrong band
   scales (no error). Assert it at the page's start, or carry the scale as a float for other k.

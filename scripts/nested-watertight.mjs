@@ -14,7 +14,8 @@ await run({ name: 'nested-watertight', kind: 'behaviour', size: '960x640', dpr: 
   page.on('console', (m) => {
     if (m.type() === 'error' || m.type() === 'warning' || m.text().startsWith('[suite]')) console.log(`[page ${m.type()}] ${m.text()}`);
   });
-  await page.goto(`https://localhost:${port}/nested.html?k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140${maxbuf !== '0' ? `&maxbuf=${maxbuf}` : ''}`, { waitUntil: 'load' });
+  // (round 25: gen=0, the toy root: the suite's scene and poses are its; --q extra query, e.g. smooth=1 for the sheets)
+  await page.goto(`https://localhost:${port}/nested.html?k=8&d=8&pitch=0.3&yaw=0&tx=100&ty=140&gen=0${maxbuf !== '0' ? `&maxbuf=${maxbuf}` : ''}${R.opt('q', '') ? `&${R.opt('q', '')}` : ''}`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.nested && nested.app.frameCount > 60, { timeout: 120000, polling: 100 });
   await sleep(1500);
   const res = await page.evaluate(

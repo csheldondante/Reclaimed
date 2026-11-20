@@ -1360,6 +1360,69 @@ of cells (NS-170). Reference: oracle.ts enhanceTops / homeTop / enhancedCol (Nes
   a first version with a second PPM copy measured 3,852 / 1,438 on a loaded machine, so the PPM runs in one loop over
   two passes and restrictK gathers sides in the loop it already had. Carve and sheet pass not measured (NS-178).
 
+**Round 25 plan (written before the code).** The owner: "carve huge features and stream land quickly at cruising
+height", "there is tons already on the main and fortress branch for procedural generation" (port it, write no new
+terrain functions), "Tens or hundreds of miles across for a terrain chunk but multiple levels so we can go down to
+meters across", "An 8km draw distance ... with fog", "fully zoomed in is .25m", "terrain layers should not have
+multiple materials by normal ... Make dirt on the stone or plants over that maybe?"
+- *a. The atlas's `ground(p)` and its buffers.* No copy is needed: this branch already carries fortress's atlas
+  (merge-base 555bdca3 = fortress HEAD; src/atlas and src/terrain here are fortress's plus the terrain-rivers commits
+  147c17a9..a561e1f3, which change nothing with `a.rivers2=0`, the default). So the lab imports the shared path:
+  `Atlas.build` (src/atlas/atlas.ts, atlas/build.ts) makes the macro buffers exactly as the game does (GPU passes:
+  continents, connected components, partition, JFA borders / coast / landforms, the macro ground; the CPU steps that
+  are part of the existing build: dense region ids, the region table, rivers (findRivers), lakes, sites, ways), once,
+  when the page opens; no readback after it. The lab's kernel `genFill` (src/nested/gpu/gen.wgsl) is appended to
+  `Atlas.parts()` like terrain/sample.wgsl and calls `ground(p)` per column. Reconcile later: nothing in src/atlas or
+  src/terrain is edited by the lab. Cost known from terrain/sample.ts: ground() compiles in 6-12 s on D3D, the atlas build
+  4-10 s plus its own compiles, so the atlas is made after the first frame (staged, the HUD says so) and the first frame
+  draws the old toy root until the atlas root replaces it (a stand-in, logged).
+- *b. The ladder.* k = 8, n = 256: root columns 128 m (window 32.8 km), then 16 m (4.1 km), 2 m (512 m), 0.25 m (64 m).
+  The atlas default torus is 16.4 x 16.4 km, half the root window: wrapping it would show each feature twice from high
+  up. Instead the macro functions are evaluated over a larger domain: the same atlas build with `cols` 65,536 and `rows`
+  75,712 (a 65.5 x 65.6 km torus; `n` stays 2048, so the build costs the same and the macro texel is 32 m instead of 8).
+  Everything the atlas sizes per turn of the torus (continents, the region partition, faults) grows 4x; everything sized
+  in metres (region noise, mesa walls, rivers' cross-sections, craters) keeps its size. Why: bigger features at the same
+  local detail, which is what the owner asked ("the root is honestly too dense"). `zTop` raised from 480 to 2,000 so
+  nothing is clamped. Heights: f32 in each level's local units (1 unit = 1 column): a 1,000 m cliff is 7.8 units at the
+  root, 62.5 at level 1, 500 at level 2, 4,000 at level 3; each level's z origin sits at its parent's surface under
+  the window, so stored values stay within a few thousand units; f32's step there is <= 2.4e-4 units (0.06 mm at
+  level 3, 31 mm at the root). Positions into ground(p) wrap exactly in x (65,536 = 2^16 m, columns 2^(7-3L) m) and in f32
+  arithmetic in y (deterministic, not exact). World unit (the camera's, the brushes') stays the root column, now 128 m.
+- *c. Generated detail and the zoom rule.* The brief's form, kept, with one refinement: per level a generator field G_L
+  (ground(p) at the level's column centres: height, the region's soil cover, vegetation, materials) is filled on the GPU
+  for the window (a toroidal n x n slot per level, refilled for entering strips). Derive's top surface becomes
+  child = PPM(parent tops) + [G_L(child) - PPM(G_(L-1))(child)] + the existing block-mean bump. The bracket replaces the
+  toy seeded noise (`?detail=` still adds it). The refinement: the bump that already restores each block's mean also
+  takes the bracket's block mean out, so parent = mean of children stays exact (restrict(enhance(P)) == P) and enhance
+  stays a function of the parent and G, so demote/promote is bit-identical and the zoom cycle cannot drift. The root is
+  G_0 itself. Materials: the root's columns are stone, the region's cover (soil, or sand where the region's top is sand)
+  and a plant layer where the region grows plants; finer levels inherit the root's structure through enhance (the
+  thicknesses interpolate). Open point, measured not solved: on a surface edited flat, finer levels add the bracket again;
+  its size per level is reported (RMS and max of the bracket).
+
+**As built (round 25; current state): the atlas's terrain, fog, the sliding root.** The plan above, built; departures:
+- *Sources.* src/nested/gen.ts (NestGen: `Atlas.build` with `labAtlasParams`, the genFill kernel, its uniform ring, the
+  field), src/nested/gpu/gen.wgsl (appended to `Atlas.parts()`), nest.wgsl `genF` / `genAt` / rootGen / derive. Nothing
+  in src/atlas or src/terrain was edited (both branches share them; fortress at 555bdca3).
+- *The field.* A storage buffer: 8 header vec4 (per level metres a column, the slot's n, 1 when attached) and per level an
+  n x n toroidal slot of (height m, cover m, plant m, cover material). Filled in the op's own compute pass before the
+  dispatch that reads it: the root's window at root(), a level's window at promote, an entering strip at slide. Bound at
+  7 (the plan's dispatch arguments' binding) in a layout of its own for derive and rootGen, so no layout holds more than
+  6 storage buffers besides the page segments.
+- *Materials* (departure from the plan's "where the generator has soil": the slope rule is colFinish's, at 1 m round the
+  column's centre, not at the root's spacing, so a column is a function of its position alone): only root columns carry
+  them; finer levels inherit (NS-188).
+- *The root slides* (step 4): `GpuNest.slide(0, w)`: leaving chunks run rootGen mode 1 (KEEP: whole-column residual of
+  every column that differs from its generated one, else its residual pages let go), then the release, then the entering
+  strips' fill and rootGen mode 0 (the residual where one is kept, else the generated column). App.levels slides the root
+  by the same lead and bands as the finer levels. The toy root (`?gen=0`) does not slide.
+- *Boot.* The first frame is the toy root over the generator's window (NS-186); the atlas and genFill start once every
+  boot pipeline is made; levels and brushes wait (`free`) until `genReady`. `?gen=0` is the toy world (the self-test's
+  sandbox, the watertight and perf scripts: their scenes and poses are its).
+- *Dials:* `?gen=0`, `?at=x,y` (root columns of the window's centre; default 144,432), `?fog=` metres (default 8000),
+  `?detail=` (the toy seeded noise; 0 with the generator), `?a.<key>=` (any atlas parameter).
+- *Not built:* water as a material; detail under 2 m (the atlas has none); the generator's materials at finer levels.
+
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

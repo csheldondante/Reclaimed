@@ -43,9 +43,12 @@ export const BUDGET_MS: Record<string, number> = {
   drawSky: 400,
   capture: 400,
   captureSheet: 400,
+  // (round 25) the generator's fill: the atlas's ground(p) (made after the first frame, while the atlas builds).
+  // Measured 8,942 ms cold, 2,744 warm (the first run of a changed module pays D3D's compile; terrain/sample.ts saw 6-12 s)
+  genFill: 13_400,
 };
-/** the sum over every pipeline (21.0 s measured) */
-export const TOTAL_BUDGET_MS = 31_500;
+/** the sum over every pipeline (21.0 s measured; round 25: 26.5 s with genFill cold) */
+export const TOTAL_BUDGET_MS = 40_000;
 export function budgetOf(name: string): number {
   return Math.max(FLOOR_MS, BUDGET_MS[name] ?? FLOOR_MS);
 }
