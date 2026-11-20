@@ -498,14 +498,15 @@ fn shCol3(si: ShadeIn, k: i32, steps: i32, drop: u32, pxAng: f32, pxT: f32, dbg:
   let lpx = cellPx * sz;
   let share = select(1.0, ampD, l == D && D > li) * select(1.0, 0.0, dbg == 5u);
   let hp = p0 + v.xy * t;
-  // (the vertical edge lines: a face seen at a grazing plan angle squeezes its cells on screen by sqrt(1 - (v . tangent)^2);
-  // the line is sized by that squeezed width and fades out under 8 px of it (the diagnosis: lines a pixel wide drawn on
-  // cells squeezed to 1-3 px were the dark stripes and gaps between columns, NS-252))
+  // (the vertical edge lines, the owner's rule: a fixed 5 % of the cell's width each side of the edge, never widened to a
+  // pixel; their strength fades to zero as the cell's on-screen width, squeezed by the view's plan angle to the face
+  // (x sqrt(1 - (v . tangent)^2)), falls from 24 to 12 px; the finest level's also carry its share. The diagnosis
+  // (?cliffDbg=6): lines a pixel wide on cells squeezed to 1-3 px were the dark gaps between columns, NS-252)
   let vt = select(v.x, v.y, abs(hn.x) > 0.5);
   let lpxF = lpx * sqrt(max(1.0 - vt * vt, 0.0));
-  let lw = max(0.04, 0.9 / max(lpxF, 1e-3));
+  let lw = 0.05;
   let fa = fract(select(hp.x, hp.y, abs(hn.x) > 0.5) / sz);
-  let lineOn = clamp((lpxF - 4.0) / 4.0, 0.0, 1.0);
+  let lineOn = smoothstep(12.0, 24.0, lpxF);
   let edge = share * lineOn * select(1.0 - smoothstep(0.5 * lw, lw, min(fa, 1.0 - fa)), 0.0, hn.z > 0.5 || dbg == 6u);
   let rim = select((1.0 - smoothstep(lw, lw + 0.08, (tops[l] - v.z * t) / sz)) * (1.0 - edge), 0.0, hn.z > 0.5);
   let a = (c0 << vec2<u32>(u32(l))) + rc;

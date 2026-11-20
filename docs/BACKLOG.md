@@ -906,6 +906,8 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   cell); a fix is a design choice (e.g. level-0 tops from the real column heights) for the owner.
 - NS-255 (hack, round 31) The edge line is the only cue between equal columns; with it faded on squeezed cells, columns
   of equal height seen at a grazing angle merge. Lines still show on faces seen more head-on (upper centre at side2).
+  (Then the owner's rule, 5 % of the cell, fading 24 to 12 px: merging is accepted; depth from the fine hashes is to
+  tell columns apart, step 4b.)
 - NS-253 (test, round 31) Compile times swing 1.5-2.5x between runs on this machine (drawFieldTex 295-820 ms with no
   change); version 3's textured variants (drawBoxesTexV3 / drawSheetsTexV3) got a 600 ms budget from 341-457 / 401-535 ms.
 - NS-254 (hack, round 31) The pixel's size per unit of distance (draw uniform cl.x) is written by the app each frame

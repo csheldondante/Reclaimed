@@ -1760,7 +1760,11 @@ are coherent regions (no alternation between pixels); the level-0 top shows curv
 plane, NS-246, confirmed); edge lines off removes the stripes, depth darkening off and the fill do not. Cause: the drawn
 dark line at vertical cell edges, about a pixel wide, on cells that a grazing view squeezes to 1-3 px. Fix (that cause
 only): the line is sized by the cell's squeezed width on screen (cell px x sqrt(1 - (view . face tangent)^2)) and fades
-out under 8 px of it. Still local/nested/r31fix-side2-cliff1.png: the stripes are gone over most of the wall.
+out under 8 px of it. Still local/nested/r31fix-side2-cliff1.png: the stripes are gone over most of the wall. Then the
+owner's rule ("almost certainly the edge line being too big relative to the columns"): the line is a fixed 5 % of the
+cell's width each side of the edge, never widened to a pixel, and its strength fades from full at 24 px of squeezed cell
+width to zero at 12 px; the finest level's lines also carry its share. Stills local/nested/r31line-side2-cliff1.png,
+r31line2-side16-cliff1.png: no stripes; columns of equal depth merge visually (the owner: "that's fine to merge them").
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

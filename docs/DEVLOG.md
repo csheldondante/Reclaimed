@@ -28422,3 +28422,9 @@ boxes / sheets at 418 / 434 with Tex2 normal; another 281-296 / 319-335; noisy, 
 
 **Reading.** The stripes are gone over most of the wall; a few lines remain on faces seen nearly head-on (upper centre).
 Limits NS-255; NS-252 closed.
+
+**Then the owner's line rule** ("almost certainly the edge line being too big relative to the columns"): 5 % of the cell
+each side of the edge, never a pixel minimum; strength smoothstep from 12 to 24 px of squeezed cell width, times the
+finest level's share. Stills local/nested/r31line-side2-cliff1.png, r31line2-side16-cliff1.png: no stripes at side2;
+side16 unchanged in character. Compile (Dawn): default textured boxes / sheets 286 / 307, V3 396 / 390 (budgets 400 / 400
+/ 600); another run had them at 447 / 450 with the field draw at 918 (noise, NS-253).
