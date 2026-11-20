@@ -132,6 +132,20 @@ Round 32, the real thing:
      chosen by material" reading was more than the owner meant. This makes slumping (the first simulation
      slice) the thing that produces dirt on ledges and bare rock on faces.
 
+- **Step B6/B7 (commits 5b932888, a8664ec1): notches and fine columns in the real shader.** `?cliffGap=1`,
+  `?cliffNotch=middle|many|every`, `?cliffNotchP=`/`?cliffNotchD=`; fine columns = `&cliffAmp=0,256,256,256,256,256,256&cliffWLv=5&cliffPx=2`.
+  Stills `local/nested/rB6*`, `rB7*`. Holes 0 at T=2. COST IS THE OPEN PROBLEM (desktop, box pass GPU ms):
+  near view default 3.6 -> fine 4.2 -> fine + notches 11.2 (page frame 14.0 ms); foot of wall 2.5 -> 3.3 ->
+  19.3 (frame 23 ms, 38 % of box pixels hit the 96-step cap). Fine columns alone are cheap; the notches are
+  not: the march walks a notch's air node by node at 0.25 m. Proposed fix, not built (NS-307): cross a notch's
+  air in steps of the notch's own level. Also: notches decided per march node may alias with distance
+  (NS-305); no exactness test for notches (NS-306); thin bright vertical lines are sunlit one-column side faces
+  (NS-308, unconfirmed). T=0 with these settings: 133 hole px in the far view.
+- **Where the orchestrator stopped (no builder running):** next small steps in order: (1) NS-307 notch cost,
+  re-measure; (2) the material-boundary fix for brush skirts (NS-304); (3) the noise-by-slope setting;
+  (4) gates (self-test, never completed since round 28) and a phone bench before any phone link;
+  (5) first simulation slice: slumping on stepped stone, which the look now depends on.
+
 ## Open decisions for the owner
 1. Threshold default: 2 or 4.
 2. Notches: port coarse ones to the shader, or drop (orchestrator's view from the CPU pictures: drop for now).
