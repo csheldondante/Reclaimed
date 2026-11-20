@@ -1765,6 +1765,30 @@ owner's rule ("almost certainly the edge line being too big relative to the colu
 cell's width each side of the edge, never widened to a pixel, and its strength fades from full at 24 px of squeezed cell
 width to zero at 12 px; the finest level's lines also carry its share. Stills local/nested/r31line-side2-cliff1.png,
 r31line2-side16-cliff1.png: no stripes; columns of equal depth merge visually (the owner: "that's fine to merge them").
+
+**As built (round 31, version 3, step 4b: fine depth, the mask along the wall, notches).** The owner: "add noise to make
+them vary more in depth in the fine hash ... and add horizontal noise"; "moving along a cliff the fine detail comes in and
+out with noise"; "shallow horizontal notches in the cliff with noise along the visible column". All integer hashes; tops
+keep the rule that a parent bounds its children. The march now carries per level the cell's bounds, a path hash
+(sc3Key: parent hash and child index) and the child index, instead of integer cell indices.
+- Fine depth: level l's hashed drop is at most `?cliffDrop=` + `?cliffDropF=` x l of its own cells (default 1 + 0 x l).
+- The mask (`?cliffPatch=` P level-0 cells, default 4, 0 off): value noise on a P-cell lattice (hashed lattice values,
+  smoothstep-interpolated), remapped by smoothstep(0.38, 0.62) so about a third of the wall is 0 and a third 1; evaluated
+  once per level-0 cell (heights stay functions of cells; it steps a little between neighbouring coarse columns) and
+  multiplying the fine levels' drops and the sink and notch shares.
+- Notches (`?cliffGap=` percent, `?cliffGapD=` depth, default 0 and 4): below a fine column's top, z is cut into segments
+  (a base 1-3 nominal cells per cell, each boundary moved +-0.4 of it by a hash per (cell, boundary)); a hashed share of
+  segments per (cell, segment) is a gap, never the one touching the top. A ray whose side hit at the finest level lands
+  in a gap gets a hashed depth d of 0..GapD cells per (cell, segment): it passes through d cells with that first gap's
+  z-range (a box notch), hitting its floor (up) or ceiling (down) inside, else the side of the next cell (the notch's
+  back), recessed (a further 0.6 on the occlusion, no rim). Extra cost: up to 9 hashes at a side hit at the finest level.
+- Kept behind switches, default off: `?cliffHN=` (children split at a hashed 0.5 +- 0.2 HN of the parent's width: the
+  first reading of "horizontal noise", not wanted) and `?cliffSink=` (percent of fine columns 4 of their cells deeper:
+  the first reading of "gaps", not wanted).
+Stills local/nested/r31b-side2-* / -side16-* (base, dropF1, dropF2, mask, sink-style gap15 / gap30 from before the
+notch rewrite) and local/nested/r31c-*-gap0 / gap15 / gap30 (notches, mask 4, dropF 2). With the mask off and full fine
+drops (base, dropF2) black ovals return at side2 (4c); with the mask on the default view reads well; notches at side2
+are small lit ledges and dark slots, subtle at this distance.
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

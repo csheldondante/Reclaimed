@@ -28428,3 +28428,21 @@ each side of the edge, never a pixel minimum; strength smoothstep from 12 to 24 
 finest level's share. Stills local/nested/r31line-side2-cliff1.png, r31line2-side16-cliff1.png: no stripes at side2;
 side16 unchanged in character. Compile (Dawn): default textured boxes / sheets 286 / 307, V3 396 / 390 (budgets 400 / 400
 / 600); another run had them at 447 / 450 with the field draw at 918 (noise, NS-253).
+
+## 2026-11-20 — Nested scales lab, round 31 (version 3, step 4b): fine depth, the mask along the wall, notches
+
+**Why.** The owner: columns are to be told apart by depth from the fine hashes, not lines; "moving along a cliff the fine
+detail comes in and out with noise"; "shallow horizontal notches in the cliff with noise along the visible column so the
+notches vary along the vertical surface". Two earlier readings (hashed child splits for "horizontal noise", deeper fine
+columns for "gaps") were corrected by the owner and stay behind switches, default off.
+
+**What.** NESTED_SCALES.md "As built (round 31, version 3, step 4b)": the march carries per-level bounds and path hashes;
+`?cliffDropF=`, `?cliffPatch=` (default 4), `?cliffGap=` / `?cliffGapD=` (notches), `?cliffHN=` / `?cliffSink=` (off).
+Draw uniform: two more vec4 (cl2, cl3; DU_SIZE 224).
+
+**Measured.** Stills local/nested/r31b-* and r31c-* (see As built). Compile (Dawn), two runs: default textured boxes /
+sheets 473 / 534 then within budget (the passing run prints no table); V3 597 / 609 in the first (budget 600). Frame time
+not yet (4c).
+
+**Reading.** Default view (mask on) reads as nested columns with varied depth; full fine drops bring back black ovals
+(NS-256); notches are small at side2. Limits NS-256..NS-260.

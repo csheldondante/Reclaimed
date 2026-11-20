@@ -908,6 +908,17 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   of equal height seen at a grazing angle merge. Lines still show on faces seen more head-on (upper centre at side2).
   (Then the owner's rule, 5 % of the cell, fading 24 to 12 px: merging is accepted; depth from the fine hashes is to
   tell columns apart, step 4b.)
+- NS-256 (look, round 31) `?cliff=3` with full fine drops (`?cliffPatch=0`, any `?cliffDropF=`) shows smooth black
+  ovals at side2 where the smooth shading has its dark bump sides; with the mask on they mostly go. Not diagnosed (4c).
+- NS-257 (hack, round 31) The fine-detail mask is evaluated once per level-0 cell (heights stay functions of cells), so
+  it steps by small amounts between neighbouring 16 m columns instead of varying continuously inside one.
+- NS-258 (limit, round 31) Notches start only at a side hit of a cell entered by crossing at the finest level: the start
+  cell (the pixel's own) never has one, and a notch's z-range is its first cell's, whatever the cells behind it hold.
+- NS-259 (unused, round 31) `?cliffHN=` (hashed child splits) and `?cliffSink=` (deeper fine columns) stay in the code,
+  default off: first readings of "horizontal noise" and "gaps" the owner corrected. Remove if not wanted after review.
+- NS-260 (test, round 31) Compile, Dawn, after 4b: one run default textured boxes / sheets 473 / 534 (over 400) with
+  V3 597 / 609 (budget 600) and Tex2 normal, the next run all within; not settled whether the V3 code costs the default
+  pipelines anything (they should not contain it).
 - NS-253 (test, round 31) Compile times swing 1.5-2.5x between runs on this machine (drawFieldTex 295-820 ms with no
   change); version 3's textured variants (drawBoxesTexV3 / drawSheetsTexV3) got a 600 ms budget from 341-457 / 401-535 ms.
 - NS-254 (hack, round 31) The pixel's size per unit of distance (draw uniform cl.x) is written by the app each frame

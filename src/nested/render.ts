@@ -28,7 +28,7 @@ function texEntries(): GPUBindGroupLayoutEntry[] {
 }
 
 const DU = 256;
-const DU_SIZE = 192;
+const DU_SIZE = 224;
 /** a grid's model matrix: one root grid at the world origin today (identity); another grid would carry its rigid frame */
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
@@ -190,6 +190,18 @@ export class Renderer {
    *  mode at run time (shade.wgsl shCol3: 1 finest level, 2 hit level, 3 hit kind, 4 level-0 top, 5 lighting only) */
   cliffDbgBuilt = false;
   cliffDbg = 0;
+  /** (version 3) ?cliffDropF= the hashed drop's growth per level (level l: cliffDrop + cliffDropF x l of its own cells) */
+  cliffDropF = 0;
+  /** (version 3) ?cliffHN= horizontal noise: children split at 0.5 +- 0.2 x HN of their parent's width (0 off) */
+  cliffHN = 0;
+  /** (version 3) ?cliffSink= percent of fine columns (levels 1+) dropped 4 of their own cells deeper (0 off) */
+  cliffSink = 0;
+  /** (version 3) ?cliffPatch= the fine detail's mask along the wall, period in level-0 cells (default 4; 0 off) */
+  cliffPatch = 4;
+  /** (version 3) ?cliffGap= percent of segments below a fine column's top that are notches into the face (0 off) */
+  cliffGap = 0;
+  /** (version 3) ?cliffGapD= a notch's depth at most, fine cells (default 4) */
+  cliffGapD = 4;
   /** (version 3) ?cliffPx= the finest level's cells at least, pixels (by distance; default 6) */
   cliffPx = 6;
   /** (version 3) a pixel's size per unit of distance from the eye (set by the app each frame from the field of view) */
@@ -575,7 +587,8 @@ export class Renderer {
       new Float32Array(st, lv.depth * DU + 160, 4).set([this.mpu, this.fogM, this.shadeS, Math.round(Math.log2(this.mpu / TEX_TILE_M))]);
       // (round 31, version 3) x a pixel's size per unit of distance (the level chosen by distance), y ?cliffPx=, z the
       // diagnostic mode (?cliffDbg=)
-      new Float32Array(st, lv.depth * DU + 176, 4).set([this.pxAng, this.cliffPx, this.cliffDbg, 0]);
+      // (cl2, cl3: the hashed split, sink share, mask period, gap share; the gap's depth: draw.wgsl DrawU)
+      new Float32Array(st, lv.depth * DU + 176, 12).set([this.pxAng, this.cliffPx, this.cliffDbg, this.cliffDropF, this.cliffHN, this.cliffSink, this.cliffPatch, this.cliffGap, this.cliffGapD, 0, 0, 0]);
     }
     this.device.queue.writeBuffer(this.ubuf, 0, st);
   }

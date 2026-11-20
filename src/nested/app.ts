@@ -166,6 +166,15 @@ export class App {
     this.render.cliffV = cv === '3' ? 3 : cv === '2' ? 2 : 1;
     this.render.cliffV3Built = cv === '3';
     if (q.has('cliffPx')) this.render.cliffPx = Number(q.get('cliffPx'));
+    // (version 3, step 4b) ?cliffDropF= the drop's growth per level; ?cliffHN= the children's hashed split (0..1)
+    if (q.has('cliffDropF')) this.render.cliffDropF = Number(q.get('cliffDropF'));
+    if (q.has('cliffHN')) this.render.cliffHN = Number(q.get('cliffHN'));
+    // ?cliffSink= percent of fine columns dropped 4 of their own cells deeper; ?cliffPatch= the fine detail's mask period
+    // (level-0 cells, 0 off); ?cliffGap= percent of segments below a fine top that are notches, ?cliffGapD= their depth
+    if (q.has('cliffSink')) this.render.cliffSink = Number(q.get('cliffSink'));
+    if (q.has('cliffPatch')) this.render.cliffPatch = Number(q.get('cliffPatch'));
+    if (q.has('cliffGap')) this.render.cliffGap = Number(q.get('cliffGap'));
+    if (q.has('cliffGapD')) this.render.cliffGapD = Number(q.get('cliffGapD'));
     // (diagnostics) ?cliffDbg=N: version 3's diagnostic colours compiled in, mode N (render.ts cliffDbg)
     if (q.has('cliffDbg')) {
       this.render.cliffDbgBuilt = true;

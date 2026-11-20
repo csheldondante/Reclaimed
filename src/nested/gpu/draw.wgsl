@@ -22,8 +22,15 @@ struct DrawU {
   // z the textured shading's scale: its bands and materials in world units / 2^z (5 at 128 m: 4 m, near the 3.2 m root
   // column their constants were tuned at); (round 27) w: ?tex=2's fine tile, log2 tiles a world unit (6: 2 m tiles)
   geo: vec4<f32>,
-  // (round 31, version 3) x a pixel's size per unit of distance from the eye, y ?cliffPx= (the finest cells, pixels)
+  // (round 31, version 3) x a pixel's size per unit of distance from the eye, y ?cliffPx= (the finest cells, pixels),
+  // z ?cliffDbg='s mode, w ?cliffDropF= (the hashed drop's growth per level, cells)
   cl: vec4<f32>,
+  // (round 31, version 3) x ?cliffHN= (the children's hashed split, 0..1), y ?cliffSink= (percent of fine columns dropped
+  // 4 of their own cells deeper), z ?cliffPatch= (the fine detail's mask period, level-0 cells; 0 off), w ?cliffGap=
+  // (percent of segments below a fine column's top that are notches)
+  cl2: vec4<f32>,
+  // (round 31, version 3) x ?cliffGapD= (a notch's depth at most, fine cells)
+  cl3: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> d: DrawU;
@@ -699,7 +706,7 @@ fn texOut(q: vec3<f32>, zo: f32, ng: vec3<f32>, mat: u32, pxL: f32, toEye: vec3<
       var col: ShCol;
       if (CLIFF_V3 && ((cz >> 29u) & 1u) != 0u) {
         // (version 3, bit 29: the nested columns; the finest level by distance: d.cl.x a pixel per unit of distance)
-        col = shCol3(si, wc - 128, i32((cz >> 24u) & 15u), (cz >> 12u) & 15u, d.cl.x, d.cl.y, select(0u, u32(d.cl.z), CLIFF_DBG));
+        col = shCol3(si, wc - 128, i32((cz >> 24u) & 15u), (cz >> 12u) & 15u, d.cl.x, d.cl.y, select(0u, u32(d.cl.z), CLIFF_DBG), d.cl.w, d.cl2.x, d.cl2.y, d.cl2.z, d.cl2.w, u32(d.cl3.x));
         dbgI = col.dbg;
       } else {
         col = shCol(si, wc - 128, i32((cz >> 24u) & 15u), (cz >> 12u) & 15u, ((cz >> 28u) & 1u) != 0u);

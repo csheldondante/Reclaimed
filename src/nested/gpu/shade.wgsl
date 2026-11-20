@@ -346,23 +346,102 @@ fn shCol(si: ShadeIn, k: i32, steps: i32, drop: u32, sheet: bool) -> ShCol {
 // SC3_LCAP + 1 levels, SC3_ITER steps in all (descents and crossings), `steps` level-0 cells; else a miss.
 const SC3_LCAP: i32 = 5;
 const SC3_ITER: i32 = 40;
-/** level l's column top over cell rc (level-l cells from the start cell c0's corner), relative to the pixel, level-0 cells */
-fn sc3Top(l: i32, rc: vec2<i32>, c0: vec2<i32>, p0: vec2<f32>, gn: vec3<f32>, zAbs: f32, parent: f32, amp: f32, drop: u32) -> f32 {
-  let sz = ldexp(1.0, -l);
-  let a = (c0 << vec2<u32>(u32(l))) + rc;
-  let dz = f32(shH3(a.x, a.y, 5099 + l * 7919) % (2u * drop + 1u)) * 0.5 * sz;
-  if (l == 0) {
-    let ctr = vec2<f32>(rc) + vec2<f32>(0.5) - p0;
-    let hc = -(gn.x * ctr.x + gn.y * ctr.y) / gn.z;
-    return floor((zAbs + hc) * 2.0) * 0.5 - dz - zAbs;
+// (step 4b) Fine depth: level l's hashed drop is at most drop + dropF x l of its own (nominal 2^-l) cells
+// (?cliffDrop=, ?cliffDropF=), so finer columns sit at visibly different depths. Horizontal noise (?cliffHN=, 0..1):
+// a cell splits into its 2 x 2 children at a hashed fraction of its width per axis, 0.5 +- 0.2 x HN, instead of the
+// middle; children stay inside their parent, so the max-mip march stays exact (it carries each level's bounds and a
+// path hash instead of integer cell indices). Level 0 stays a regular grid.
+/** a cell's hashed drop below its parent (level-0 cells): key the cell's hash, l its level. (Sinks, ?cliffSink= percent,
+ *  default 0, the first reading of the owner's "gaps", kept: at levels 1 and finer that share of cells, by another part
+ *  of the hash, drops 4 of its own cells more; still below the parent, so a parent bounds its children) */
+fn sc3Drop(key: u32, l: i32, drop: u32, dropF: f32, sink: f32) -> f32 {
+  let dl = drop + u32(round(dropF * f32(l)));
+  let g = select(0.0, 4.0, l > 0 && f32((key >> 8u) % 100u) < sink);
+  return (f32(key % (2u * dl + 1u)) * 0.5 + g) * ldexp(1.0, -l);
+}
+// (step 4b, ?cliffGap= percent, ?cliffGapD= depth: the owner's "random dropped fine intervals around the cliff edge to a
+// small depth 0-4 columns"; "notches vary along the vertical surface") A fine column keeps its top; below it, z is cut into
+// segments: a base length of 1-3 of its nominal cell widths per cell, each boundary moved by a hashed +-0.4 of it per
+// (cell, boundary); a hashed share of segments (by cell and segment index) is a gap, never the segment touching the top;
+// all independent between neighbouring columns. Where the ray's first side hit lands in a gap of the outermost cell, a hashed depth d of 0..GapD
+// cells (by cell and segment; 0: no recess) is cut into the face: the ray passes through d cells at that level with
+// the first cell's gap z-range (a box-shaped notch), hitting the notch's floor (up, a lit ledge) or ceiling (down) if
+// it leaves that range inside a cell, else the side of the cell after them (the notch's back), shaded as recessed.
+// Tops never change.
+/** whether segment j of cell key is a gap */
+fn sc3GapAt(key: u32, j: i32, share: f32) -> bool {
+  return f32(shH3(bitcast<i32>(key), j, 6151) % 100u) < share;
+}
+/** boundary j's depth below the top (segment j spans boundaries j..j + 1): a base length lc per cell, each boundary
+ *  (j >= 1) moved by a hashed +-0.4 lc, so segment lengths vary per (cell, segment) from 0.2 to 1.8 lc */
+fn sc3Bound(key: u32, j: i32, lc: f32) -> f32 {
+  if (j <= 0) { return 0.0; }
+  return lc * (f32(j) + 0.8 * (f32(shH3(bitcast<i32>(key), j, 7121) & 1023u) / 1023.0 - 0.5));
+}
+/** the run of gap segments round height z in a column of top T (cell width sz): (floor, ceiling, its top segment's
+ *  index), or floor > ceiling for none */
+fn sc3Gap(key: u32, sz: f32, T: f32, z: f32, share: f32) -> vec3<f32> {
+  if (share <= 0.0) { return vec3<f32>(1.0, 0.0, 0.0); }
+  let lc = sz * f32(1u + ((key >> 4u) % 3u));
+  let dz = T - z;
+  var j = i32(floor(dz / lc));
+  if (dz < sc3Bound(key, j, lc)) {
+    j -= 1;
+  } else if (dz >= sc3Bound(key, j + 1, lc)) {
+    j += 1;
   }
-  return parent - amp * dz;
+  if (j < 1 || !sc3GapAt(key, j, share)) { return vec3<f32>(1.0, 0.0, 0.0); }
+  // (the run of air segments round j, 3 more each way at most; never segment 0)
+  var a = j;
+  var b = j;
+  for (var u = 0; u < 3; u++) {
+    if (a > 1 && sc3GapAt(key, a - 1, share)) { a -= 1; } else { break; }
+  }
+  for (var u = 0; u < 3; u++) {
+    if (sc3GapAt(key, b + 1, share)) { b += 1; } else { break; }
+  }
+  return vec3<f32>(T - sc3Bound(key, b + 1, lc), T - sc3Bound(key, a, lc), f32(a));
+}
+/** a level-0 column's top over cell rc (cells from the start cell c0), relative to the pixel, level-0 cells */
+fn sc3Top0(key: u32, rc: vec2<i32>, p0: vec2<f32>, gn: vec3<f32>, zAbs: f32, drop: u32) -> f32 {
+  let ctr = vec2<f32>(rc) + vec2<f32>(0.5) - p0;
+  let hc = -(gn.x * ctr.x + gn.y * ctr.y) / gn.z;
+  return floor((zAbs + hc) * 2.0) * 0.5 - sc3Drop(key, 0, drop, 0.0, 0.0) - zAbs;
+}
+/** (step 4b, ?cliffPatch= P level-0 cells, 0 off) the fine detail's mask along the wall: value noise on a lattice of P
+ *  cells (integer-hashed lattice values, smoothstep-interpolated) at the level-0 cell c0 + rc's centre, remapped so about
+ *  a third of the wall is 0 (coarse columns only), a third 1 and the rest between. Evaluated per level-0 cell, so a
+ *  column's height stays a function of its cell; it scales the fine levels' drops and gap share, never switches levels */
+fn sc3Mask(c0: vec2<i32>, rc: vec2<i32>, P: f32) -> f32 {
+  if (P <= 0.0) { return 1.0; }
+  let Pi = max(i32(round(P)), 1);
+  let c = c0 + rc;
+  // (floor division in integers: c0 is a large world index)
+  let cb = vec2<i32>(floor(vec2<f32>(c) / f32(Pi)));
+  let rem = c - cb * Pi;
+  let qf = (vec2<f32>(rem) + vec2<f32>(0.5)) / f32(Pi);
+  let f = qf * qf * (vec2<f32>(3.0) - 2.0 * qf);
+  let h00 = f32(shH3(cb.x, cb.y, 9157) & 1023u);
+  let h10 = f32(shH3(cb.x + 1, cb.y, 9157) & 1023u);
+  let h01 = f32(shH3(cb.x, cb.y + 1, 9157) & 1023u);
+  let h11 = f32(shH3(cb.x + 1, cb.y + 1, 9157) & 1023u);
+  let n = mix(mix(h00, h10, f.x), mix(h01, h11, f.x), f.y) / 1023.0;
+  return smoothstep(0.38, 0.62, n);
+}
+/** where a cell (bounds lo..hi, hash key) splits into its children: 0.5 +- 0.2 hn of its width per axis */
+fn sc3Split(lo: vec2<f32>, hi: vec2<f32>, key: u32, hn: f32) -> vec2<f32> {
+  let f = vec2<f32>(f32((key >> 12u) & 1023u), f32((key >> 22u) & 1023u)) / 1023.0 - vec2<f32>(0.5);
+  return lo + (hi - lo) * (vec2<f32>(0.5) + 0.4 * hn * f);
+}
+/** a child's hash from its parent's and its index (0/1 per axis) */
+fn sc3Key(parent: u32, c: vec2<i32>, l: i32) -> u32 {
+  return shH3(bitcast<i32>(parent), c.x + 2 * c.y, 7919 + l);
 }
 /** dbg (diagnostics, ?cliffDbg=, 0 off): 1 the finest level D, 2 the hit's level, 3 the hit's kind (0 top, 1 side through
  *  an x face, 2 through a y face, 3 the start cell traced back, 4 a miss, 5 the iteration cap), 4 the hit's level-0 top
  *  in half cells mod 6 (pixels disagreeing about one cell's top show as different colours in it), 5 no edge lines, tint
  *  or occlusion (lighting only), 6 no edge lines, 7 no darkening by depth along the ray, 8 (draw.wgsl) a fill on faces */
-fn shCol3(si: ShadeIn, k: i32, steps: i32, drop: u32, pxAng: f32, pxT: f32, dbg: u32) -> ShCol {
+fn shCol3(si: ShadeIn, k: i32, steps: i32, drop: u32, pxAng: f32, pxT: f32, dbg: u32, dropF: f32, hnz: f32, sink: f32, patchP: f32, gap: f32, gapD: u32) -> ShCol {
   let ng = si.ng;
   var r = ShCol(0.0, ng, 1.0, 1.0, false, -1);
   if (ng.z < -0.01) { return r; }
@@ -389,10 +468,20 @@ fn shCol3(si: ShadeIn, k: i32, steps: i32, drop: u32, pxAng: f32, pxT: f32, dbg:
   let sy = select(-1, 1, v.y >= 0.0);
   let okx = abs(v.x) > 1e-6;
   let oky = abs(v.y) > 1e-6;
+  // per level: the column top, the cell's bounds (level-0 cells from the start cell's corner), its hash, its child index
   var tops: array<f32, 6>;
+  var blo: array<vec2<f32>, 6>;
+  var bhi: array<vec2<f32>, 6>;
+  var key: array<u32, 6>;
+  var cid: array<vec2<i32>, 6>;
   var l = 0;
   var rc = vec2<i32>(0);
-  tops[0] = sc3Top(0, rc, c0, p0, gn, zAbs, 0.0, 1.0, drop);
+  key[0] = shH3(c0.x, c0.y, 5099);
+  blo[0] = vec2<f32>(0.0);
+  bhi[0] = vec2<f32>(1.0);
+  tops[0] = sc3Top0(key[0], rc, p0, gn, zAbs, drop);
+  // (the slow mask of the current level-0 cell: scales the fine drops and the sink and gap shares)
+  var mask0 = sc3Mask(c0, rc, patchP);
   var t = 0.0;
   var crossed = false;
   var hit = false;
@@ -401,25 +490,62 @@ fn shCol3(si: ShadeIn, k: i32, steps: i32, drop: u32, pxAng: f32, pxT: f32, dbg:
   // (diagnostics: the steps taken; the start cell traced back)
   var its = 0;
   var back = false;
+  // (the notch: inside one, the cells still to pass and its z-range)
+  var inRec = false;
+  var recLeft = 0;
+  var recR = vec2<f32>(0.0);
   for (var it = 0; it < SC3_ITER; it++) {
     its = it + 1;
-    let sz = ldexp(1.0, -l);
+    let lo = blo[l];
+    let hi = bhi[l];
+    let sz = min(hi.x - lo.x, hi.y - lo.y);
     let T = tops[l];
     let z = v.z * t;
-    let lo = vec2<f32>(rc) * sz;
-    let tx = select(1e30, (select(lo.x, lo.x + sz, v.x >= 0.0) - p0.x) / v.x, okx);
-    let ty = select(1e30, (select(lo.y, lo.y + sz, v.y >= 0.0) - p0.y) / v.y, oky);
+    let tx = select(1e30, (select(lo.x, hi.x, v.x >= 0.0) - p0.x) / v.x, okx);
+    let ty = select(1e30, (select(lo.y, hi.y, v.y >= 0.0) - p0.y) / v.y, oky);
     let tExit = min(tx, ty);
     var down = false;
     if (z < T - 1e-4 * sz) {
-      // inside this cell's column: a hit at the finest level, else into the children
-      if (l >= D) {
+      // inside this cell's column: a hit at the finest level (unless a notch lets the ray through), else into the children
+      var through = false;
+      if (l >= D && crossed && gap > 0.0) {
+        if (!inRec) {
+          let gr = sc3Gap(key[l], ldexp(1.0, -l), T, z, gap * mask0);
+          if (gr.x < gr.y) {
+            let dd = i32(shH3(bitcast<i32>(key[l]), i32(gr.z), 3571) % (gapD + 1u));
+            if (dd > 0) {
+              inRec = true;
+              recLeft = dd;
+              recR = gr.xy;
+            }
+          }
+        }
+        if (inRec && recLeft > 0) {
+          // through this cell of the notch, unless the ray leaves the notch's z-range inside it (its floor or ceiling)
+          recLeft -= 1;
+          through = true;
+          let zE = v.z * tExit;
+          if (v.z < 0.0 && zE < recR.x) {
+            t = recR.x / v.z;
+            hn = vec3<f32>(0.0, 0.0, 1.0);
+            hit = true;
+            break;
+          }
+          if (v.z > 0.0 && zE > recR.y) {
+            t = recR.y / v.z;
+            hn = vec3<f32>(0.0, 0.0, -1.0);
+            hit = true;
+            break;
+          }
+        }
+      }
+      if (l >= D && !through) {
         hit = true;
         if (!crossed) {
           back = true;
           // (the start: back along the ray to the cell's top or the face it came through)
-          let bx = select(1e30, select(lo.x + sz - p0.x, p0.x - lo.x, v.x >= 0.0) / abs(v.x), okx);
-          let by = select(1e30, select(lo.y + sz - p0.y, p0.y - lo.y, v.y >= 0.0) / abs(v.y), oky);
+          let bx = select(1e30, select(hi.x - p0.x, p0.x - lo.x, v.x >= 0.0) / abs(v.x), okx);
+          let by = select(1e30, select(hi.y - p0.y, p0.y - lo.y, v.y >= 0.0) / abs(v.y), oky);
           let bt = select(1e30, T / -v.z, v.z < 0.0);
           if (bt <= min(bx, by)) {
             t = -bt;
@@ -434,7 +560,7 @@ fn shCol3(si: ShadeIn, k: i32, steps: i32, drop: u32, pxAng: f32, pxT: f32, dbg:
         }
         break;
       }
-      down = true;
+      down = l < D;
     } else if (v.z < 0.0) {
       // falling onto this cell's top inside it
       let tt = t + (T - z) / v.z;
@@ -449,38 +575,65 @@ fn shCol3(si: ShadeIn, k: i32, steps: i32, drop: u32, pxAng: f32, pxT: f32, dbg:
       }
     }
     if (down) {
+      // into the child the ray is in (split at the parent's hashed fraction)
       let pp = p0 + v.xy * (t + 1e-4 * sz);
+      let spl = sc3Split(lo, hi, key[l], hnz);
+      let c = vec2<i32>(select(0, 1, pp.x >= spl.x), select(0, 1, pp.y >= spl.y));
+      let ch = vec2<bool>(c.x == 1, c.y == 1);
       l += 1;
-      rc = clamp(vec2<i32>(floor(pp / (0.5 * sz))), rc * 2, rc * 2 + vec2<i32>(1));
-      tops[l] = sc3Top(l, rc, c0, p0, gn, zAbs, tops[l - 1], select(1.0, ampD, l == D), drop);
+      blo[l] = select(lo, spl, ch);
+      bhi[l] = select(spl, hi, ch);
+      cid[l] = c;
+      key[l] = sc3Key(key[l - 1], c, l);
+      tops[l] = tops[l - 1] - select(1.0, ampD, l == D) * mask0 * sc3Drop(key[l], l, drop, dropF, sink * mask0);
       continue;
     }
-    // across the face to the neighbour; up while it is outside the parent
+    // across the face to the neighbour: the sibling inside the same parent, else up a level and try again; at level 0
+    // the next grid cell
     t = tExit;
     crossed = true;
-    var st = vec2<i32>(0);
-    if (tx < ty) {
-      st.x = sx;
-      hn = vec3<f32>(-f32(sx), 0.0, 0.0);
-    } else {
-      st.y = sy;
-      hn = vec3<f32>(0.0, -f32(sy), 0.0);
-    }
-    var nr = rc + st;
+    let isX = tx < ty;
+    let sg = select(sy, sx, isX);
+    hn = select(vec3<f32>(0.0, -f32(sy), 0.0), vec3<f32>(-f32(sx), 0.0, 0.0), isX);
+    var moved = false;
     for (var u = 0; u < SC3_LCAP; u++) {
       if (l == 0) { break; }
-      if (all((nr >> vec2<u32>(1u)) == (rc >> vec2<u32>(1u)))) { break; }
+      let ca = select(cid[l].y, cid[l].x, isX);
+      if ((sg > 0 && ca == 0) || (sg < 0 && ca == 1)) {
+        // the sibling: the other side of the parent's split on this axis
+        let spl = sc3Split(blo[l - 1], bhi[l - 1], key[l - 1], hnz);
+        let nc = 1 - ca;
+        var c = cid[l];
+        var nlo = blo[l];
+        var nhi = bhi[l];
+        if (isX) {
+          c.x = nc;
+          nlo.x = select(blo[l - 1].x, spl.x, nc == 1);
+          nhi.x = select(spl.x, bhi[l - 1].x, nc == 1);
+        } else {
+          c.y = nc;
+          nlo.y = select(blo[l - 1].y, spl.y, nc == 1);
+          nhi.y = select(spl.y, bhi[l - 1].y, nc == 1);
+        }
+        cid[l] = c;
+        blo[l] = nlo;
+        bhi[l] = nhi;
+        key[l] = sc3Key(key[l - 1], c, l);
+        tops[l] = tops[l - 1] - select(1.0, ampD, l == D) * mask0 * sc3Drop(key[l], l, drop, dropF, sink * mask0);
+        moved = true;
+        break;
+      }
       l -= 1;
-      rc = rc >> vec2<u32>(1u);
-      nr = rc + st;
     }
-    rc = nr;
-    if (l == 0) {
+    if (!moved) {
       n0 += 1;
       if (n0 > steps) { break; }
-      tops[0] = sc3Top(0, rc, c0, p0, gn, zAbs, 0.0, 1.0, drop);
-    } else {
-      tops[l] = sc3Top(l, rc, c0, p0, gn, zAbs, tops[l - 1], select(1.0, ampD, l == D), drop);
+      rc += select(vec2<i32>(0, sy), vec2<i32>(sx, 0), isX);
+      blo[0] = vec2<f32>(rc);
+      bhi[0] = vec2<f32>(rc) + vec2<f32>(1.0);
+      key[0] = shH3(c0.x + rc.x, c0.y + rc.y, 5099);
+      tops[0] = sc3Top0(key[0], rc, p0, gn, zAbs, drop);
+      mask0 = sc3Mask(c0, rc, patchP);
     }
   }
   if (!hit) {
@@ -494,7 +647,9 @@ fn shCol3(si: ShadeIn, k: i32, steps: i32, drop: u32, pxAng: f32, pxT: f32, dbg:
   if (dbg == 3u) { r.dbg = select(select(select(2, 1, abs(hn.x) > 0.5), 0, hn.z > 0.5), 3, back); }
   if (dbg == 4u) { r.dbg = i32(round((tops[0] + zAbs) * 2.0)) % 6 + 6; }
   // ---- the hit, as version 2, at the hit's level; the finest level's lines and tint grown in by its share
-  let sz = ldexp(1.0, -l);
+  // (the hit cell's extent along the face's tangent: cells have hashed widths with ?cliffHN=)
+  let xFace = abs(hn.x) > 0.5;
+  let sz = select(bhi[l].x - blo[l].x, bhi[l].y - blo[l].y, xFace);
   let lpx = cellPx * sz;
   let share = select(1.0, ampD, l == D && D > li) * select(1.0, 0.0, dbg == 5u);
   let hp = p0 + v.xy * t;
@@ -502,22 +657,24 @@ fn shCol3(si: ShadeIn, k: i32, steps: i32, drop: u32, pxAng: f32, pxT: f32, dbg:
   // pixel; their strength fades to zero as the cell's on-screen width, squeezed by the view's plan angle to the face
   // (x sqrt(1 - (v . tangent)^2)), falls from 24 to 12 px; the finest level's also carry its share. The diagnosis
   // (?cliffDbg=6): lines a pixel wide on cells squeezed to 1-3 px were the dark gaps between columns, NS-252)
-  let vt = select(v.x, v.y, abs(hn.x) > 0.5);
+  let vt = select(v.x, v.y, xFace);
   let lpxF = lpx * sqrt(max(1.0 - vt * vt, 0.0));
   let lw = 0.05;
-  let fa = fract(select(hp.x, hp.y, abs(hn.x) > 0.5) / sz);
+  let fa = clamp((select(hp.x, hp.y, xFace) - select(blo[l].x, blo[l].y, xFace)) / max(sz, 1e-6), 0.0, 1.0);
   let lineOn = smoothstep(12.0, 24.0, lpxF);
-  let edge = share * lineOn * select(1.0 - smoothstep(0.5 * lw, lw, min(fa, 1.0 - fa)), 0.0, hn.z > 0.5 || dbg == 6u);
-  let rim = select((1.0 - smoothstep(lw, lw + 0.08, (tops[l] - v.z * t) / sz)) * (1.0 - edge), 0.0, hn.z > 0.5);
-  let a = (c0 << vec2<u32>(u32(l))) + rc;
-  let ap = (c0 << vec2<u32>(u32(max(l - 1, 0)))) + (rc >> vec2<u32>(select(0u, 1u, l > 0)));
-  let jl = f32(shH3(a.x + 40503, a.y - 7919, 31 + l) & 1023u) / 1023.0;
-  let jp = f32(shH3(ap.x + 40503, ap.y - 7919, 31 + max(l - 1, 0)) & 1023u) / 1023.0;
+  // (a notch's floor or ceiling is flat: no lines, no rim)
+  let isFlat = abs(hn.z) > 0.5;
+  let edge = share * lineOn * select(1.0 - smoothstep(0.5 * lw, lw, min(fa, 1.0 - fa)), 0.0, isFlat || dbg == 6u);
+  let rim = select((1.0 - smoothstep(lw, lw + 0.08, (tops[l] - v.z * t) / sz)) * (1.0 - edge), 0.0, isFlat || inRec);
+  let jl = f32(shH3(bitcast<i32>(key[l]), 40503, 31) & 1023u) / 1023.0;
+  let jp = f32(shH3(bitcast<i32>(key[max(l - 1, 0)]), 40503, 31) & 1023u) / 1023.0;
   let j = mix(jp, jl, share);
   r.w = w;
   r.n = hn;
   r.tint = select((0.80 + 0.32 * j) * (1.0 - 0.55 * edge) * (1.0 + 0.2 * rim), 1.0, dbg == 5u);
-  r.ao = select((1.0 - 0.6 * edge) * select(mix(1.0, 0.5, smoothstep(0.0, 1.0, abs(t))), 1.0, dbg == 7u), 1.0, dbg == 5u);
+  // (inside or at the back of a notch: recessed, a further 0.6 on the depth darkening)
+  let recess = select(1.0, 0.6, inRec);
+  r.ao = select((1.0 - 0.6 * edge) * recess * select(mix(1.0, 0.5, smoothstep(0.0, 1.0, abs(t))), 1.0, dbg == 7u), 1.0, dbg == 5u);
   return r;
 }
 
