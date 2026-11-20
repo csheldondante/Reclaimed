@@ -1006,6 +1006,20 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   shader not built.
 - NS-295 (look, round 32 B2) The CPU hollow darkening (cliffview.ts hollow) probes 12 solid tests a hit; a shader port
   needs it O(1) (the notch's own depth and height are known at the hit).
+- NS-292 (DONE round 32 B3: back faces collapsed in the vertex stage, the box list front to back; side2 box pass 5.8 ->
+  3.6 ms at T 2, the same pixels)
+- NS-296 (test/perf, round 32 B3) The front-to-back order only helps where the GPU rejects fragments before a shader
+  that discards and writes depth; measured on this desktop only. Phones (tilers) need the phone bench: the box pass
+  with the order on and off (cliffBox.opt.order), per the toggle method.
+- NS-297 (limit, round 32 B3) The order is picked from the camera's forward direction; with a wide field of view the
+  rays at the screen's edge can lie in the neighbouring quadrant, where the order is only partly front to back (the
+  image is still right).
+- NS-298 (limit, round 32 B3) The sort's buckets take keys up to 2047: a table window of n > 1024 cells would need more
+  (the window is 256 now). The sort passes dispatch over every cell of the window (the count is on the GPU).
+- NS-299 (perf, round 32 B3) What remains is the march itself: about 1.5-3 marching fragments a box pixel (an upper bound)
+  times 5-8 steps. Next candidates (they change the look, so for the owner): a coarser march for far fragments, or
+  culling boxes whose visible faces are all below their neighbours' floors.
+- NS-300 (look, round 32 B3) side2 at T 4 has 31 hole pixels below the horizon (before and after B3); not looked into.
 
 - NS-253 (test, round 31) Compile times swing 1.5-2.5x between runs on this machine (drawFieldTex 295-820 ms with no
   change); version 3's textured variants (drawBoxesTexV3 / drawSheetsTexV3) got a 600 ms budget from 341-457 / 401-535 ms.

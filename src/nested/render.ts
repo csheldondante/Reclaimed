@@ -513,8 +513,17 @@ export class Renderer {
       }
       // (step B2) the SPLIT cells' boxes, marched inside, with the 16 m level's uniforms
       if (cb && cbg && tp && levels.some((l) => l.depth === cb.lv)) {
+        // (B3, measurement only, ?gputime=1: the overdraw count pass between the sheets and the boxes)
+        if (cb.counting && gt && pass) {
+          const pp = pass as GPURenderPassEncoder;
+          pp.endOcclusionQuery();
+          pp.end();
+          pass = null;
+          cb.drawCount(enc, this.depth!, tex.width, tex.height, cbg, cb.lv * DU);
+        }
         const p = begin('cliff boxes');
-        p.setPipeline(cb.box);
+        // (B3: the setting's pipeline: back faces collapsed in the vertex stage, the box list front to back)
+        p.setPipeline(cb.pipe());
         // (the boxes' own group 0: the uniform, the camera and the registry only; vertex stage 3 storage buffers)
         p.setBindGroup(0, cbg.box0, [cb.lv * DU]);
         p.setBindGroup(1, cbg.box1);

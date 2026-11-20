@@ -28620,3 +28620,29 @@ notches per face; pictures rA4 / rA5; exactness at T 4.
 - 8 m amplitude 0 / a quarter (above view): steps mean 5.8 / max 32 both; closure 0 / 1 hole pixels.
 - Notches per face column (synthetic): middle 0 / 0.45 / 3, coarse50 0 / 0.63 / 3; CPU march steps near view none 20.9,
   middle 26.0, coarse50 29.6 a pixel.
+
+## 2026-11-20 — Nested scales lab, round 32 (step B3): the cliff boxes' overdraw (NS-292)
+
+**Why.** At side2 the box pass took 7.6 ms and the page fell below the display rate; every front face of every box
+marched, boxes hidden behind nearer boxes too. The owner's requirement is 60 fps on a phone. No per-frame CPU work, no
+readbacks, the look unchanged.
+
+**What.** Back faces collapsed in vsBox5 when the eye is outside the box (they were discarded in the fragment stage);
+the table build sorts the box list into two diagonal orders (a three-pass counting sort, only when the table is built)
+and vsBox5 reads the one that is front to back for the camera's forward quadrant. An overdraw counter (measurement
+only) and scripts/nested-rB3-bench.mjs (settings interleaved in one page; stills compared pixel by pixel; holes; the
+counter; GPU time). NESTED_SCALES "As built (round 32, step B3)".
+
+**Measured** (box pass GPU ms, median of 4 interleaved rounds, before -> after; desktop D3D11).
+- T 2: side16 3.27 -> 1.87, side2 5.81 -> 3.56, above 3.47 -> 3.11, foot 3.92 -> 2.77. The cull alone: 2.79 / 5.20 /
+  3.04 / 4.00.
+- T 4: side16 2.05 -> 1.44, side2 3.44 -> 2.68, above 1.56 -> 1.29, foot 4.39 -> 4.26 (in a slower machine state: every
+  pass ~3 ms more, frames 10.5-12 ms).
+- Overdraw (front-face box fragments a box pixel, mean / max) T 2: side16 6.3 / 25, side2 6.9 / 37, above 3.3 / 10, foot
+  6.0 / 17; with the back faces 12.7-14.3 before the cull. Upper bound of marching fragments a pixel (against the sheets'
+  depth, no box-box rejection) 2.3-3.2; march steps a marched fragment 4.7-6.5.
+- Pixels: identical to the uncut draw at every pose (HUD text left out); holes unchanged.
+- Timing on this machine drifts between runs by up to ~25 % (the same setting: side2 T 2 5.8-7.2 ms); only in-page
+  interleaved comparisons are used.
+- Dropped, kept on exp/nested-b3-low: the solid part below L drawn first (no gain once ordered; pixels change).
+

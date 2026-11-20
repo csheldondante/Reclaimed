@@ -112,3 +112,55 @@ fn crBuild(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroup
     crTabW[CR_REC * u32(n * n) + k] = u32(lx) | (u32(ly) << 16u);
   }
 }
+
+// ---- (step B3) the box list in two diagonal orders (a counting sort, three passes after crBuild, only when it runs) ---
+// The draw reads list A (by lx + ly) or list B (by lx - ly), forward or backward, by the camera's forward quadrant
+// (cliff5.wgsl cr5Entry): front to back, so a box that can hide another is drawn first and the hidden one's fragments can
+// be rejected by the depth test. Table tail: [records][unordered list, n x n][count][list A, n x n][list B, n x n].
+// Buckets in the args buffer after the indirect arguments: list A's 2048 words, then list B's (keys 0 .. 2n - 2; the
+// window's n is at most 1024); zeroed with the arguments before the build (cliffbox.ts).
+const CR_SB: u32 = 4u;
+const CR_NB: u32 = 2048u;
+fn crSortKeys(e: u32, n: i32) -> vec2<u32> {
+  let lx = i32(e & 0xffffu);
+  let ly = i32(e >> 16u);
+  return vec2<u32>(u32(lx + ly), u32(lx - ly + n - 1));
+}
+/** pass 1: the boxes a key */
+@compute @workgroup_size(64)
+fn crSortCount(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
+  let n = bu.win.z;
+  let i = gid.x + gid.y * nw.x * 64u;
+  if (i >= atomicLoad(&crArgsW[1])) { return; }
+  let k = crSortKeys(crTabW[CR_REC * u32(n * n) + i], n);
+  atomicAdd(&crArgsW[CR_SB + k.x], 1u);
+  atomicAdd(&crArgsW[CR_SB + CR_NB + k.y], 1u);
+}
+/** pass 2 (one invocation a list): the counts to exclusive offsets; the count into the table for the draw */
+@compute @workgroup_size(2)
+fn crSortScan(@builtin(local_invocation_id) lid: vec3<u32>) {
+  let n = bu.win.z;
+  let b = CR_SB + lid.x * CR_NB;
+  var s = 0u;
+  for (var k = 0u; k < u32(2 * n - 1); k++) {
+    let c = atomicLoad(&crArgsW[b + k]);
+    atomicStore(&crArgsW[b + k], s);
+    s += c;
+  }
+  if (lid.x == 0u) { crTabW[(CR_REC + 1u) * u32(n * n)] = atomicLoad(&crArgsW[1]); }
+}
+/** pass 3: each box to its place in both lists (the order within a key is arbitrary) */
+@compute @workgroup_size(64)
+fn crSortScatter(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
+  let n = bu.win.z;
+  let nn = u32(n * n);
+  let i = gid.x + gid.y * nw.x * 64u;
+  if (i >= atomicLoad(&crArgsW[1])) { return; }
+  let e = crTabW[CR_REC * nn + i];
+  let k = crSortKeys(e, n);
+  let a = atomicAdd(&crArgsW[CR_SB + k.x], 1u);
+  let b = atomicAdd(&crArgsW[CR_SB + CR_NB + k.y], 1u);
+  let t = (CR_REC + 1u) * nn + 1u;
+  crTabW[t + a] = e;
+  crTabW[t + nn + b] = e;
+}

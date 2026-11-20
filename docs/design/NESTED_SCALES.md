@@ -1996,6 +1996,41 @@ bind groups, at an acceptable cost (no march yet)? Yes.
 - Stills: local/nested/rB2i-* (the four poses with the fill), rB2s-side2|side16-strata0|1.png, rB2T-side16|side2-T2|4|8|
   16.png, rB2a0-above-cliff5.png (8 m amplitude 0), rB2a64-above-cliff5.png (a quarter); CPU pictures rA4-near|trench-
   none|middle|coarse50.png, rA5-near|trench|bowlback-T2|T4.png.
+
+**As built (round 32, step B3): the box pass's cost where boxes overlap on screen (NS-292).** Same look (pixel for
+pixel), less work. Two pipeline overrides of cliff5.wgsl, both on (cliffbox.ts `opt`, switchable for measurement):
+- *Back faces collapsed in the vertex stage* (CR5_CULL). vsBox5 tests the eye against the box exactly as fsBox5 does
+  (cr5Inside: same expressions); with the eye outside, a face turned away from it and the bottom face get a degenerate
+  position, so they are never rasterized (fsBox5 discarded them at every pixel). The faces are axis-aligned: "turned
+  away" is the same at every vertex of a face. Halves the rasterized box fragments (side2 13.9 -> 6.9 a box pixel).
+- *The box list front to back* (CR5_ORDER). The table build sorts its box list twice after crBuild (cliffbuild.wgsl
+  crSortCount / crSortScan / crSortScatter, a counting sort, only when the table is built): by lx + ly and by lx - ly
+  (buckets in the args buffer after the indirect arguments; table tail: the unordered list, the count, list A, list B).
+  vsBox5 maps instance i to an entry (cr5Entry): the list and its direction from the camera's forward in plan (the
+  view-projection's w row, the same for every instance: no CPU work, no readback). A ray whose plan direction lies in
+  a quadrant crosses cells in nondecreasing (or nonincreasing) x and y, so in that quadrant's diagonal order a box that
+  can hide another is drawn first; the hidden box's fragments then fail the depth test. That this happens before the
+  fragment stage, although fsBox5 discards and writes depth, is the hardware's choice (WebGPU / WGSL have no early
+  depth attribute; a shader with discard and depth write may still be rejected early by a coarse depth test, and the
+  measured times say it is on this desktop). Rays at the edge of a wide view can fall in the neighbouring quadrant:
+  there the order is only partly front to back (still correct: the depth test decides the image).
+- *Overdraw counter* (measurement only, ?gputime=1 and cliffBox.counting: cliffbox.ts drawCount, a pass of its own
+  between the sheets and the boxes into an rgba16float target, no depth writes, fsBox5CntAll / fsBox5CntDepth): box
+  fragments a pixel with no depth test, those past the front test, and those that would march against the sheets'
+  depth with no box-box rejection (an upper bound: what the order buys is not visible in it, only in the time) and
+  their march steps. fsBox5's body is now cr5March (a result struct, no discard inside) so the counter runs the same
+  march.
+- *Not kept* (measured, on branch exp/nested-b3-low): the box's solid part below L (Lb..L, solid by the rule) drawn first
+  as plain faces. Once the order is on it buys nothing or costs (side2 T4 3.09 vs 3.41 ms, foot T2 5.45 vs 6.04) and it
+  changes pixels (the same faces on other triangles interpolate their point and distance differently: 1-2 k pixels at
+  the foot; starting the marched box at L: 3.4 k at side2).
+- *Numbers* (desktop D3D11, 960 x 640, box pass GPU ms, median of 4 interleaved 3 s rounds in one page, before -> after;
+  scripts/nested-rB3-bench.mjs): T 2: side16 3.27 -> 1.87, side2 5.81 -> 3.56, above 3.47 -> 3.11, foot 3.92 -> 2.77; T 4:
+  side16 2.05 -> 1.44, side2 3.44 -> 2.68, above 1.56 -> 1.29, foot 4.39 -> 4.26. Frames stay at the display's 9.9 ms
+  in the T 2 run; the T 4 run was in a slower machine state (every pass, the sheets too, ~3 ms more; frames 10.5-12).
+  Overdraw a box pixel (front faces, mean / max): T 2 side16 6.3 / 25, side2 6.9 / 37, above 3.3 / 10, foot 6.0 / 17;
+  T 4 3.6 / 17, 2.9 / 22, 2.3 / 7, 2.4 / 8. March steps a marched fragment 4.7-6.5 (T 2), 5.6-8.4 (T 4). Holes and
+  pixels unchanged (0 / 0 / 3 / 0 at T 2; side2 at T 4 has 31 before and after).
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.
