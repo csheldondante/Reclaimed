@@ -153,6 +153,20 @@ Round 32, the real thing:
   (4) gates (self-test, never completed since round 28) and a phone bench before any phone link;
   (5) first simulation slice: slumping on stepped stone, which the look now depends on.
 
+- **The owner's verdict on the shader stills `rB6fine-*` / `rB7-*` (2026-11-20, last):** "I like the finer
+  vertical walk (thinner columns) with or without notches but I do think notches make it look better. I also
+  don't think the notches look as uniform as I would make them. I would give everything a noisy texture at the
+  highest level of detail that shows. I would not expect any blocks like those in the 3rd screen that look
+  boxy until we are at the closest possible zoom."
+  So: fine columns are the default look; notches stay in. Orchestrator's reading of the rest, to confirm:
+  (a) notches should be spread more evenly (today the slow mask removes them from about a third of a wall and
+  they are decided per march node); (b) every face should carry noise at the finest level that is visible, so
+  no large flat faces anywhere; (c) the "3rd screen" is the foot-of-wall still, where 38 % of pixels hit the
+  march step cap and fell back to plain coarse blocks, and where 0.25 m is the finest level so close columns
+  are many pixels wide. Fixes implied: NS-307 (notch cost, so the cap is not hit), a fallback that never shows
+  a bare coarse block, and letting the march subdivide BELOW 0.25 m down to pixel size (detail that exists only
+  in the picture) so nothing looks boxy until the closest zoom.
+
 ## Open decisions for the owner
 1. Threshold default: 2 or 4.
 2. Notches: port coarse ones to the shader, or drop (orchestrator's view from the CPU pictures: drop for now).
