@@ -872,6 +872,18 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   to the wall (as round 29's rim test) rather than by height error?
 - NS-240 (docs, noticed round 30) docs/design/NESTED_SCALES.md: after "As built (round 29)" a stray fragment
   " (round 3; the owner's ruling ...)" sits before "SUPERSEDED by The box draw"; its section heading looks lost.
+- NS-241 (limit, round 31) `?cliff=1` blocks are one column of the drawn level by default: 16 m blocks become 2 m
+  blocks (a hatching) when the finer level opens, and the two sizes meet at the level rim. `?cliffW=` (fixed metres)
+  exists but is not yet shown; version 2 (`?cliff=2`) uses fixed world cells.
+- NS-242 (hack, round 31) `?cliff=1` picks the block columns' plan axis by the larger of |n.x|, |n.y|: walls facing
+  about 45 deg switch axis at a seam and their joints run as slanted stripes.
+- NS-243 (limit, round 31) The cliff look is in the function-textured draw only (`?tex=1`); the flat draw (`?tex=0`)
+  and the tiling textures (`?tex=2`) are unchanged. The silhouette stays the smooth sheet's.
+- NS-244 (hack, untested, round 31) `?cliffcut=1` (draw.wgsl cliffCutAt) reads one column's records a steep pixel,
+  takes "the wall's top" from the column 3/4 of a column behind the point, and fades by the view's downward component
+  to hide the missing notch floor; not yet run in a browser (no stills, no timing).
+- NS-245 (measurement, round 31) Frame time of `?cliff=1` measured headless on the desktop only (+~0.3 ms GPU passes,
+  within noise; page frame 9.9 ms either way); not on the phone.
 - NS-229 (perf, round 28) The boot gate's "every boot pipeline" is the first frame's pipelines and then derive's compile
   (7.6-9.1 s in Chrome, 2.4 s in Dawn), which grew with rounds 25 and 27; the 512 MB reload read 17,971 and 19,409 ms
   against 19,000 this round. Cut derive's compile (the generator and material code out of the layer pass's unrolled

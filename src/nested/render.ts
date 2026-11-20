@@ -46,12 +46,12 @@ export function skyDesc(layout: GPUPipelineLayout | 'auto', module: GPUShaderMod
 }
 
 /** (round 26) the field mesh's draw: vsField and a fragment entry (fsField flat, fsFieldT textured) */
-export function fieldDesc(layout: GPUPipelineLayout | 'auto', module: GPUShaderModule, format: GPUTextureFormat, fs: string): GPURenderPipelineDescriptor {
+export function fieldDesc(layout: GPUPipelineLayout | 'auto', module: GPUShaderModule, format: GPUTextureFormat, fs: string, constants: Record<string, number> = {}): GPURenderPipelineDescriptor {
   return {
     label: `nest draw field (${fs})`,
     layout,
     vertex: { module, entryPoint: 'vsField' },
-    fragment: { module, entryPoint: fs, targets: [{ format }, { format: 'rgba8unorm' }] },
+    fragment: { module, entryPoint: fs, constants, targets: [{ format }, { format: 'rgba8unorm' }] },
     primitive: { topology: 'triangle-list', cullMode: 'none' },
     depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' },
   };
@@ -171,6 +171,20 @@ export class Renderer {
   fogM = 0;
   /** (round 25) the textured shading's scale: its bands and materials in world units / 2^shadeS */
   shadeS = 0;
+  /** (round 31, look experiment) ?cliff=1: steep ground in the textured draw shaded as stacked faceted blocks (shade.wgsl
+   *  shCliff); ?cliffT= the slope, rise over run, past which it fades in (default 2) */
+  cliff = false;
+  cliffT = 2;
+  /** ?cliffW= a block's width in metres (rounded to a power of two of the shading unit); 0: one column of the drawn level */
+  cliffW = 0;
+  /** ?cliffcut=1 at load: the textured pipelines made with the skyline cut compiled in (draw.wgsl CLIFF_CUT); then
+   *  `cliffCut` turns the cut on and off at run time (on by default when compiled in) */
+  cliffCutBuilt = false;
+  cliffCut = false;
+  /** the fragment constants of the textured pipelines */
+  private texConsts(): Record<string, number> {
+    return this.cliffCutBuilt ? { CLIFF_CUT: 1 } : {};
+  }
   private texPipes: { box: GPURenderPipeline; sheet: GPURenderPipeline; sky: GPURenderPipeline } | null = null;
   private texCompile: Promise<void> | null = null;
   /** (round 20) the textured pipelines' creation time, ms (asynchronous, after the first frame) */
@@ -181,9 +195,10 @@ export class Renderer {
     if (this.texPipes) return true;
     if (!this.texCompile) {
       const t0 = (this.texAt = performance.now());
-      const box: GPURenderPipelineDescriptor = { ...this.boxDesc(), label: 'nest draw boxes (textured)', fragment: { module: this.module, entryPoint: 'fsT', targets: [{ format: this.format }, { format: 'rgba8unorm' }] } };
+      const constants = this.texConsts();
+      const box: GPURenderPipelineDescriptor = { ...this.boxDesc(), label: 'nest draw boxes (textured)', fragment: { module: this.module, entryPoint: 'fsT', constants, targets: [{ format: this.format }, { format: 'rgba8unorm' }] } };
       const sd = this.sheetDesc();
-      const sheet: GPURenderPipelineDescriptor = { ...sd, label: 'nest draw sheets (textured)', fragment: { module: this.module, entryPoint: 'fsST', targets: [{ format: this.format }, { format: 'rgba8unorm' }] } };
+      const sheet: GPURenderPipelineDescriptor = { ...sd, label: 'nest draw sheets (textured)', fragment: { module: this.module, entryPoint: 'fsST', constants, targets: [{ format: this.format }, { format: 'rgba8unorm' }] } };
       this.texCompile = Promise.all([this.device.createRenderPipelineAsync(box), this.device.createRenderPipelineAsync(sheet), this.device.createRenderPipelineAsync(skyDesc(this.pl, this.module, this.format))]).then(([b, s, k]) => {
         this.texPipes = { box: b, sheet: s, sky: k };
         this.texCompileMs = performance.now() - t0;
@@ -301,7 +316,7 @@ export class Renderer {
     const ubuf = this.device.createBuffer({ label: 'nest field draw uniforms', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const t0 = performance.now();
     const f: NonNullable<Renderer['field']> = { layout, pl, module, ubuf, ready: Promise.resolve() };
-    f.ready = Promise.all([this.device.createRenderPipelineAsync(fieldDesc(pl, module, this.format, 'fsField')), this.device.createRenderPipelineAsync(fieldDesc(pl, module, this.format, 'fsFieldT'))]).then(([a, b]) => {
+    f.ready = Promise.all([this.device.createRenderPipelineAsync(fieldDesc(pl, module, this.format, 'fsField')), this.device.createRenderPipelineAsync(fieldDesc(pl, module, this.format, 'fsFieldT', this.texConsts()))]).then(([a, b]) => {
       f.flat = a;
       f.tex = b;
       this.fieldCompileMs = performance.now() - t0;
@@ -512,7 +527,15 @@ export class Renderer {
       // draw keeps its own)
       f.set([...(this.texDrawn ? [0.55, -0.45, 0.62] : [0.45, -0.35, 0.82]), Math.cos((this.crease * Math.PI) / 180)], 8);
       // (misc2.y, round 22: the sheets' slide, ?slide= / "Round edges")
-      new Uint32Array(st, lv.depth * DU + 64, 4).set([this.nest.cap, this.slide ? 1 : 0, 0, pages[lv.depth] ?? 0]);
+      // (misc2.z, round 31: ?cliff's slope threshold as f32 bits, 0 = off)
+      // (bits 0-15 the slope threshold x 1000, 0 off; 16-23 the block width code; bit 31 the cut: draw.wgsl texOut)
+      let cliffBits = 0;
+      if (this.cliff) {
+        const shadeUnitM = this.mpu / 2 ** this.shadeS;
+        const wc = this.cliffW > 0 ? 128 + Math.round(Math.log2(this.cliffW / shadeUnitM)) : 0;
+        cliffBits = (Math.min(65535, Math.max(1, Math.round(this.cliffT * 1000))) | (wc << 16) | (this.cliffCut ? 0x80000000 : 0)) >>> 0;
+      }
+      new Uint32Array(st, lv.depth * DU + 64, 4).set([this.nest.cap, this.slide ? 1 : 0, cliffBits, pages[lv.depth] ?? 0]);
       new Float32Array(st, lv.depth * DU + 80, 16).set(IDENTITY);
       // (round 11, NS-97) the live child's window: the parent's rim vertices are placed in its units
       const c = this.nest.wins[lv.depth + 1];

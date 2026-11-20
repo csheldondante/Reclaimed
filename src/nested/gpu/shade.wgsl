@@ -48,6 +48,89 @@ struct ShadeIn {
   canopy: f32,
   /** (round 25) the fog's share, 0..1, by metres (draw.wgsl fogAt); < 0: round 21's haze by world distance */
   fog: f32,
+  /** (round 31, ?cliff=1) the slope (rise over run) past which ground is shaded as faceted blocks; 0 off */
+  cliff: f32,
+  /** (round 31) a block's width: 2^cliffE columns of the drawn level (0: one column; ?cliffW= metres fixes it in the world) */
+  cliffE: i32,
+}
+
+// ---- (round 31, look experiment, ?cliff=1) steep ground shaded as stacked faceted stone blocks, no new geometry --------
+// Where the geometric slope passes si.cliff (rise over run; faded in over T / 1.25 .. T x 1.25): the wall is split on a
+// grid of the DRAWN level's columns in plan (one column wide; ?cliffW= metres: a fixed world width instead, a power of two
+// of the shading unit) along the wall's run and, per such column, a stack of blocks 1-3 half-blocks high
+// (segments of 4 half-blocks, each cut once at a hashed integer, the stack shifted per column so joints do not line up).
+// Each block: one facet normal (the wall's plan direction snapped to 30 degree steps after a per-block jitter, its pitch
+// hashed), a tint, a dark joint at its borders (at least a pixel), a lighter top edge tilted up. Integer hashes only.
+// It modulates the light and the albedo of whatever material is there; it never picks a material. Faded out where a
+// block is under ~6-11 pixels. Cost: 3 integer hashes, one atan2, one cos/sin pair a steep pixel; nothing elsewhere.
+// (?cliffcut=1, draw.wgsl cliffCutAt: the skyline notched by discarding crest pixels above a hashed stack top.)
+struct ShCliff {
+  w: f32,
+  n: vec3<f32>,
+  tint: f32,
+  ao: f32,
+}
+fn shH3(a: i32, b: i32, c: i32) -> u32 {
+  var h = (bitcast<u32>(a) * 0x8da6b343u) ^ (bitcast<u32>(b) * 0xd8163841u) ^ (bitcast<u32>(c) * 0xcb1ab31fu) ^ 0x2545f491u;
+  h = (h ^ (h >> 16u)) * 0x7feb352du;
+  h = (h ^ (h >> 15u)) * 0x846ca68bu;
+  return h ^ (h >> 16u);
+}
+/** how steep, 0..1 (the slope past T / 1.25 .. T x 1.25; slope = sqrt(1 - nz^2) / nz) */
+fn shSteep(ng: vec3<f32>, T: f32) -> f32 {
+  let n0 = inverseSqrt(1.0 + T * T / 1.5625);
+  let n1 = inverseSqrt(1.0 + T * T * 1.5625);
+  return 1.0 - smoothstep(n1, n0, abs(ng.z));
+}
+fn shCliff(si: ShadeIn) -> ShCliff {
+  let ng = si.ng;
+  var r = ShCliff(0.0, ng, 1.0, 1.0);
+  let e = si.cliffE;
+  // a block of 2^e columns of the drawn level in pixels (2^-s shading units a column)
+  let colPx = ldexp(1.0, e - si.p.s) / max(si.pxW, 1e-30);
+  // (faded in from about 6 to 11 pixels a block: smaller blocks only make a hatching)
+  let w = shSteep(ng, si.cliff) * clamp(log2(colPx) - 2.5, 0.0, 1.0);
+  if (w <= 0.0) { return r; }
+  let p = si.p;
+  // ---- the block: columns along the wall's run (the plan axis nearer the wall's horizontal: a wall facing x is cut by
+  // y = const lines only; x borders would cross a leaning wall as slanted lines and make triangles), then the stack in
+  // half-blocks; all in block widths (2^e columns: dbSplit keeps the whole part in integers)
+  let ax = abs(ng.x) >= abs(ng.y);
+  let sp = dbSplit(select(p.o.x, p.o.y, ax), select(p.f.x, p.f.y, ax), -e);
+  let cc = sp.c;
+  let cx = select(cc, 0x3fff, ax);
+  let cy = select(0x3fff, cc, ax);
+  let tc = sp.t;
+  let zU = (ldexp(p.zo, p.s) + p.f.z) * ldexp(2.0, -e);
+  let zs = zU + f32(shH3(cx, cy, 977) & 3u);
+  let seg = floor(zs * 0.25);
+  let cut = f32(1u + shH3(cx, cy, i32(seg)) % 3u);
+  let zin = zs - seg * 4.0;
+  let up = zin >= cut;
+  let b0 = select(0.0, cut, up);
+  let b1 = select(cut, 4.0, up);
+  let hb = shH3(cx + 40503, cy - 7919, 2 * i32(seg) + select(0, 1, up));
+  let j = vec3<f32>(f32(hb & 1023u), f32((hb >> 10u) & 1023u), f32((hb >> 20u) & 1023u)) / 1023.0;
+  // ---- joints: distances to the borders in columns along the surface (the column border divided by how fast that
+  // plan coordinate changes along the surface)
+  let pc = 1.0 / colPx;
+  let nc = select(ng.x, ng.y, ax);
+  let dc = min(tc, 1.0 - tc) / max(sqrt(max(1.0 - nc * nc, 0.0)), 1e-3);
+  let dzb = (zin - b0) * 0.5;
+  let dzt = (b1 - zin) * 0.5;
+  let dj = min(dc, min(dzb, dzt));
+  let cw = max(0.035, 0.9 * pc);
+  let joint = 1.0 - smoothstep(0.5 * cw, cw, dj);
+  let top = (1.0 - smoothstep(cw, cw + 0.1, dzt)) * (1.0 - joint);
+  // ---- the facet: plan direction snapped to 30 degrees after a per-block jitter; pitch hashed; tops tilted up
+  let stp = 0.5235988;
+  let a = round(atan2(ng.y, ng.x) / stp + (j.x - 0.5) * 0.9) * stp;
+  let pz = ng.z * 0.6 + (j.y - 0.5) * 0.7 + 0.9 * top;
+  r.n = normalize(vec3<f32>(cos(a), sin(a), pz));
+  r.w = w;
+  r.tint = (0.80 + 0.32 * j.z) * (1.0 - 0.55 * joint) * (1.0 + 0.22 * top);
+  r.ao = 1.0 - 0.6 * joint;
+  return r;
 }
 
 // ---- (round 21) the forest canopy seen from afar (the owner: "I think we want the hills at the furthest zoom to read as
@@ -213,7 +296,20 @@ fn texShade(si: ShadeIn) -> vec3<f32> {
     }
     default: {}
   }
-  return shFinish(si, alb, rough, ao, g, av, mv);
+  // ---- (round 31, ?cliff=1) steep ground as faceted blocks (shCliff above): the facet replaces the geometric normal,
+  // the band bumps mostly flattened on it (flat faces), tint and joints into the albedo and occlusion
+  var so = si;
+  so.cliff = 0.0;
+  if (si.cliff > 0.0) {
+    let ck = shCliff(si);
+    if (ck.w > 0.0) {
+      so.ng = normalize(mix(ng, ck.n, ck.w));
+      g *= 1.0 - 0.6 * ck.w;
+      alb *= mix(1.0, ck.tint, ck.w);
+      ao *= mix(1.0, ck.ao, ck.w);
+    }
+  }
+  return shFinish(so, alb, rough, ao, g, av, mv);
 }
 /** (round 27: split from texShade so ?tex=2, tex.wgsl texShade2, shares it) the forest canopy, the shading normal, the
  *  light and the haze from a material's albedo (sRGB values), roughness, occlusion, height gradient g (world units of

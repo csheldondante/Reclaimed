@@ -620,6 +620,42 @@ fn matMix(L: u32, P: vec2<f32>, z: f32, own: u32) -> MatMix {
 // stays exactly as it was. Both draws call one function, texOut.
 /** a level's s: log2 of its columns a world unit (k a power of two: BACKLOG NS-146) */
 fn levelS() -> i32 { return i32(d.lvl.w) * i32(round(log2(d.misc.w))); }
+
+// ---- (round 31, look experiment, ?cliffcut=1) the skyline notched to the fake blocks: on steep pixels near a wall's top,
+// the pixel is dropped when it lies above a hashed stack top: the top of the column behind the wall (3/4 of a column back
+// from the point against the wall's plan normal) brought down to the unit (half a block) below it, in every other block
+// column by an integer hash. So a notch is at most one unit deep and one block column wide. Discarding only removes
+// pixels: seen from above there is no notch floor (a see-through hole into the terrain), so the cut fades out as the view
+// looks down (the stack top raised by up to a unit from 0.2 to 0.5 of the view's downward component). Compiled in only
+// when the pipelines are made with the override (?cliffcut=1 at load: render.ts); the cut itself is a run-time bit.
+override CLIFF_CUT: bool = false;
+/** the top of column (L, X, Y): the top of its highest solid record (local units); very low when none */
+fn cliffColTop(L: u32, X: i32, Y: i32) -> f32 {
+  let n = recCount(L, X, Y);
+  var t = -1e30;
+  for (var j = 0u; j < n; j++) {
+    let r = recAt(L, X, Y, j);
+    if (matSolid(r.y)) { t = bitcast<f32>(r.x); }
+  }
+  return t;
+}
+fn cliffCutAt(si: ShadeIn, q: vec3<f32>, ng: vec3<f32>) -> bool {
+  if (shSteep(ng, si.cliff) < 0.5) { return false; }
+  let hl = length(ng.xy);
+  if (hl < 1e-3) { return false; }
+  let e = si.cliffE;
+  let C = vec2<i32>(floor(q.xy - ng.xy / hl * 0.75));
+  let nn = d.lvl.z;
+  if (C.x < 0 || C.y < 0 || C.x >= nn || C.y >= nn) { return false; }
+  let X = d.lvl.x + C.x;
+  let Y = d.lvl.y + C.y;
+  let me = max(e, 0);
+  if ((shH3(X >> u32(me), Y >> u32(me), 4243) & 1u) == 0u) { return false; }
+  let u = ldexp(0.5, e);
+  let H = cliffColTop(u32(d.lvl.w), X, Y);
+  let top = (ceil(H / u) - 1.0) * u + 1.05 * u * smoothstep(0.2, 0.5, -si.view.z);
+  return q.z > top;
+}
 fn texOut(q: vec3<f32>, zo: f32, ng: vec3<f32>, mat: u32, pxL: f32, toEye: vec3<f32>, dEye: f32) -> FOut {
   // (round 25) in shading units of a world unit / 2^geo.z: s less it, the z origin times it (exact: powers of two)
   let gz = i32(d.geo.z);
@@ -642,6 +678,15 @@ fn texOut(q: vec3<f32>, zo: f32, ng: vec3<f32>, mat: u32, pxL: f32, toEye: vec3<
   si.nb = d.want.z;
   // (want.y, round 21: the forest canopy's crossover footprint, world units a pixel; 0 off: ?canopy, ?canopyfade)
   si.canopy = d.want.y;
+  // (misc2.z, round 31: ?cliff: bits 0-15 the slope threshold x 1000 (0 off), 16-23 the block width code (0: a column
+  // of this level; else 128 + log2 of the width in shading units), bit 31 ?cliffcut's cut on (render.ts uniforms))
+  let cz = d.misc2.z;
+  si.cliff = f32(cz & 0xffffu) / 1000.0;
+  let wc = i32((cz >> 16u) & 0xffu);
+  si.cliffE = select(0, wc - 128 + s, wc != 0);
+  if (CLIFF_CUT && si.cliff > 0.0 && (cz >> 31u) != 0u) {
+    if (cliffCutAt(si, q, ng)) { discard; }
+  }
   var col = texShade(si);
   if (d.misc.z > 0.5) { col = mix(col, TINTS[u32(d.lvl.w) % 6u] * dot(col, vec3<f32>(0.3, 0.5, 0.2)) * 1.3, 0.55); }
   var o: FOut;

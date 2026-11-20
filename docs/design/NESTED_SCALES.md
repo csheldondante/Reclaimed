@@ -1697,6 +1697,20 @@ Flag = differs from a 4-neighbour by more than 16 m (or 8 m). Cells: RMS / max /
   and is much worse than A on curved walls (bowls), where the nearest same-side cell is not the surface next to the line.
   Gradients (C) do not beat A, and half the columns with gradients (E) is about twice A's error at 16 m: fewer, richer
   columns did not match more height-only columns here. Open items NS-235..NS-239.
+
+**As built (round 31, version 1): steep walls shaded as faceted blocks, `?cliff=1` (default 0; "Cliff blocks").** A
+look experiment, shading only (shade.wgsl shCliff, from texShade: the textured sheet, box and field draws). Steep =
+the geometric slope past `?cliffT` (rise over run, default 2), blended over T/1.25..T x1.25, faded out under ~6-11 px a
+block. Blocks: columns along the wall's run (the plan axis nearer its horizontal), one column of the DRAWN level wide
+(`?cliffW=` metres: a fixed world width, a power of two of the shading unit), stacked 1-3 half-blocks high from integer
+hashes (segments of 4 half-blocks cut once, the stack shifted per column). Per block a facet normal (plan angle snapped
+to 30 deg after a hashed jitter, hashed pitch, tops tilted up) replacing the geometric one, a tint, a dark joint (at least
+a pixel), a lighter top edge; the material colour is only multiplied, never picked. One u32 in the draw uniform
+(misc2.z: threshold, width code, cut bit). Stills local/nested/r31-side16-*, r31-side2-*: at the 16 m level the faces read
+as stone masonry (blocks clearly, natural columns less); with the 2 m level open the blocks are 2 m (a hatching), and
+the coarse level's big blocks meet the fine level's small ones (NS-241). `?cliffcut=1` (skyline notches by discard,
+draw.wgsl cliffCutAt, behind the override CLIFF_CUT so it is compiled in only then) is built but not yet run (NS-244).
+Measurements in DEVLOG round 31.
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

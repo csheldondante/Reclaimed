@@ -157,6 +157,13 @@ export class App {
     // (round 22) ?slide=0|1 the sheets' slide onto carved edges (default per the round's gate); ?rimtop=1 a rim corner at
     // the uncarved side's height (a bake option: set before the first bake). (round 25) default off, ?slide=1 on
     this.render.slide = q.get('slide') === '1';
+    // (round 31, look experiment) ?cliff=1 steep ground as faceted blocks; ?cliffT= its slope threshold (rise over run)
+    this.render.cliff = q.get('cliff') === '1';
+    if (q.has('cliffT')) this.render.cliffT = Number(q.get('cliffT'));
+    // ?cliffW= a block's width in metres (default: one column of the drawn level); ?cliffcut=1 the skyline cut compiled
+    // into the textured pipelines (set before they are made, after the first frame) and on
+    if (q.has('cliffW')) this.render.cliffW = Number(q.get('cliffW'));
+    this.render.cliffCutBuilt = this.render.cliffCut = q.get('cliffcut') === '1';
     this.nest.rimTop = q.get('rimtop') === '1';
     // (round 23) ?rimsnap=1 the owner's snap (default off until the owner has seen the stills)
     this.nest.rimSnap = q.get('rimsnap') === '1';
@@ -338,6 +345,12 @@ export class App {
       this.buttons.get('slide')!.classList.toggle('on', this.render.slide);
     });
     this.buttons.get('slide')!.classList.toggle('on', this.render.slide);
+    // (round 31) the faceted-block cliffs (textured draw only; a uniform, nothing rebuilt)
+    add('cliff', 'Cliff blocks', () => {
+      this.render.cliff = !this.render.cliff;
+      this.buttons.get('cliff')!.classList.toggle('on', this.render.cliff);
+    });
+    this.buttons.get('cliff')!.classList.toggle('on', this.render.cliff);
     // (round 28) the field mesh on every level below the root (or ?field's levels), switched at run time: its pipelines
     // are made in the background after boot; the finer levels open again in the new draw
     add('field', 'Field mesh', () => this.setField(this.fieldWant === 0));

@@ -28318,3 +28318,26 @@ rounding remainder (at most 11 units a block).
 same column count; a line pays where the side surfaces are flat or planar and the tilt is stored with it, and hurts on
 curved walls with the brief's fill. Fewer, richer columns did not match more height-only columns. Findings and limits
 NS-235..NS-240.
+
+## 2026-11-20 — Nested scales lab, round 31 (version 1): steep walls shaded as faceted blocks (`?cliff=1`, default 0)
+
+**Why.** The owner: could steep walls read as faceted stone columns from noise rather than a stretched smooth sheet,
+with no new geometry? A shading-only experiment to answer that with stills and a frame-time difference.
+
+**What.** NESTED_SCALES.md "As built (round 31, version 1)": shade.wgsl shCliff (integer hashes only) gives steep pixels
+a per-block facet normal, tint, joints and a lit top edge; the draw uniform's unused misc2.z carries the switch. HUD
+button "Cliff blocks". Also built, not yet run: `?cliffW=` (fixed block width in metres) and `?cliffcut=1` (skyline
+notches by discard behind the override constant CLIFF_CUT, so the discard is compiled in only when asked for).
+Stills script scripts/nested-r31-stills.mjs (one page; the switch flipped on a frozen app, so a pair is the same frame).
+
+**Measured.** Generated world, the root's steepest step (1.63 world units over a column), side views. Stills
+local/nested/r31-side16-cliff0|1.png (2 levels: 16 m blocks read as masonry), r31-side2-cliff0|1.png (3 levels: 2 m blocks
+are a fine hatching). Frame time at side2, alternating 3 s each, 3 times: page frame 9.98 / 9.90 / 9.86 ms off vs 9.91 /
+9.87 / 9.86 on; GPU passes (?gputime=1) 5.09 / 5.12 / 5.47 vs 5.38 / 5.82 / 5.47 ms (about +0.3, near the noise).
+Compile (test/gpu/nested-compile.test.ts, Dawn D3D12, ms; boxes / sheets / field textured): before 171 / 244 / 323 and
+246 / 193 / 254; after 247 / 201 / 229, 180 / 187 / 267 and 397 / 361 / 453 (with the cut code present); noisy, all within
+budget except one cold run (sheets 412 of 400, with the untouched sheetBake also over its budget).
+
+**Reading.** Yes at the 16 m level (blocks read, though as man-made masonry more than natural columns); poor when the
+finer level opens (block size follows the drawn level). Limits NS-241..NS-245. Version 2 (`?cliff=2`, next): columns
+by a ray march through fixed world cells.
