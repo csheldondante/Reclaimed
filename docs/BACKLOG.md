@@ -711,6 +711,16 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
 - NS-194 (limit, round 25) The table's chunk keys are 16 bits a coordinate (key0 = cx | cy << 16), so global columns must
   stay in 0..2^20 at every level: at level 3 that is 2,048 root columns (262 km) of travel from the origin in +x/+y, and
   nothing below 0. The torus would allow wrapping the lab's coordinates; not done.
+- NS-195 (limit, round 25) The root's kept residual pages (RES_ID + 0) stay after their chunk enters again (rootGen
+  mode 0 reads them and lets them be); they are rewritten or let go at the chunk's next leave. Pages held for chunks in
+  view; harmless, not free.
+- NS-196 (perf, round 25) Cruise hitches: at 300 m level 2 is open and its 512 m window slides every 64 m of travel; at
+  400 m/s and faster the p95 frame is 21-34 ms (worst 48-56) against 10 ms at 100-200 m/s. At 1,500 m (levels 0-1) the
+  p95 holds to 1,600 m/s except a noisy 800 m/s run. Not profiled (which op: the slide's derive, its bake, the pool's
+  header wait). Desktop only; the phone bench is the owner's.
+- NS-197 (perf, round 25) Time to the generated terrain in Chrome (desktop): the atlas's kernels and genFill start after
+  every boot pipeline (13.4-14.8 s) and the atlas is built at 43-45 s after the page opened (its kernels 15.6-17.3 s,
+  genFill 29.5-31 s compiling beside them). The owner's "startup time not yet" ruling: logged, not optimised.
 - NS-146 (limit, round 20) The detail bands (detail.wgsl DPt) need k a power of two: a level's s is L x round(log2 k),
   so the integer window origin can be shifted into each band's lattice exactly. Another k shades with wrong band
   scales (no error). Assert it at the page's start, or carry the scale as a float for other k.

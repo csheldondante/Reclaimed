@@ -3,6 +3,21 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-20 — nested scales round 25: editing, simulation, performance; the terrain ported (`nested-scales`)
+
+The user, verbatim (through the coordinator): "I'm much more interested in editing and simulation and performance. I
+like the idea of being able to carve huge features and stream land quickly at cruising height and to have interesting
+terrain and interactive simulation."; "there is tons already on the main and fortress branch for procedural generation
+simulation"; "Tens or hundreds of miles across for a terrain chunk but multiple levels so we can go down to meters
+across."; "An 8km draw distance is pretty reasonable and with fog would make features feel massive."; "the root is
+honestly too dense in most places."; "fully zoomed in is .25m"; "terrain layers should not have multiple materials by
+normal. We have an erosion system and layers for that. Make dirt on the stone or plants over that maybe?"
+
+Consequence (round 25, docs/design/NESTED_SCALES.md "Round 25 plan" and "As built (round 25)"): rendering polish stops
+(round 24's edge-aware enhance parked on `exp/nested-edge-enhance`, the slide off by default); the atlas's ground(p) is
+the lab's terrain over a 65.5 km torus, k 8 from 128 m root columns to 0.25 m; stone, a cover of soil or sand, plants as
+layers; colour from the material only; fog full at 8 km (`?fog=`); the root slides with the eye.
+
 ## 2026-11-19 — nested scales round 24: continue on the snap; the data in the columns (`nested-scales`)
 
 The user, verbatim (through the coordinator), after the round 23 stills: continue on the snap rule; "the data should

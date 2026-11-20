@@ -27827,3 +27827,7 @@ m); at 1500 m (levels 0-1): 100-400 m/s p95 10.1-10.2 ms, 800 m/s 23.7, 1600 m/s
 The root's front edge stayed 13.1-22 km ahead of the eye in every run (fog full at 8 km: nothing ungenerated in view);
 every run reached its speed (3,232 m/s at the most). Highest speed holding 16.7 ms (p95): 200 m/s at 300 m, 1,600 m/s
 at 1,500 m (800 m/s did not: the runs are short and noisy).
+
+**Boot gate (scripts/nested-smoothboot.mjs, the default page: generator on, `smooth=1`):** cold first frame 7,170 ms,
+every boot pipeline 14,841 ms, first sheet frame 10,873 ms; reloads at maxbuf 512 / 256: 8,574 / 8,029, 16,694 / 15,683,
+12,107 / 11,516 (budgets 11,000, 19,000, 16,000): passed.

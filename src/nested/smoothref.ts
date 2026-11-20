@@ -27,6 +27,8 @@ export async function smoothAgainstReference(device: GPUDevice, log: (s: string)
   canvas.width = 16;
   canvas.height = 16;
   const render = new Renderer(device, canvas.getContext('webgpu')!, g);
+  // (round 25: the slide is off by default; the reference slides, so this check draws with it on)
+  render.slide = true;
   const must = (ok: boolean, what: string) => {
     if (!ok) throw new Error(`smooth reference: ${what} refused`);
   };

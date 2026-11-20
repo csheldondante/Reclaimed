@@ -116,6 +116,12 @@ it('nested gen: atlas root, generated detail per level, zoom cycle and restrict'
     expect(nest.promote(L, w)).toBe(true);
     wins.push(w);
   }
+  // (an edit first, so the zoom cycle below also checks that it survives: a carve at level 2, radius 6 of its columns)
+  {
+    const s0 = await nest.readAll();
+    const c = s0.column(2, wins[2].gx + N / 2, wins[2].gy + N / 2);
+    expect(nest.edit({ op: 'carve', radius: 6 / K ** 2, amount: 0, at: { level: 2, x: N / 2, y: N / 2, z: c.z1[c.z1.length - 1] + 1 } })).toBe(true);
+  }
   const s1 = await nest.readAll();
   const t1 = wins.map((w, L) => tops(s1, L, w));
   for (let L = 0; L <= 3; L++) {
@@ -174,7 +180,7 @@ it('nested gen: atlas root, generated detail per level, zoom cycle and restrict'
     const t2 = tops(s2, L, wins[L]);
     for (let i = 0; i < t2.length; i++) if (!(t2[i] === t1[L][i] || (Number.isNaN(t2[i]) && Number.isNaN(t1[L][i])))) cycleDiff++;
   }
-  console.log(`[gen] zoom cycle (demote 1, promote 1-3 again): ${cycleDiff} columns differ`);
+  console.log(`[gen] zoom cycle with a level 2 carve in (demote 1, promote 1-3 again): ${cycleDiff} columns differ`);
   expect(cycleDiff).toBe(0);
 
   // restrict: raise by 0 at the finest level's centre, radius ~70 of its columns: the ancestors move by rounding only
