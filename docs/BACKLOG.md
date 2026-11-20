@@ -900,10 +900,12 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   patch and thin black vertical slivers remain unexplained (stills local/nested/r31s-side2-w16s1.png, -w8s1.png).
 - NS-251 (test, round 31) sheetBake (nest.wgsl, not touched this round) went over its 1000 ms compile budget on 3 of
   6 runs (1020-1177 ms) while the round 31 draws stayed within: noise on this machine or a budget too tight.
-- NS-252 (look, round 31) `?cliff=3` still shows thin regular vertical stripes on walls at side2 with the finest cells at
-  6-10 px by distance: the distance rule ignores how much a wall seen at a grazing plan angle squeezes a cell on screen
-  (suspected, not measured). Same per-pixel plane as version 2 (NS-246): neighbouring pixels on different triangles
-  disagree on level 0's tops.
+- NS-252 (look, round 31) DONE (cause found by ?cliffDbg= stills, fixed in the commit after c1ac1207): the stripes were
+  the drawn edge lines on cells squeezed by a grazing view; now sized and faded by the squeezed width. Still open: the
+  per-pixel plane (NS-246) is confirmed for version 3 too (mode 4: level-0 tops change along curved contours inside one
+  cell); a fix is a design choice (e.g. level-0 tops from the real column heights) for the owner.
+- NS-255 (hack, round 31) The edge line is the only cue between equal columns; with it faded on squeezed cells, columns
+  of equal height seen at a grazing angle merge. Lines still show on faces seen more head-on (upper centre at side2).
 - NS-253 (test, round 31) Compile times swing 1.5-2.5x between runs on this machine (drawFieldTex 295-820 ms with no
   change); version 3's textured variants (drawBoxesTexV3 / drawSheetsTexV3) got a 600 ms budget from 341-457 / 401-535 ms.
 - NS-254 (hack, round 31) The pixel's size per unit of distance (draw uniform cl.x) is written by the app each frame

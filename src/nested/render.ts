@@ -186,6 +186,10 @@ export class Renderer {
   cliffV: 1 | 2 | 3 = 1;
   /** (version 3) ?cliff=3 at load: the textured pipelines made with version 3 compiled in (draw.wgsl CLIFF_V3) */
   cliffV3Built = false;
+  /** (version 3, diagnostics) ?cliffDbg=N at load: the diagnostic colours compiled in (draw.wgsl CLIFF_DBG); cliffDbg the
+   *  mode at run time (shade.wgsl shCol3: 1 finest level, 2 hit level, 3 hit kind, 4 level-0 top, 5 lighting only) */
+  cliffDbgBuilt = false;
+  cliffDbg = 0;
   /** (version 3) ?cliffPx= the finest level's cells at least, pixels (by distance; default 6) */
   cliffPx = 6;
   /** (version 3) a pixel's size per unit of distance from the eye (set by the app each frame from the field of view) */
@@ -201,6 +205,7 @@ export class Renderer {
     const c: Record<string, number> = {};
     if (this.cliffCutBuilt) c.CLIFF_CUT = 1;
     if (this.cliffV3Built) c.CLIFF_V3 = 1;
+    if (this.cliffDbgBuilt) c.CLIFF_DBG = 1;
     return c;
   }
   private texPipes: { box: GPURenderPipeline; sheet: GPURenderPipeline; sky: GPURenderPipeline } | null = null;
@@ -568,8 +573,9 @@ export class Renderer {
       // (round 25) metres a world unit, the fog's distance (metres), the shading's scale
       // (round 27) w: ?tex=2's fine tile, log2 tiles a world unit (2 m tiles: 6 with 128 m root columns)
       new Float32Array(st, lv.depth * DU + 160, 4).set([this.mpu, this.fogM, this.shadeS, Math.round(Math.log2(this.mpu / TEX_TILE_M))]);
-      // (round 31, version 3) x a pixel's size per unit of distance (the level chosen by distance), y ?cliffPx=
-      new Float32Array(st, lv.depth * DU + 176, 4).set([this.pxAng, this.cliffPx, 0, 0]);
+      // (round 31, version 3) x a pixel's size per unit of distance (the level chosen by distance), y ?cliffPx=, z the
+      // diagnostic mode (?cliffDbg=)
+      new Float32Array(st, lv.depth * DU + 176, 4).set([this.pxAng, this.cliffPx, this.cliffDbg, 0]);
     }
     this.device.queue.writeBuffer(this.ubuf, 0, st);
   }

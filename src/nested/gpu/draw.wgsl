@@ -634,6 +634,8 @@ override CLIFF_CUT: bool = false;
 /** (round 31, version 3) the nested columns (shade.wgsl shCol3) compiled in only when the pipelines are made with it
  *  (?cliff=3 at load): it costs compile time the other looks must not pay */
 override CLIFF_V3: bool = false;
+/** (round 31) version 3's diagnostic colours (?cliffDbg= at load: compiled in; the mode is d.cl.z) */
+override CLIFF_DBG: bool = false;
 /** the top of column (L, X, Y): the top of its highest solid record (local units); very low when none */
 fn cliffColTop(L: u32, X: i32, Y: i32) -> f32 {
   let n = recCount(L, X, Y);
@@ -690,13 +692,15 @@ fn texOut(q: vec3<f32>, zo: f32, ng: vec3<f32>, mat: u32, pxL: f32, toEye: vec3<
   si.cliff = f32(cz & 0xfffu) / 100.0;
   let wc = i32((cz >> 16u) & 0xffu);
   si.cliffE = select(0, wc - 128 + s, wc != 0);
+  var dbgI = -1;
   if (((cz >> 30u) & 1u) != 0u) {
     // (version 2, ?cliff=2, bit 30: the marched columns, cells of 2^(wc - 128) shading units)
     if (si.cliff > 0.0) {
       var col: ShCol;
       if (CLIFF_V3 && ((cz >> 29u) & 1u) != 0u) {
         // (version 3, bit 29: the nested columns; the finest level by distance: d.cl.x a pixel per unit of distance)
-        col = shCol3(si, wc - 128, i32((cz >> 24u) & 15u), (cz >> 12u) & 15u, d.cl.x, d.cl.y);
+        col = shCol3(si, wc - 128, i32((cz >> 24u) & 15u), (cz >> 12u) & 15u, d.cl.x, d.cl.y, select(0u, u32(d.cl.z), CLIFF_DBG));
+        dbgI = col.dbg;
       } else {
         col = shCol(si, wc - 128, i32((cz >> 24u) & 15u), (cz >> 12u) & 15u, ((cz >> 28u) & 1u) != 0u);
       }
@@ -705,6 +709,8 @@ fn texOut(q: vec3<f32>, zo: f32, ng: vec3<f32>, mat: u32, pxL: f32, toEye: vec3<
       si.colN = col.n;
       si.colTint = col.tint;
       si.colAo = col.ao;
+      // (diagnostics, ?cliffDbg=8: a half-Lambert fill of 0.25 of the sun on the columns, step 2's candidate)
+      if (CLIFF_DBG && u32(d.cl.z) == 8u) { si.colFill = 0.25 * col.w; }
     }
     si.cliff = 0.0;
   } else if (CLIFF_CUT && si.cliff > 0.0 && (cz >> 31u) != 0u) {
@@ -712,6 +718,16 @@ fn texOut(q: vec3<f32>, zo: f32, ng: vec3<f32>, mat: u32, pxL: f32, toEye: vec3<
   }
   var col = texShade(si);
   if (d.misc.z > 0.5) { col = mix(col, TINTS[u32(d.lvl.w) % 6u] * dot(col, vec3<f32>(0.3, 0.5, 0.2)) * 1.3, 0.55); }
+  if (CLIFF_DBG) {
+    // (round 31 diagnostics, ?cliffDbg=, d.cl.z the mode: shade.wgsl shCol3) a categorical colour, lit a little by the
+    // column's normal; mode 5: grey lit by the column's normal alone (no material, edge lines or tint)
+    let lit = max(dot(si.colN, si.sun), 0.0);
+    if (dbgI >= 0) {
+      col = TINTS[u32(dbgI) % 6u] * (0.45 + 0.55 * lit);
+    } else if (u32(d.cl.z) == 5u && si.colW > 0.0) {
+      col = vec3<f32>(0.08 + 0.8 * lit);
+    }
+  }
   var o: FOut;
   o.color = vec4<f32>(col, 1.0);
   let coarse = d.want.x > 0.0 && dEye < d.want.x;

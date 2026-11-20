@@ -166,6 +166,11 @@ export class App {
     this.render.cliffV = cv === '3' ? 3 : cv === '2' ? 2 : 1;
     this.render.cliffV3Built = cv === '3';
     if (q.has('cliffPx')) this.render.cliffPx = Number(q.get('cliffPx'));
+    // (diagnostics) ?cliffDbg=N: version 3's diagnostic colours compiled in, mode N (render.ts cliffDbg)
+    if (q.has('cliffDbg')) {
+      this.render.cliffDbgBuilt = true;
+      this.render.cliffDbg = Number(q.get('cliffDbg'));
+    }
     if (q.has('cliffN')) this.render.cliffN = Number(q.get('cliffN'));
     if (q.has('cliffT')) this.render.cliffT = Number(q.get('cliffT'));
     // (version 2) ?cliffSmooth=1 tops within cliffT cells of each other joined by a smooth sheet; ?cliffDrop= the hashed drop

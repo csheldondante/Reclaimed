@@ -28405,3 +28405,20 @@ V3 variants (drawBoxesTexV3, drawSheetsTexV3, budget 600 ms). Code in 9290e9ab (
 **Reading.** Stills local/nested/r31v3a-side2-px3 / px6 / px10 and -side16-px6 against the parked r31v3-side2-cliff1:
 the large black ovals are gone; at side16 the columns read cleanly; at side2 thin regular vertical stripes remain at
 every floor tried. Limits NS-252..NS-254.
+
+## 2026-11-20 — Nested scales lab, round 31 (version 3): the dark gaps between columns diagnosed (`?cliffDbg=`) and fixed
+
+**Why.** The owner: version 3 "looks good in the fine detail shots except the random dark gap between adjacent columns".
+The coordinator asked for diagnostic stills before any more guessed fixes.
+
+**What.** NESTED_SCALES.md "As built (round 31, version 3, diagnosis of the dark gaps)": eight diagnostic modes behind the
+override CLIFF_DBG; ShadeIn.colFill (a half-Lambert fill, used only by mode 8 so far); the edge-line fix.
+
+**Measured.** Stills local/nested/r31dbg-side2-d0..d5 (modes 0-5) and -e6 / -e7 / -e8 (edge lines off / depth darkening
+off / fill on), same side2 camera: only edge lines off removes the stripes. Hit kinds coherent; D smooth; level-0 tops
+vary along curved contours inside cells (the per-pixel plane, NS-246). After the fix: local/nested/r31fix-side2-cliff1.png
+and -side16-cliff1.png. Compile (Dawn): two runs within budget after the fix (one earlier run had the default textured
+boxes / sheets at 418 / 434 with Tex2 normal; another 281-296 / 319-335; noisy, NS-253); V3 variants 469 / 562 ms.
+
+**Reading.** The stripes are gone over most of the wall; a few lines remain on faces seen nearly head-on (upper centre).
+Limits NS-255; NS-252 closed.

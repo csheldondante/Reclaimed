@@ -1749,6 +1749,18 @@ level's edge lines and tint grow in with its share; the climb back up to the par
 unbounded `loop`). Uniform word bit 29 (with bit 30) selects it; `?cliffDrop=` is per level in that level's cells.
 Stills local/nested/r31v3a-*: the large black ovals of the parked version are gone at side2; thin regular vertical stripes
 remain at px 3, 6 and 10 (suspected: walls seen at a grazing plan angle squeeze a cell's width on screen).
+
+**As built (round 31, version 3, diagnosis of the dark gaps): `?cliffDbg=N`.** Diagnostic colours compiled in only with
+`?cliffDbg=` at load (override CLIFF_DBG; the mode is the draw uniform's cl.z, switchable at run time): 1 the finest level
+D, 2 the hit's level, 3 the hit's kind (top, side through an x face, through a y face, start cell traced back, miss,
+iteration cap), 4 the hit's level-0 top in half cells mod 6, 5 lighting only, 6 no edge lines, 7 no darkening by depth
+along the ray, 8 a half-Lambert fill on column faces (ShadeIn.colFill, 0.25 of the sun; zero, so unchanged, elsewhere).
+Stills local/nested/r31dbg-side2-*: D and the hit level change smoothly by distance (one curved boundary); the hit kinds
+are coherent regions (no alternation between pixels); the level-0 top shows curved contours across cells (the per-pixel
+plane, NS-246, confirmed); edge lines off removes the stripes, depth darkening off and the fill do not. Cause: the drawn
+dark line at vertical cell edges, about a pixel wide, on cells that a grazing view squeezes to 1-3 px. Fix (that cause
+only): the line is sized by the cell's squeezed width on screen (cell px x sqrt(1 - (view . face tangent)^2)) and fades
+out under 8 px of it. Still local/nested/r31fix-side2-cliff1.png: the stripes are gone over most of the wall.
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

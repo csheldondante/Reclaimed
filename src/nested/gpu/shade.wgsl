@@ -58,6 +58,8 @@ struct ShadeIn {
   colN: vec3<f32>,
   colTint: f32,
   colAo: f32,
+  /** (round 31) the columns' fill: a half-Lambert share of the sun's light on column faces (0 none) */
+  colFill: f32,
 }
 
 // ---- (round 31, version 2, ?cliff=2) standing columns by a ray march, no geometry, no buffer or texture reads ---------
@@ -76,6 +78,8 @@ struct ShCol {
   tint: f32,
   ao: f32,
   miss: bool,
+  /** (round 31, version 3 diagnostics, ?cliffDbg=: draw.wgsl CLIFF_DBG) a categorical colour index to show, -1 none */
+  dbg: i32,
 }
 /** a column's top relative to the pixel, cells: the plane (normal gn) at the cell centre ctr (cells from the pixel),
  *  snapped down to a half cell in absolute z (zAbs, cells), less 0..2 drop half cells by the cell's hash (drop:
@@ -128,7 +132,7 @@ fn scH(tp: array<f32, 9>, q: vec2<f32>, n: f32) -> vec3<f32> {
 }
 fn shCol(si: ShadeIn, k: i32, steps: i32, drop: u32, sheet: bool) -> ShCol {
   let ng = si.ng;
-  var r = ShCol(0.0, ng, 1.0, 1.0, false);
+  var r = ShCol(0.0, ng, 1.0, 1.0, false, -1);
   if (ng.z < -0.01) { return r; }
   let cellPx = ldexp(1.0, k) / max(si.pxW, 1e-30);
   let w = shSteep(ng, si.cliff) * clamp(log2(cellPx) - 1.6, 0.0, 1.0);
@@ -354,9 +358,13 @@ fn sc3Top(l: i32, rc: vec2<i32>, c0: vec2<i32>, p0: vec2<f32>, gn: vec3<f32>, zA
   }
   return parent - amp * dz;
 }
-fn shCol3(si: ShadeIn, k: i32, steps: i32, drop: u32, pxAng: f32, pxT: f32) -> ShCol {
+/** dbg (diagnostics, ?cliffDbg=, 0 off): 1 the finest level D, 2 the hit's level, 3 the hit's kind (0 top, 1 side through
+ *  an x face, 2 through a y face, 3 the start cell traced back, 4 a miss, 5 the iteration cap), 4 the hit's level-0 top
+ *  in half cells mod 6 (pixels disagreeing about one cell's top show as different colours in it), 5 no edge lines, tint
+ *  or occlusion (lighting only), 6 no edge lines, 7 no darkening by depth along the ray, 8 (draw.wgsl) a fill on faces */
+fn shCol3(si: ShadeIn, k: i32, steps: i32, drop: u32, pxAng: f32, pxT: f32, dbg: u32) -> ShCol {
   let ng = si.ng;
-  var r = ShCol(0.0, ng, 1.0, 1.0, false);
+  var r = ShCol(0.0, ng, 1.0, 1.0, false, -1);
   if (ng.z < -0.01) { return r; }
   // a level-0 cell in pixels, by the distance alone
   let cellPx = ldexp(1.0, k) / max(si.distW * pxAng, 1e-30);
@@ -390,7 +398,11 @@ fn shCol3(si: ShadeIn, k: i32, steps: i32, drop: u32, pxAng: f32, pxT: f32) -> S
   var hit = false;
   var hn = vec3<f32>(0.0, 0.0, 1.0);
   var n0 = 0;
+  // (diagnostics: the steps taken; the start cell traced back)
+  var its = 0;
+  var back = false;
   for (var it = 0; it < SC3_ITER; it++) {
+    its = it + 1;
     let sz = ldexp(1.0, -l);
     let T = tops[l];
     let z = v.z * t;
@@ -404,6 +416,7 @@ fn shCol3(si: ShadeIn, k: i32, steps: i32, drop: u32, pxAng: f32, pxT: f32) -> S
       if (l >= D) {
         hit = true;
         if (!crossed) {
+          back = true;
           // (the start: back along the ray to the cell's top or the face it came through)
           let bx = select(1e30, select(lo.x + sz - p0.x, p0.x - lo.x, v.x >= 0.0) / abs(v.x), okx);
           let by = select(1e30, select(lo.y + sz - p0.y, p0.y - lo.y, v.y >= 0.0) / abs(v.y), oky);
@@ -472,16 +485,28 @@ fn shCol3(si: ShadeIn, k: i32, steps: i32, drop: u32, pxAng: f32, pxT: f32) -> S
   }
   if (!hit) {
     r.miss = true;
+    if (dbg == 3u) { r.dbg = select(4, 5, its >= SC3_ITER && n0 <= steps); }
+    if (dbg == 1u) { r.dbg = D; }
     return r;
   }
+  if (dbg == 1u) { r.dbg = D; }
+  if (dbg == 2u) { r.dbg = l; }
+  if (dbg == 3u) { r.dbg = select(select(select(2, 1, abs(hn.x) > 0.5), 0, hn.z > 0.5), 3, back); }
+  if (dbg == 4u) { r.dbg = i32(round((tops[0] + zAbs) * 2.0)) % 6 + 6; }
   // ---- the hit, as version 2, at the hit's level; the finest level's lines and tint grown in by its share
   let sz = ldexp(1.0, -l);
   let lpx = cellPx * sz;
-  let share = select(1.0, ampD, l == D && D > li);
+  let share = select(1.0, ampD, l == D && D > li) * select(1.0, 0.0, dbg == 5u);
   let hp = p0 + v.xy * t;
-  let lw = max(0.04, 0.9 / lpx);
+  // (the vertical edge lines: a face seen at a grazing plan angle squeezes its cells on screen by sqrt(1 - (v . tangent)^2);
+  // the line is sized by that squeezed width and fades out under 8 px of it (the diagnosis: lines a pixel wide drawn on
+  // cells squeezed to 1-3 px were the dark stripes and gaps between columns, NS-252))
+  let vt = select(v.x, v.y, abs(hn.x) > 0.5);
+  let lpxF = lpx * sqrt(max(1.0 - vt * vt, 0.0));
+  let lw = max(0.04, 0.9 / max(lpxF, 1e-3));
   let fa = fract(select(hp.x, hp.y, abs(hn.x) > 0.5) / sz);
-  let edge = share * select(1.0 - smoothstep(0.5 * lw, lw, min(fa, 1.0 - fa)), 0.0, hn.z > 0.5);
+  let lineOn = clamp((lpxF - 4.0) / 4.0, 0.0, 1.0);
+  let edge = share * lineOn * select(1.0 - smoothstep(0.5 * lw, lw, min(fa, 1.0 - fa)), 0.0, hn.z > 0.5 || dbg == 6u);
   let rim = select((1.0 - smoothstep(lw, lw + 0.08, (tops[l] - v.z * t) / sz)) * (1.0 - edge), 0.0, hn.z > 0.5);
   let a = (c0 << vec2<u32>(u32(l))) + rc;
   let ap = (c0 << vec2<u32>(u32(max(l - 1, 0)))) + (rc >> vec2<u32>(select(0u, 1u, l > 0)));
@@ -490,8 +515,8 @@ fn shCol3(si: ShadeIn, k: i32, steps: i32, drop: u32, pxAng: f32, pxT: f32) -> S
   let j = mix(jp, jl, share);
   r.w = w;
   r.n = hn;
-  r.tint = (0.80 + 0.32 * j) * (1.0 - 0.55 * edge) * (1.0 + 0.2 * rim);
-  r.ao = (1.0 - 0.6 * edge) * mix(1.0, 0.5, smoothstep(0.0, 1.0, abs(t)));
+  r.tint = select((0.80 + 0.32 * j) * (1.0 - 0.55 * edge) * (1.0 + 0.2 * rim), 1.0, dbg == 5u);
+  r.ao = select((1.0 - 0.6 * edge) * select(mix(1.0, 0.5, smoothstep(0.0, 1.0, abs(t))), 1.0, dbg == 7u), 1.0, dbg == 5u);
   return r;
 }
 
@@ -817,6 +842,11 @@ fn shFinish(si: ShadeIn, alb0: vec3<f32>, rough0: f32, ao0: f32, g0: vec3<f32>, 
   let amb = mix(vec3<f32>(0.30, 0.26, 0.20), vec3<f32>(0.50, 0.62, 0.85), 0.5 + 0.5 * n.z);
   let albL = shToLinear(alb);
   var c = albL * (sunC * ndl + amb * ao);
+  // (round 31, the columns' fill: a half-Lambert share of the sun, so faces turned from it are not near black)
+  if (si.colFill > 0.0) {
+    let hl = 0.5 + 0.5 * dot(n, sun);
+    c += albL * sunC * (si.colFill * hl * hl);
+  }
   let h = normalize(sun - si.view);
   let r4 = rough * rough * rough * rough;
   let sh = max(2.0 / r4 - 2.0, 1.0);
