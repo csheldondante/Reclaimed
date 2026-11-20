@@ -204,6 +204,12 @@ Round 32, the real thing:
   flat walls but I do think it would look better to just keep rendering deeper columns so that things look
   rough. And like they have basically infinite voxel detail." So: keep subdividing below 0.25 m to pixel size.
 
+- **When the march is too slow (the owner, last):** "I would rather just lower resolution and keep the look
+  than bail because of depth for the walks." So the answer to cost is a lower render resolution (the lab
+  already has a "Draw 100 / 75 / 50 %" control; a reduced-resolution cliff pass or an automatic scale is the
+  natural form), NOT cutting the walk short, capping detail by distance, or a fallback picture. The step cap
+  stays only as a guard against a stalled frame and should essentially never be hit.
+
 ## Open decisions for the owner
 1. Threshold default: 2 or 4.
 2. Notches: port coarse ones to the shader, or drop (orchestrator's view from the CPU pictures: drop for now).
