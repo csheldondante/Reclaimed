@@ -28209,3 +28209,24 @@ band noises were not tried this round (NS-226). The field stays 0.4-1.2 ms over 
 every boot (NS-222). Boot gate after: cold 7,415 / 15,942 / 10,973 ms (first frame / every boot pipeline / first sheet
 frame), 512 MB reload 9,335 / 17,971 / 12,833, 256 MB 8,556 / 15,834 / 12,043 (round 27: cold 7,006 / 10,367 / 9,826,
 512 MB 9,575-20,014 for every boot pipeline).
+
+**What grew in the boot gate's "every boot pipeline" (512 MB reload 18.1 -> 19.4 -> 20.0 s).** Each pipeline's own wait
+is logged now (GpuNest.pipeMade; nested-smoothboot prints the last ones). The critical path is two compiles in turn: the
+first frame's pipelines (10.3 s on the 512 MB reload: `?maxbuf` changes the segment count, so the module text differs
+and Chrome's cache misses; 1.2 s on a cached cold page) and then derive alone (7.6-9.1 s; the next slowest, sheetBake and
+restrictK, 3.5-4 s). Derive grew with round 25's generator detail and round 27's per-level materials (genMat / genMatD,
+the resolution loop); Dawn measures it at 2.4 s, Chrome's D3D11 path at 7.6-9.1. Two runs of this round: 17,971 (pass)
+and 19,409 ms (fail, by 409 ms). Not fixed (NS-229).
+
+**Fills complete.** Cruise at 300 m with `?field=1,2,3` (scripts/nested-cruise.mjs, now logging jobs): 100, 200 and 400
+m/s, every field job finished (longest 416, 425 and 872 ms), no stall, 0-4 grows, p95 10.1-10.2 ms, worst 10.7-24.7.
+The round 26 stall waited on pool grows made for the promote's oversized reservation (above).
+
+**Stills** (local/nested/r28-phone-*-sheets|field.png at 891 x 2000, r28-L1..L3-bowl|above300-sheets|field.png; each
+looked at). Carve rim at 2 m from 100 m: the sheets' rows of fangs are gone with the field mesh; its rim reads as a
+smooth lip with blocky sand speckle where the material lookup straddles sand and stone. The step from 190 m: the
+sheets' stone-and-soil staircase becomes a fine speckle on the field mesh; thin dark dashes on the flat sand (NS-212)
+remain. Still wrong in the field mesh: tall thin spires and long straight walls at the 16 m level's steps (the data:
+NS-227's flattened extremum cells and the parent cells' staircase, NS-211), and on a near-vertical cliff the material
+reads as a coarse sand/stone checker of 0.5 m cells (the lookup's jitter cells, NS-207). The sheet and field runs land
+their windows apart, so the per-level pairs are not the same ground.

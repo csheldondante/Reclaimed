@@ -832,6 +832,10 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   level 1, NS-198). Smallest correct change (not made: it changes every level's look and needs the zoom gates run on
   it; out of this round's budget): at an extremum whose curvatures disagree keep a peaked parabola (aL, aR from the
   edge values clamped to the cell's mean side) instead of a flat one; mean-preserving, so restrict(enhance) is unchanged.
+- NS-229 (perf, round 28) The boot gate's "every boot pipeline" is the first frame's pipelines and then derive's compile
+  (7.6-9.1 s in Chrome, 2.4 s in Dawn), which grew with rounds 25 and 27; the 512 MB reload read 17,971 and 19,409 ms
+  against 19,000 this round. Cut derive's compile (the generator and material code out of the layer pass's unrolled
+  body, or a derive split in two kernels) or start it before the first frame's pipelines finish.
 - NS-228 (limit, round 28) The camera pass's nearest-surface search (CAM_R columns of each level) now takes a find only
   within its reach and bounds the answer by finds beyond it (the level thrash fix); with no level finding anything in
   reach the nearest is the smaller of the bound and the reach, a lower bound as before.
