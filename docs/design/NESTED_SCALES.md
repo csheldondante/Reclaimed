@@ -1658,6 +1658,45 @@ the sheets on the desktop at the phone's poses).
   (bisected crossings changed nothing). Cost: bake +30-60 %, fieldBake compile +78 %, frame unchanged.
 - *Departures.* The across column is the one holding centre + sign(d) (|d| + 0.5) n (the brief: "the column the normal
   points to"): an outside column (d < 0) looks inward, and a line more than half a column off still lands across it.
+
+**As built (round 30): what a parent column should store, a CPU numbers experiment.** No engine change. The question:
+with a shape stored at one level and no finer data, how close is the 8x finer child level to the truth, by what each
+parent stores? Sources: src/nested/exp/recon.ts, test/unit/nested-recon.test.ts (prints the full table, writes
+local/nested/r30-recon.md). Flat ground at 100 m, parents 16 m (exact means of 64 x 64 point samples), children 2 m,
+a 64 x 64 parent window; errors over the children within 32 m of the feature. Variants: A today's limited PPM (oracle.ts
+ppm2 itself); B one edge line a flagged column (edge.ts quantisation; each side of the line from the nearest UNFLAGGED
+5 x 5 cells on that side, round 24's fill); B' the same from ANY cell on that side (round 24's actual rule); D = B plus
+the brush side's tilt at the crossing (8 bits), the child below the line on a plane from the line; m = the block's mean
+restored; C height + mean gradient (clamped to 70 deg), monotone cubic Hermite; E = C and A with 32 m parents.
+Flag = differs from a 4-neighbour by more than 16 m (or 8 m). Cells: RMS / max / children off by > 2 m.
+
+| variant | bowl r 40 | bowl r 166 | trench 48 x 40 | cliff 60 deg 80 m | gaussian (control) |
+|---|---|---|---|---|---|
+| A PPM 16 m | 1.66 / 9.7 / 599 | 2.53 / 20.2 / 4232 | 4.91 / 31.7 / 6217 | 0.70 / 4.0 / 966 | 0.01 / 0.11 / 0 |
+| C Hermite 16 m | 1.66 / 7.2 / 853 | 2.89 / 17.9 / 5546 | 5.06 / 18.7 / 9533 | 0.83 / 3.6 / 2332 | 0.02 / 0.19 / 0 |
+| B line, flag 16 | 6.90 / 37.7 / 979 | 15.84 / 116.1 / 6283 | 1.91 / 20.0 / 988 | 25.94 / 79.3 / 8512 | = A |
+| B line, flag 8 | 7.37 / 37.9 / 1085 | 2.33 / 34.9 / 3247 | 1.90 / 20.0 / 988 | 19.09 / 73.4 / 5833 | = A |
+| Bm line + mean, flag 16 | 7.21 / 42.3 / 1160 | 17.21 / 190.9 / 6603 | 1.91 / 20.5 / 1331 | 28.84 / 173.5 / 8400 | = A |
+| B' any-cell fill, flag 16 | 2.20 / 20.6 / 682 | 2.76 / 34.9 / 4438 | 3.72 / 21.3 / 7288 | 0.72 / 4.0 / 1098 | = A |
+| D line + tilt, flag 16 | = B | = B | = B | 0.27 / 4.0 / 51 | = A |
+| D line + tilt, flag 8 | = B | = B | = B | 0.04 / 0.45 / 0 | = A |
+| D' any-cell fill, flag 16 | = B' | = B' | = B' | 3.68 / 49.5 / 5722 | = A |
+| E Hermite 32 m | 3.79 / 10.1 / 1994 | 5.14 / 23.3 / 11172 | 7.68 / 20.1 / 20375 | 2.37 / 7.6 / 9001 | 0.10 / 1.03 / 0 |
+| E A PPM 32 m | 3.80 / 25.4 / 1438 | 4.94 / 32.6 / 9173 | 7.54 / 38.7 / 13208 | 1.93 / 9.5 / 8398 | 0.07 / 1.15 / 0 |
+
+- *Flags.* Flag 16 m: 0.6 / 5.8 / 6.9 / 6.1 / 0 % of all parents; it misses 1 (bowl 40) and 26 (cliff) of the parents
+  whose A children are off by > 2 m. Flag 8 m: 0.8 / 8.6 / 8.1 / 7.3 / 0 %, no misses. D's tilt only differs from B
+  where the wall is not vertical (the cliff): a ball centred at the ground has a vertical wall at its rim.
+- *Fixed point* (bowl 40, gaussian; A, Bm, Dm with each block's rounded children summing exactly to 64 x the integer
+  parent, the remainder handed out one unit a child, largest rounding residual first; at most 11 units a block). Added
+  RMS / max on the gaussian: 1/8 m +0.048 / +0.20 (terracing), 1/64 m +0.003 / +0.036, 1/1024 m +0.0000 / +0.0003; on
+  bowl 40 under +0.002 / +0.19 at every unit. Restricting integer children to an integer parent leaves sum mod 64; the
+  exact rule needs either the children adjusted at write time (as here) or the parent kept as the sum (6 more bits).
+- *Reading.* Heights only (A) is the best general scheme of these at the same column count; a line pays only where the
+  side surfaces are flat (trench: RMS 4.91 -> 1.91) or planar with the tilt stored (cliff, D: 0.70 -> 0.04 at flag 8),
+  and is much worse than A on curved walls (bowls), where the nearest same-side cell is not the surface next to the line.
+  Gradients (C) do not beat A, and half the columns with gradients (E) is about twice A's error at 16 m: fewer, richer
+  columns did not match more height-only columns here. Open items NS-235..NS-239.
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

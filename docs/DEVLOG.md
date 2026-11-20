@@ -28292,3 +28292,29 @@ edge with small notches. Default stays 0.
 self-test (nested-selftest.mjs, 47 of 47 at round 28) was started and stopped by the host for low system memory before
 it reported: not run this round. With `?fedge=0` the field module's text differs only by `const FLINE: bool = false;`
 and every new branch is behind it.
+
+## 2026-11-20 — Nested scales lab, round 30: what should a parent column store? (CPU numbers only)
+
+**Why.** The owner asked whether storing more per column (an edge crossing, a normal) pays off at child levels, and
+whether fewer columns with more data could match more columns with heights only. Before any engine work, a CPU-only
+experiment: analytic shapes, exact column means, child heights rebuilt from parent data alone (no residual), compared to
+the child truth. No existing source changed; new src/nested/exp/recon.ts and test/unit/nested-recon.test.ts (runs in
+about 9 s, prints the table, writes local/nested/r30-recon.md; asserts only sanity: the gaussian control under 0.5 m
+RMS in every variant, PPM keeps each parent's mean, fixed-point blocks sum exactly).
+
+**Measured.** Table and variant definitions in NESTED_SCALES.md "As built (round 30)". In short (RMS m, 16 m parents
+to 2 m children): today's PPM 1.66 / 2.53 / 4.91 / 0.70 / 0.01 on bowl r 40, bowl r 166, trench, 60 deg cliff, gaussian.
+A line with each side from the nearest unflagged cells: trench 1.91 (better), bowls 6.90 and 15.84 and cliff 25.94
+(much worse: the nearest unflagged cell on the inside of a curved or sloped wall is the deep floor). The line plus the
+brush side's tilt: cliff 0.27 (flag 16 m) and 0.04 (flag 8 m); unchanged elsewhere (vertical walls). Any-cell fill
+(round 24's rule): bowls 2.20 / 2.76, trench 3.72, cliff 0.72. Height + gradient Hermite: about A's RMS (1.66 / 2.89
+/ 5.06 / 0.83), lower max on walls, more children off by > 2 m. Half the columns (32 m) with gradients: 3.79 / 5.14 /
+7.68 / 2.37, about PPM at 32 m (3.80 / 4.94 / 7.54 / 1.93) and twice PPM at 16 m. The flag at 16 m misses 26 cliff
+parents that need help; at 8 m none. Fixed point: 1/8 m adds 0.048 RMS / 0.20 max of terracing on the gaussian, 1/64 m
+0.003 / 0.036, 1/1024 m nothing measurable; parent = mean of 64 integer children kept exact by handing out the
+rounding remainder (at most 11 units a block).
+
+**Reading (uncertain: one window, one angle, analytic lines).** Heights only is the best general scheme of these at the
+same column count; a line pays where the side surfaces are flat or planar and the tilt is stored with it, and hurts on
+curved walls with the brief's fill. Fewer, richer columns did not match more height-only columns. Findings and limits
+NS-235..NS-240.
