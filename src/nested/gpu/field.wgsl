@@ -17,9 +17,15 @@
 const FIELD_ID: u32 = 24u;
 const FSCR_ID: u32 = 56u;
 const FFAR: f32 = 3.0;
-/** quad pages: a 16-word header (page 0's: the chunk's), then 783 quads of 4 vertices x 4 words */
+/** quad pages: a 16-word header (page 0's: the chunk's), then 783 quads of 4 vertices x 4 words. (B3) Two banks: page 0
+ *  is the header only; bank b's quads are cz 1 + b x FBANK on. A build writes the bank not drawn, then flips at once or,
+ *  deferred (a level opening or sliding, spread over frames), when fieldFlip flips the whole level together. Header:
+ *  0-1 hash, 2 the drawn bank, 3 the chunk key, 4 candidates, 5 vertices, 6 a deferred build waits, 7-8 each bank's quads */
 const FHW: u32 = 16u;
 const FQPP: u32 = 783u;
+const FBANK: u32 = 4096u;
+var<workgroup> fTB: u32;
+var<private> fTBP: u32;
 /** scratch entries, one a candidate cell: K, offset in the cell (2 x unorm16), z, normal, corner mask (0: not crossed),
  *  its cell column's index in the computing area */
 const FVW: u32 = 6u;
@@ -556,8 +562,29 @@ fn fSample(X: i32, Y: i32, z: i32) -> f32 {
 fn fQuadAt(i: u32) -> u32 {
   let cz = i / FQPP;
   var p = 0u;
-  if (cz < 16u) { p = fQp[cz]; } else { p = pageOf(FIELD_ID + u.a.w, fC.x, fC.y, cz); }
+  if (cz < 16u) { p = fQp[cz]; } else { p = pageOf(FIELD_ID + u.a.w, fC.x, fC.y, 1u + fTBP * FBANK + cz); }
   return p * PW + FHW + (i % FQPP) * 16u;
+}
+/** pages cz base .. base + need - 1 of a chunk's stack made (missing ones), and those from base + need on let go up to
+ *  the first missing one (one bank of the quad pages) */
+fn fEnsureFrom(lid: u32, cx: i32, cy: i32, base: u32, need: u32) {
+  for (var cz = base; cz < base + need; cz++) {
+    if (tFind(tKey0(cx, cy), tKey1(lid, cz)) == NONE) {
+      let p = allocPage();
+      if (p != NONE) {
+        if (tInsert(tKey0(cx, cy), tKey1(lid, cz), p, u.d.x)) { atomicMax(&ctl[11], cz - base + 1u); } else { freePage(p); }
+      }
+    }
+  }
+  var cz = base + need;
+  loop {
+    let s = tFind(tKey0(cx, cy), tKey1(lid, cz));
+    if (s == NONE) { break; }
+    let p = atomicLoad(&tab[s * 4u + 2u]);
+    if (p < NOT_LOADED) { freePage(p); }
+    atomicStore(&tab[s * 4u + 1u], TOMB);
+    cz++;
+  }
 }
 /** the computing area's index of cell column (X, Y), or -1 */
 fn fIdx(X: i32, Y: i32) -> i32 {
@@ -768,12 +795,23 @@ fn fieldBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_in
   fC = vec2<i32>(cx, cy);
   if (li < 9u) { fPg[li] = pageOf(L, cx - 1 + i32(li % 3u), cy - 1 + i32(li / 3u), 0u); }
   if (li == 0u) {
-    if (pageOf(FIELD_ID + L, cx, cy, 0u) >= NOT_LOADED) { fEnsure(FIELD_ID + L, cx, cy, 1u); }
+    if (pageOf(FIELD_ID + L, cx, cy, 0u) >= NOT_LOADED) {
+      fEnsure(FIELD_ID + L, cx, cy, 1u);
+      // (a fresh header: bank 0 active and empty, nothing pending)
+      let p = pageOf(FIELD_ID + L, cx, cy, 0u);
+      if (p < NOT_LOADED) {
+        for (var w = 0u; w < FHW; w++) { pgStore(p * PW + w, 0u); }
+      }
+    }
     fHdr = pageOf(FIELD_ID + L, cx, cy, 0u);
+    // (the bank this build writes: the one not drawn)
+    if (fHdr < NOT_LOADED) { fTB = 1u - (pgLoad(fHdr * PW + 2u) & 1u); }
   }
   let hp = workgroupUniformLoad(&fHdr);
   if (hp >= NOT_LOADED) { return; }
   let hb = hp * PW;
+  fTBP = workgroupUniformLoad(&fTB);
+  let deferred = ((u32(u.e.w) >> 16u) & 1u) == 1u;
   // the hash skip (an edit's own region, mode 0): the chunk's columns and four round it unchanged
   var ha = 0u;
   var hb2 = 0u;
@@ -800,7 +838,8 @@ fn fieldBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_in
   let hA = wgScan(li, ha).y | 1u;
   let hB = wgScan(li, hb2).y;
   if (li == 0u) {
-    let same = u.e.x == 0 && pgLoad(hb) == hA && pgLoad(hb + 1u) == hB;
+    // (not over a build still waiting for its flip, nor a deferred one)
+    let same = u.e.x == 0 && !deferred && pgLoad(hb + 6u) == 0u && pgLoad(hb) == hA && pgLoad(hb + 1u) == hB;
     pgStore(hb, hA);
     pgStore(hb + 1u, hB);
     wflag = select(0u, 1u, same);
@@ -843,7 +882,7 @@ fn fieldBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_in
     for (var z = 0u; z < need; z++) {
       if (pageOf(FSCR_ID + L, cx, cy, z) >= NOT_LOADED) { wflag = 1u; }
     }
-    if (wflag == 1u) { pgStore(hb + 2u, 0u); pgStore(hb, 0u); }
+    if (wflag == 1u) { fFail(hb, deferred); }
   }
   storageBarrier();
   workgroupBarrier();
@@ -868,7 +907,7 @@ fn fieldBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_in
     for (var z = 0u; z < fPr; z++) {
       if (pageOf(FSCR_ID + L, cx, cy, z) >= NOT_LOADED) { wflag = 1u; }
     }
-    if (wflag == 1u) { pgStore(hb + 2u, 0u); pgStore(hb, 0u); }
+    if (wflag == 1u) { fFail(hb, deferred); }
   }
   storageBarrier();
   workgroupBarrier();
@@ -917,7 +956,7 @@ fn fieldBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_in
       if (pageOf(FSCR_ID + L, cx, cy, z) >= NOT_LOADED) { wflag = 1u; }
     }
     // (the pool full: the chunk draws nothing until it is baked again; the refusal is counted and shown)
-    if (wflag == 1u) { pgStore(hb + 2u, 0u); pgStore(hb, 0u); }
+    if (wflag == 1u) { fFail(hb, deferred); }
     pgStore(hb + 3u, u32(cx) | (u32(cy) << 16u));
     pgStore(hb + 4u, N);
   }
@@ -926,7 +965,7 @@ fn fieldBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_in
   if (workgroupUniformLoad(&wflag) == 1u) { return; }
   // (measurement only, u.c.w bit 2: stop after the count, the chunk drawn empty; bit 4: after the vertices)
   if ((u32(u.c.w) & 2u) != 0u) {
-    if (li == 0u) { pgStore(hb + 2u, 0u); pgStore(hb, 0u); }
+    if (li == 0u) { fFail(hb, deferred); }
     return;
   }
   if (li < 16u) { fSp[li] = pageOf(FSCR_ID + L, cx, cy, li); }
@@ -969,7 +1008,7 @@ fn fieldBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_in
     for (var z = 0u; z < need; z++) {
       if (pageOf(FSCR_ID + L, cx, cy, z) >= NOT_LOADED) { wflag = 1u; }
     }
-    if (wflag == 1u) { pgStore(hb + 2u, 0u); pgStore(hb, 0u); }
+    if (wflag == 1u) { fFail(hb, deferred); }
   }
   storageBarrier();
   workgroupBarrier();
@@ -1000,7 +1039,7 @@ fn fieldBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_in
   storageBarrier();
   workgroupBarrier();
   if ((u32(u.c.w) & 4u) != 0u) {
-    if (li == 0u) { pgStore(hb + 2u, 0u); pgStore(hb, 0u); }
+    if (li == 0u) { fFail(hb, deferred); }
     return;
   }
   // 3. the quads of the owned cell columns' crossed edges, counted then written (one call site of fEdgeQuad)
@@ -1013,18 +1052,19 @@ fn fieldBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_in
       at = s2.x;
       let Q = s2.y;
       if (li == 0u) {
-        let need = max(1u, (Q + FQPP - 1u) / FQPP);
-        fEnsure(FIELD_ID + L, cx, cy, need);
+        // (the target bank's quad pages: cz 1 + bank x FBANK on)
+        let base = 1u + fTBP * FBANK;
+        let need = (Q + FQPP - 1u) / FQPP;
+        fEnsureFrom(FIELD_ID + L, cx, cy, base, need);
         wflag = 0u;
         for (var z = 0u; z < need; z++) {
-          if (pageOf(FIELD_ID + L, cx, cy, z) >= NOT_LOADED) { wflag = 1u; }
+          if (pageOf(FIELD_ID + L, cx, cy, base + z) >= NOT_LOADED) { wflag = 1u; }
         }
-        pgStore(hb + 2u, select(Q, 0u, wflag == 1u));
-        if (wflag == 1u) { pgStore(hb, 0u); }
+        if (wflag == 1u) { fFail(hb, deferred); } else { pgStore(hb + 7u + fTBP, Q); }
       }
       storageBarrier();
       workgroupBarrier();
-      if (li < 16u) { fQp[li] = pageOf(FIELD_ID + L, cx, cy, li); }
+      if (li < 16u) { fQp[li] = pageOf(FIELD_ID + L, cx, cy, 1u + fTBP * FBANK + li); }
       workgroupBarrier();
     }
     let fail = ps == 1u && workgroupUniformLoad(&wflag) == 1u;
@@ -1070,7 +1110,25 @@ fn fieldBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_in
     pgStore(hb + 5u, V);
     // the scratch let go
     fEnsure(FSCR_ID + L, cx, cy, 0u);
+    // (the new bank drawn at once, the old one let go; a deferred build waits for fieldFlip)
+    if (wflag == 0u) { fFinish(hb, cx, cy, deferred); }
   }
+}
+/** a build done: drawn now (its bank made the active one, the other let go) or, deferred, marked for fieldFlip */
+fn fFinish(hb: u32, cx: i32, cy: i32, deferred: bool) {
+  if (deferred) {
+    pgStore(hb + 6u, 1u);
+    return;
+  }
+  pgStore(hb + 2u, fTBP);
+  pgStore(hb + 6u, 0u);
+  fEnsureFrom(FIELD_ID + u.a.w, cx, cy, 1u + (1u - fTBP) * FBANK, 0u);
+}
+/** the pool full: the target bank holds nothing; drawn at once (the chunk empty, as before) unless deferred */
+fn fFail(hb: u32, deferred: bool) {
+  pgStore(hb, 0u);
+  pgStore(hb + 7u + fTBP, 0u);
+  fFinish(hb, fC.x, fC.y, deferred);
 }
 
 // ---- release: a field level's quad and scratch pages let go (all, or those outside a chunk rect: a slide), beside
@@ -1112,16 +1170,36 @@ fn fieldDirBuild(@builtin(global_invocation_id) gid: vec3<u32>) {
   let p = atomicLoad(&tab[s * 4u + 2u]);
   if (p >= NOT_LOADED) { return; }
   let cz = k1 >> 8u;
+  // (page 0 is the header; a quad page is listed when it is of the drawn bank and holds quads)
+  if (cz == 0u) { return; }
   let k0 = atomicLoad(&tab[s * 4u]);
   let p0 = pageOf(lid, i32(k0 & 0xffffu), i32(k0 >> 16u), 0u);
   if (p0 >= NOT_LOADED) { return; }
-  let Q = pgLoad(p0 * PW + 2u);
-  if (Q <= cz * FQPP) { return; }
+  let b = (cz - 1u) / FBANK;
+  let j = (cz - 1u) % FBANK;
+  if (b != pgLoad(p0 * PW + 2u)) { return; }
+  let Q = pgLoad(p0 * PW + 7u + b);
+  if (Q <= j * FQPP) { return; }
   let i = atomicAdd(&dir[L], 1u);
   let e = 8u + (L * u.r.y + i) * 3u;
   atomicStore(&dir[e], p);
   atomicStore(&dir[e + 1u], k0);
-  atomicStore(&dir[e + 2u], min(FQPP, Q - cz * FQPP));
+  atomicStore(&dir[e + 2u], min(FQPP, Q - j * FQPP));
+}
+/** (B3) every deferred build of level u.a.w made the drawn one at once: its bank flipped, the old bank let go */
+@compute @workgroup_size(64)
+fn fieldFlip(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let s = gid.x;
+  if (s >= TCAP) { return; }
+  let k1 = atomicLoad(&tab[s * 4u + 1u]);
+  if (k1 != FIELD_ID + u.a.w) { return; }
+  let p = atomicLoad(&tab[s * 4u + 2u]);
+  if (p >= NOT_LOADED || pgLoad(p * PW + 6u) == 0u) { return; }
+  let k0 = atomicLoad(&tab[s * 4u]);
+  let old = pgLoad(p * PW + 2u) & 1u;
+  pgStore(p * PW + 2u, 1u - old);
+  pgStore(p * PW + 6u, 0u);
+  fEnsureFrom(FIELD_ID + u.a.w, i32(k0 & 0xffffu), i32(k0 >> 16u), 1u + old * FBANK, 0u);
 }
 @compute @workgroup_size(1)
 fn fieldDirFinish() {

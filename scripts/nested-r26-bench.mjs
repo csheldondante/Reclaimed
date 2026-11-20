@@ -69,11 +69,15 @@ await run({ name: 'r26-bench', kind: 'behaviour', size: '960x640', dpr: 1, echo:
         const bake1 = [];
         for (let i = 0; i < reps; i++) bake1.push(await nested.benchBake(L, true));
         // (one chunk, and 2 x 2 chunks, in one dispatch: a frame's share)
+        // (round 26 B3: each submitted 8 times back to back, the time divided, under the round trip's floor; at the chunk
+        // under the eye: the nearest-first job's first and costliest)
+        const s = a.k ** L;
+        const eyeAt = [Math.floor(a.ex * s), Math.floor(a.ey * s)];
         const b1 = [];
         const b4 = [];
-        for (let i = 0; i < reps + 2; i++) {
-          b1.push(await nested.benchBake(L, true, 1));
-          b4.push(await nested.benchBake(L, true, 2));
+        for (let i = 0; i < reps; i++) {
+          b1.push(await nested.benchBake(L, true, 1, 8, eyeAt));
+          b4.push(await nested.benchBake(L, true, 2, 8, eyeAt));
         }
         bake1.push(-1, Math.min(...b1), Math.min(...b4));
         const draw = [];

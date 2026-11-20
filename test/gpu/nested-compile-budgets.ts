@@ -54,6 +54,7 @@ export const BUDGET_MS: Record<string, number> = {
   fieldDirClear: 400,
   fieldDirBuild: 400,
   fieldDirFinish: 400,
+  fieldFlip: 400,
   drawField: 400,
   drawFieldTex: 550,
 };

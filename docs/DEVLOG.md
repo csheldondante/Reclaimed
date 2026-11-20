@@ -27957,3 +27957,26 @@ measurement's own floor (the round trip of onSubmittedWorkDone). The row-a-submi
 latency times 16 (each row's workgroups run their phases in series: 6-9 ms a row for the field, under 1 for the
 sheets). So the window build in one dispatch meets the targets (within 2 x gentle, 4 x steep); spread over frames, a
 few chunks a frame is under the floor. Hence the next step: builds spread across frames.
+
+## 2026-11-20 — Nested scales lab, round 26, step B3: field builds spread across frames (two banks, a flip)
+
+**Why a flip.** A field level that opens or slides cannot show its chunks one by one: an unbuilt chunk is a hole (the
+parent already stops at the footprint). So a chunk's quads live in two banks (field.wgsl: page 0 the header, bank b's
+pages at cz 1 + b x 4096); a build writes the bank not drawn. Edits and other ops build and flip at once, as before. A
+field level's promote or slide queues its chunks (the window; or the entering strips grown by a chunk and the new edge
+ring) and builds a 2 x 2 block a frame, the one holding the queued chunk nearest the eye (`?fbudget=` the block's side),
+into the hidden banks; the old meshes (sliding: the leaving ones too) and the parent as it was stay drawn. When the
+queue is empty, one op flips every pending chunk of the level (fieldFlip), lets the leaving meshes go and bakes the
+parent's footprint chunks (its own chunks only). Levels and edits hold still meanwhile (`switching`), as for the smooth
+switch.
+
+**Measured (desktop, noisy: the sheet pages show 20-58 ms frames with nothing to do).** Per frame's share, a block at
+the chunk under the eye at the steepest step, submitted 8 times back to back: one chunk 5.8 ms, 2 x 2 chunks 6.9 ms
+(sheets 0.7 / 0.8; both include the directory pass the measurement runs each time). So a steep chunk is over the 4 ms
+target, gentle ones under it. Opening level 3 at the step (scripts/nested-r26-open.mjs): the job 256 chunks over 73
+frames, 1.9 s; median frame 10.0 ms both; p95 20.5 against the sheets' 28.0 in the same session; worst frame 69.8 (the
+job's first block, the pool's grow ahead in the same frames) against the sheets' 58.2. Cruise at 300 m with level 2 the
+field level (scripts/nested-cruise.mjs `--q "&field=2"`): 100 m/s, 7 level-2 slides, each a job of 88-130 chunks over
+38-47 frames (0.5-1.0 s): median 10.0, p95 16.2, worst 66.4 ms; the sheets in the same hour at 200 m/s with 18 level-2
+slides: p95 20.1, worst 55.0. At 200 m/s the field run's level 2 was promoted and its job had not finished in 8 s (2
+refusals: the job waits for the pool; NS-209).

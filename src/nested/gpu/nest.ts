@@ -420,7 +420,72 @@ export class GpuNest {
   fieldArgs: GPUBuffer | null = null;
   private fieldDirBg: GPUBindGroup | null = null;
   private fieldDirCap = -1;
-  static readonly FIELD_PIPES = ['fieldBake', 'fieldRelease', 'fieldDirClear', 'fieldDirBuild', 'fieldDirFinish'];
+  static readonly FIELD_PIPES = ['fieldBake', 'fieldRelease', 'fieldDirClear', 'fieldDirBuild', 'fieldDirFinish', 'fieldFlip'];
+  /** (round 26 B3) a field level opening or sliding: its chunks built a few a frame (nearest the eye first) into the bank
+   *  not drawn, then flipped together (fieldFlip) with the op's deferred rest (`flip`: the parent's footprint bakes, the
+   *  leaving chunks' quads let go). The level's old meshes (or, opening, the parent) are drawn meanwhile; levels and
+   *  edits hold still (`switching`). */
+  fieldJob: { L: number; queue: { x: number; y: number }[]; flip: () => void; t0: number; frames: number; chunks: number } | null = null;
+  /** (B3) a field job builds a fieldBudget x fieldBudget block of chunks a frame (?fbudget=) */
+  fieldBudget = 2;
+  /** (B3, measurement) each finished field job: level, kind, chunks, frames, ms */
+  readonly fieldLog: { L: number; chunks: number; frames: number; ms: number }[] = [];
+  private fieldDefer = false;
+  /** (B3) queue level L's chunks of these rects (clipped to its window) for the job, no repeats */
+  private fieldQueue(L: number, rects: { x0: number; y0: number; x1: number; y1: number }[], flip: () => void): void {
+    const seen = new Set<string>();
+    const queue: { x: number; y: number }[] = [];
+    for (const r0 of rects) {
+      const r = this.clipChunks(L, r0);
+      for (let y = r.y0; y < r.y1; y++)
+        for (let x = r.x0; x < r.x1; x++) {
+          const key = `${x},${y}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          queue.push({ x, y });
+        }
+    }
+    this.fieldJob = { L, queue, flip, t0: performance.now(), frames: 0, chunks: queue.length };
+  }
+  /** (B3) one frame of the field job: up to fieldBudget chunks nearest (ex, ey) (level L's global columns) built,
+   *  deferred; the flip once none are left. Call between ops (the app: when no other op runs this frame). */
+  stepField(ex: number, ey: number): void {
+    const job = this.fieldJob;
+    if (!job) return;
+    job.frames++;
+    const L = job.L;
+    if (job.queue.length) {
+      // (one dispatch a frame: the fieldBudget x fieldBudget block of chunks, aligned to the budget's grid, holding the
+      // queued chunk nearest the eye; every queued chunk in it taken. A chunk of the block not queued is built too, into
+      // its bank not drawn, and flips with the rest: work, not a fault)
+      let best = 0;
+      let bd = Infinity;
+      job.queue.forEach((c, i) => {
+        const d = Math.hypot(c.x * 16 + 8 - ex, c.y * 16 + 8 - ey);
+        if (d < bd) {
+          bd = d;
+          best = i;
+        }
+      });
+      const B = this.fieldBudget;
+      const c0 = job.queue[best];
+      const r = this.clipChunks(L, { x0: Math.floor(c0.x / B) * B, y0: Math.floor(c0.y / B) * B, x1: Math.floor(c0.x / B) * B + B, y1: Math.floor(c0.y / B) * B + B });
+      if (!this.reserve(this.bakeBound((r.x1 - r.x0) * (r.y1 - r.y0)))) return;
+      job.queue = job.queue.filter((c) => c.x < r.x0 || c.y < r.y0 || c.x >= r.x1 || c.y >= r.y1);
+      this.fieldDefer = true;
+      const s = this.cpuSlot(0, r);
+      this.bake(L, [s], false, [r.y1 - r.y0], 0, true, { per: r.y1 - r.y0, n: 1 });
+      this.fieldDefer = false;
+      this.mergeFrees();
+      this.submit();
+      return;
+    }
+    if (!this.reserve(this.bakeBound(64))) return;
+    job.flip();
+    this.fieldJob = null;
+    this.fieldLog.push({ L, chunks: job.chunks, frames: job.frames, ms: performance.now() - job.t0 });
+    this.trace?.(this, `field flip ${L}`);
+  }
   fieldOn(L: number): boolean {
     return ((this.fieldMask >> L) & 1) === 1;
   }
@@ -790,7 +855,8 @@ export class GpuNest {
           const off = this.uni(({ a, r, c, e }) => {
             a[3] = L;
             r[0] = s;
-            e.set([mode, per | (last << 16), nrows > 1 ? b + 1 : 0, this.fieldMask | (fo.margin << 8)]);
+            // (e.w bit 16, B3: a deferred build, flipped by the job's fieldFlip)
+            e.set([mode, per | (last << 16), nrows > 1 ? b + 1 : 0, this.fieldMask | (fo.margin << 8) | (this.fieldDefer ? 1 << 16 : 0)]);
             c.set([fo.warp, fo.fade, fo.skirt, (fo.cellNormals ? 1 : 0) | fo.stop]);
           });
           this.runIndirect('fieldBake', off, s);
@@ -947,7 +1013,7 @@ export class GpuNest {
    *  checks `switching`), so the rows baked first are not stale at the flip. */
   private job: { on: boolean; rows: { m: number; y: number }[]; i: number; t0: number } | null = null;
   get switching(): boolean {
-    return this.job !== null;
+    return this.job !== null || this.fieldJob !== null;
   }
   /** (round 18) the switch's state in words, for the page ('' when the drawn draw is the wanted one) */
   smoothStatus = '';
@@ -1061,14 +1127,15 @@ export class GpuNest {
   }
   /** (measurement only, round 26) level L's whole window baked again, forced, a chunk row a submit (whichever draw the
    *  level has: sheets, boxes or the field mesh); false while the pool cannot hold it yet */
-  rebakeLevel(L: number, oneSubmit = false, side = 0): boolean {
+  rebakeLevel(L: number, oneSubmit = false, side = 0, at?: [number, number]): boolean {
     const w = this.wins[L];
     if (!w) return false;
-    if (!this.reserve(this.bakeBound((w.n / 16) ** 2))) return false;
+    // (the bound of what is baked: a block's own, so back-to-back reps are not refused by the window's)
+    if (!this.reserve(this.bakeBound(side > 0 ? side * side : (w.n / 16) ** 2))) return false;
     if (oneSubmit) {
       // (the whole window in one dispatch: the GPU's throughput rather than a row's latency; side > 0: only a side x side
-      // block of chunks at the window's centre, the cost of a frame's share)
-      const c = { x: (w.gx + w.n / 2) / 16, y: (w.gy + w.n / 2) / 16 };
+      // block of chunks at the window's centre or round global column `at`, the cost of a frame's share)
+      const c = at ? { x: Math.floor(at[0] / 16), y: Math.floor(at[1] / 16) } : { x: (w.gx + w.n / 2) / 16, y: (w.gy + w.n / 2) / 16 };
       const r = side > 0 ? { x0: c.x - Math.floor(side / 2), y0: c.y - Math.floor(side / 2), x1: c.x - Math.floor(side / 2) + side, y1: c.y - Math.floor(side / 2) + side } : { x0: w.gx / 16, y0: w.gy / 16, x1: (w.gx + w.n) / 16, y1: (w.gy + w.n) / 16 };
       const rows = r.y1 - r.y0;
       const s = this.cpuSlot(0, r);
@@ -1176,8 +1243,27 @@ export class GpuNest {
     // the child's faces, and in the same submit the parent's round the footprint (it stops drawing there, its walls
     // face the child): the parent's surface is never missing for a frame. (Round 14: with the smooth draw on, the child's
     // window a row of chunks a submit: the whole window in one dispatch ran past the driver's timeout and lost the device
-    // in a dug world. The op still runs in one frame, so no frame draws a part.) (Round 26: a field level likewise.)
-    if (this.smooth || this.fieldOn(L)) {
+    // in a dug world. The op still runs in one frame, so no frame draws a part.)
+    // (Round 26 B3) a field level: its chunks built a few a frame (stepField) into the bank not drawn; the level draws
+    // nothing and the parent keeps its footprint until the flip, which makes them all drawn and bakes the parent's
+    // footprint (its own chunks only: the child's ring was just built with the window) in the same submit
+    if (this.fieldOn(L)) {
+      const wr = { x0: w.gx / 16, y0: w.gy / 16, x1: (w.gx + w.n) / 16, y1: (w.gy + w.n) / 16 };
+      this.directory();
+      this.mergeFrees();
+      this.submit();
+      this.fieldQueue(L, [wr], () => {
+        this.run('fieldFlip', this.uni(({ a }) => (a[3] = L)), TCAP / 64);
+        this.mergeFrees();
+        this.bakeRects(L - 1, [fc], 1, false);
+        this.directory();
+        this.mergeFrees();
+        this.submit();
+      });
+      this.trace?.(this, `promote ${L} ${JSON.stringify(w)} (field: deferred)`);
+      return true;
+    }
+    if (this.smooth) {
       this.submit(false);
       for (let y = w.gy / 16; y < (w.gy + w.n) / 16; y++) {
         this.bakeRects(L, [{ x0: w.gx / 16, y0: y, x1: (w.gx + w.n) / 16, y1: y + 1 }], 0);
@@ -1278,7 +1364,7 @@ export class GpuNest {
     });
     const relOff = this.uni(({ a, e }) => ((a[3] = L), e.set([nc.x0, nc.y0, nc.x1, nc.y1])));
     this.run('release', relOff, TCAP / 64);
-    if (this.fieldOn(L)) this.run('fieldRelease', relOff, TCAP / 64);
+    // (round 26 B3: a field level's leaving meshes stay drawn until the job's flip lets them go)
     this.mergeFrees();
     this.wins[L] = { ...w };
     this.lastWin[L] = { ...w };
@@ -1291,6 +1377,26 @@ export class GpuNest {
       this.pack(L, s);
       return s;
     });
+    // (round 26 B3) a field level: the entering chunks and the one-chunk band beside them (their quads reach in) and the
+    // new edge ring built a few a frame into the bank not drawn; the old meshes (the leaving ones too) and the parent as
+    // it was stay drawn until the flip, which lets the leaving meshes go and bakes the parent round both footprints
+    if (this.fieldOn(L)) {
+      this.directory();
+      this.mergeFrees();
+      this.submit();
+      const grown = parts.map((p) => ({ x0: p.x0 - 1, y0: p.y0 - 1, x1: p.x1 + 1, y1: p.y1 + 1 }));
+      this.fieldQueue(L, [...grown, ...this.ring(w)], () => {
+        this.run('fieldFlip', this.uni(({ a }) => (a[3] = L)), TCAP / 64);
+        this.run('fieldRelease', this.uni(({ a, e }) => ((a[3] = L), e.set([nc.x0, nc.y0, nc.x1, nc.y1]))), TCAP / 64);
+        this.mergeFrees();
+        if (fp && fn) this.bakeRects(L - 1, [fp, fn], 4, false);
+        this.directory();
+        this.mergeFrees();
+        this.submit();
+      });
+      this.trace?.(this, `slide ${L} ${JSON.stringify(w)} (field: deferred)`);
+      return true;
+    }
     this.bakeChanged(L, slots, 'window');
     // (the CPU slots are taken by the entering parts: the edge ring and the parent's footprint in a second submit; the
     // pool's header is read after the second one only, so the read that settles this op sees all of it, round 9)

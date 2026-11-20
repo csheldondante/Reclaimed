@@ -191,6 +191,8 @@ export class App {
       if (q.has('fmargin')) fo.margin = Math.max(0, Math.min(15, Math.round(Number(q.get('fmargin')))));
       // (measurement: ?fnorm=cell, normals from the cell's corners instead of the field's gradient)
       fo.cellNormals = q.get('fnorm') === 'cell';
+      // (B3: chunk builds a frame while a field level opens or slides)
+      if (q.has('fbudget')) this.nest.fieldBudget = Math.max(1, Math.round(Number(q.get('fbudget'))));
       // (measurement: ?fstop=count|verts, the bake stops after that pass, nothing drawn)
       fo.stop = q.get('fstop') === 'count' ? 2 : q.get('fstop') === 'verts' ? 4 : 0;
       if (q.has('fskirt')) fo.skirt = Math.max(0, Number(q.get('fskirt')));
@@ -752,6 +754,11 @@ export class App {
     // (levels hold still during a stroke: its snapshot is of the levels open when it began)
     // (round 18: and not while the smooth switch bakes its rows: the levels hold still)
     if (!this.frozen && this.free && !this.strokeOn) this.levels();
+    // (round 26 B3) a field level opening or sliding: a few of its chunks built this frame, nearest the eye first
+    else if (!this.frozen && this.nest.fieldJob && this.nest.settled && !this.benchPause) {
+      const s = this.k ** this.nest.fieldJob.L;
+      this.nest.stepField(this.ex * s, this.ey * s);
+    }
     // give pool pages back (NS-67): when the pool holds a good margin more than a shrink would leave, a step a frame
     // (at most 4 a second) between ops, never in a frame that started another op or during a stroke
     if (this.shrinkOn && !this.frozen && this.free && !this.strokeOn && !this.sculptAt && t - this.shrinkAt > 250) {
@@ -1029,16 +1036,17 @@ export class App {
       },
       /** (round 26, measurement) level L's whole window baked again (forced, its own draw: sheets, boxes or the field
        *  mesh): GPU-done ms, the frames' work held back meanwhile */
-      benchBake: async (L: number, oneSubmit = false, side = 0) => {
+      benchBake: async (L: number, oneSubmit = false, side = 0, reps = 1, at?: [number, number]) => {
         this.benchPause = true;
         const fz = this.frozen;
         this.frozen = true;
         await new Promise((r) => requestAnimationFrame(r));
         await this.device.queue.onSubmittedWorkDone();
         const t = performance.now();
-        while (!this.nest.rebakeLevel(L, oneSubmit, side)) await new Promise((r) => setTimeout(r, 30));
+        // (reps: the same bake submitted back to back, the time divided: under the round trip's own floor)
+        for (let i = 0; i < reps; i++) while (!this.nest.rebakeLevel(L, oneSubmit, side, at)) await new Promise((r) => setTimeout(r, 30));
         await this.device.queue.onSubmittedWorkDone();
-        const ms = performance.now() - t;
+        const ms = (performance.now() - t) / reps;
         this.benchPause = false;
         this.frozen = fz;
         return ms;

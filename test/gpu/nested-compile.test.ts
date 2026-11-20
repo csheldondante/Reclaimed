@@ -65,7 +65,7 @@ it('nested: both modules compile; every pipeline within its compile budget', asy
   const fieldC = await mod('field', `const TCAP: u32 = ${TCAP}u;\n${segWgsl(4, 64, false)}\n${storeWgsl}\n${nestWgsl}\n${fieldWgsl}`);
   const fieldD = await mod('field draw', fieldDrawCode(4, 64));
   expect(errs, errs.join('\n')).toEqual([]);
-  for (const e of ['fieldBake', 'fieldRelease', 'fieldDirClear', 'fieldDirBuild', 'fieldDirFinish']) await timed(e, () => device.createComputePipelineAsync({ layout: 'auto', compute: { module: fieldC, entryPoint: e } }));
+  for (const e of ['fieldBake', 'fieldRelease', 'fieldDirClear', 'fieldDirBuild', 'fieldDirFinish', 'fieldFlip']) await timed(e, () => device.createComputePipelineAsync({ layout: 'auto', compute: { module: fieldC, entryPoint: e } }));
   await timed('drawField', () => device.createRenderPipelineAsync(fieldDesc('auto', fieldD, 'bgra8unorm', 'fsField')));
   await timed('drawFieldTex', () => device.createRenderPipelineAsync(fieldDesc('auto', fieldD, 'bgra8unorm', 'fsFieldT')));
   const total = Object.values(times).reduce((a, b) => a + b, 0);

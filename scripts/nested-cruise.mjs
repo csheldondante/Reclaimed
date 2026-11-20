@@ -20,8 +20,9 @@ await run({ name: 'nested-cruise', kind: 'timing', size: '960x640', dpr: 1, echo
   });
   page.on('pageerror', (e) => console.log(`[page exception] ${e.message}`));
   const smooth = R.opt('smooth', '0');
-  await page.goto(`https://localhost:${port}/nested.html?smooth=${smooth}`, { waitUntil: 'load' });
-  await page.waitForFunction(() => window.nested && nested.app.pipesReady && nested.app.genReady && nested.app.frameCount > 30, { timeout: 300000, polling: 200 });
+  // (round 26: --q "&field=2" extra dials; the field's pipelines waited for)
+  await page.goto(`https://localhost:${port}/nested.html?smooth=${smooth}${R.opt('q', '')}`, { waitUntil: 'load' });
+  await page.waitForFunction(() => window.nested && nested.app.pipesReady && nested.app.genReady && nested.app.fieldDone !== false && nested.app.frameCount > 30, { timeout: 300000, polling: 200 });
   console.log(`terrain ready: first frame ${await page.evaluate(() => nested.app.firstFrameAt.toFixed(0))} ms, every boot pipeline ${await page.evaluate(() => nested.app.pipesAt.toFixed(0))} ms, atlas built ${await page.evaluate(() => nested.app.genAt.toFixed(0))} ms, root from it ${await page.evaluate(() => nested.app.terrainAt.toFixed(0))} ms after the page opened`);
   const M = 128;
   const FOG = 8000;
@@ -45,7 +46,8 @@ await run({ name: 'nested-cruise', kind: 'timing', size: '960x640', dpr: 1, echo
           const g = c.z1[c.z1.length - 1];
           nested.setView({ eye: [e0.x, e0.y, g + H / M], yaw: Math.PI, pitch: 0.12 });
           // (the levels settle at the new height)
-          for (let i = 0; i < 120 && !(a.nest.settled && i > 40); i++) await fr(1);
+          // (round 26: and no field job still building)
+          for (let i = 0; i < 900 && !(a.nest.settled && !a.nest.switching && i > 40); i++) await fr(1);
           // the cruise at v m/s: the slider's unit is the finest live window's width a second
           a.cruiseWps = v / M / a.width(a.nest.live - 1);
           a.setCruise(true);
@@ -99,6 +101,8 @@ await run({ name: 'nested-cruise', kind: 'timing', size: '960x640', dpr: 1, echo
             rootSlideCpuMs: log.length ? Math.max(...log) : 0,
             live: `${minLive}-${maxLive}`,
             dNear: nested.eye().dNear * M,
+            // (round 26) the field jobs (level, chunks, frames, ms) finished so far
+            fieldJobs: JSON.stringify(a.nest.fieldLog.slice(-4).map((j) => [j.L, j.chunks, j.frames, Math.round(j.ms)])),
           };
         },
         [H, v, secs, M],
@@ -107,7 +111,7 @@ await run({ name: 'nested-cruise', kind: 'timing', size: '960x640', dpr: 1, echo
       const ahead = r.minFront > FOG;
       rows.push({ H, v, ...r, holds, ahead });
       console.log(
-        `H ${H} m, ${v} m/s: frame median ${r.median.toFixed(1)} ms, p95 ${r.p95.toFixed(1)}, worst ${r.worst.toFixed(1)} (${r.frames} frames); reached ${r.speed.toFixed(0)} m/s; root front ${(r.minFront / 1000).toFixed(1)} km ahead at least, sides ${(r.minSide / 1000).toFixed(1)} km; slides root ${r.rootSlides} (CPU ${r.rootSlideCpuMs.toFixed(1)} ms at most), level 1 ${r.l1Slides}, level 2 ${r.l2Slides}; promotes ${r.promotes}, demotes ${r.demotes}; refused ${r.refused}; levels ${r.live}; ${holds ? 'holds 16.7' : 'OVER 16.7'}, ${ahead ? 'kept ahead' : 'FELL BEHIND'}`,
+        `H ${H} m, ${v} m/s: frame median ${r.median.toFixed(1)} ms, p95 ${r.p95.toFixed(1)}, worst ${r.worst.toFixed(1)} (${r.frames} frames); reached ${r.speed.toFixed(0)} m/s; root front ${(r.minFront / 1000).toFixed(1)} km ahead at least, sides ${(r.minSide / 1000).toFixed(1)} km; slides root ${r.rootSlides} (CPU ${r.rootSlideCpuMs.toFixed(1)} ms at most), level 1 ${r.l1Slides}, level 2 ${r.l2Slides}; promotes ${r.promotes}, demotes ${r.demotes}; refused ${r.refused}; levels ${r.live}; field jobs ${r.fieldJobs}; ${holds ? 'holds 16.7' : 'OVER 16.7'}, ${ahead ? 'kept ahead' : 'FELL BEHIND'}`,
       );
       await sleep(500);
     }
