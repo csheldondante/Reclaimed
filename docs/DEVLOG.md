@@ -27924,3 +27924,9 @@ each column's runs read once into workgroup memory.
 1,179 the second; fieldRelease 78-91; fieldDirClear / Build / Finish 76-170; the field draws 99-199 (flat), 291-352
 (textured). Budgets at about 1.5 x the first run (fieldBake 3,400, textured draw 550, the rest the 400 floor). In Chrome
 the field's pipelines take 4.4-4.6 s after the boot pipelines; levels wait for them.
+
+**Gates with `?field` off.** typecheck; nested unit tests 77 of 77; compile gate passed (total 21.2 s of 40); full
+self-test 47 of 47; boot gate: two runs failed one line by a hair (every boot pipeline at the 512 MB reload 19,394 /
+19,545 ms against 19,000), the base commit 140b8553 checked out in the same tree right after gave 18,110, and a third run
+of this commit passed every line (18,065; cold 1,205 / 2,089 / 2,335; 256 MB 8,932 / 16,753 / 12,860). With `?field` off
+the nest and draw modules are byte-identical to the base and no field module, buffer or pipeline is made.
