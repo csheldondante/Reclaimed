@@ -17,8 +17,10 @@ import cliffRuleWgsl from '../../src/nested/gpu/cliffrule.wgsl?raw';
 import { COARSE_U, KIND_SPLIT, defaultParams, deriveCell, isUp, type Field } from '../../src/nested/exp/cliffrule';
 import { makeField } from '../support/nested-cliffield';
 import { cliffRuleCode, drawModuleCode } from '../../src/nested/render';
+import { CLIFF_AMP_B2, cliffBoxCode, cliffBuildCode } from '../../src/nested/cliffbox';
 
 const HARNESS = `
+const CR_AMPL = array<i32, 7>(${defaultParams().ampL.join(', ')});
 @group(0) @binding(0) var<storage, read> hz: array<f32>;
 @group(0) @binding(1) var<uniform> U: array<vec4<i32>, 2>;
 @group(0) @binding(2) var<storage, read> splits: array<vec2<i32>>;
@@ -169,6 +171,19 @@ it('B1: the WGSL cliff rule equals the TS on the synthetic field (negative origi
   expect(r.cellMis).toBe(0);
   expect(r.colMis).toBe(0);
 }, 120_000);
+
+it('B2: the table build and the ?cliff=5 draw modules compile', async () => {
+  const g = await testGpu();
+  for (const [name, code] of [
+    ['build', cliffBuildCode(4, 64, 1, 1024, CLIFF_AMP_B2)],
+    ['draw', cliffBoxCode(4, 64, 1, 1024, CLIFF_AMP_B2)],
+  ]) {
+    const m = g.device.createShaderModule({ code });
+    const info = await m.getCompilationInfo();
+    const errs = info.messages.filter((x) => x.type === 'error').map((x) => `${name} ${x.lineNum}:${x.linePos} ${x.message}`);
+    expect(errs, errs.join('\n')).toEqual([]);
+  }
+}, 60_000);
 
 const REAL = 'local/nested/rB1-heights.json';
 it.skipIf(!fs.existsSync(REAL))('B1: the WGSL cliff rule equals the TS on the real 16 m window (rB1-heights.json)', async () => {

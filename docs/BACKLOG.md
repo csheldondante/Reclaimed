@@ -986,6 +986,17 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   its own band (a staircase of ledges), not one cliff edge. Owner's call whether that is wanted.
 - NS-287 (test, round 32 B1) ?cliff=4's variant pipeline took 1,650 ms in the page and the load's worst frame was 6.7 s;
   not separated from the other first-frame work. fsST4 compiles in ~600 ms on Dawn (default sheets ~330).
+- NS-285 (DONE round 32 B2: the per-cell table, built when the window changes; ?cliff=5 reads one record a cell)
+- NS-288 (hack, round 32 B2) ?cliff=5's depth is the box face's, not the hit's; between disjoint boxes the order is right,
+  against sheets and other draws at grazing angles it may not be.
+- NS-289 (hack, round 32 B2) The side walls' heights are estimates of the real sheets' edges (a sheet neighbour: the
+  higher corner mean + 1 m; a SPLIT neighbour: its floor L), and the box's bottom Lb is the lowest height within 2 cells:
+  closure at 0 / 0 / 3 hole pixels in the stills, not by construction; the 1 m margin can show as a step above a lower
+  sheet's edge.
+- NS-290 (limit, round 32 B2) The table is rebuilt only when the store settles: during an edit or a slide the draw uses
+  the last table and its window. A column with no solid record turns its cell into a sheet.
+- NS-291 (hack, round 32 B2) The ?cliff=5 draw module defines a stub crH (returns 0) only because cliffrule.wgsl's
+  crKindOf needs a height source to compile; the draw never derives a cell.
 - NS-253 (test, round 31) Compile times swing 1.5-2.5x between runs on this machine (drawFieldTex 295-820 ms with no
   change); version 3's textured variants (drawBoxesTexV3 / drawSheetsTexV3) got a 600 ms budget from 341-457 / 401-535 ms.
 - NS-254 (hack, round 31) The pixel's size per unit of distance (draw uniform cl.x) is written by the app each frame

@@ -28570,3 +28570,26 @@ moved to test/support/nested-cliffield.ts, scripts/nested-rB1-stills.mjs (stills
 - Real terrain: 4 % of cells split; whole steep faces split cell after cell, each 16 m row its own band (stills
   local/nested/rB1-side2-*, rB1-above-*). The side16 pair was shot with only the root open (the script now waits for the
   16 m level).
+
+## 2026-11-20 — Nested scales lab, round 32 (step B2, part 1): the cliff rule drawn on real terrain (?cliff=5)
+
+**Why.** B1 showed the shader can evaluate the rule exactly but paid 5-15 column reads a pixel, and painted a map, not
+geometry. B2 draws the look: SPLIT cells as columns, marched inside a proxy box per cell (start every ray on a surface
+that encloses everything it can hit), from a per-cell table built when the window changes.
+
+**What.** gpu/cliffbuild.wgsl (the table and the box list, one compute pass on a window change or a settle),
+gpu/cliff5.wgsl (sheets with SPLIT cells discarded; the boxes and the march), cliffbox.ts (buffers, pipelines, the
+rebuild trigger), cliffrule.wgsl gains the bound (crNodeUp) and isUpLod, amplitudes from the includer (amp8half default
+here), scripts/nested-rB2-stills.mjs (four poses, closure, steps, kinds, bench). No notches.
+
+**Measured.**
+- Closure (holes below the horizon): side16 / side2 / above 1,158 / 6,662 / 5,577 in the first stills (gaps where a
+  neighbour's floor or a sheet's edge lay outside the box's span) -> 0 / 0 / 3 with the box's bottom at the lowest height
+  within 2 cells, side walls up to a neighbour's edge (sheet) or floor (SPLIT), and the box top raised to the walls.
+- The foot view's moire: the eye was rebuilt per pixel from an interpolated point plus toEye; passing it flat removed it.
+  The finest level is chosen from the distance reached along the ray at every step (it was chosen at the box face).
+- March nodes a pixel, descents included: mean 4.4-8.6, max 17-32, none at the cap of 96. The bound decides most nodes at
+  8-16 m (a cell is all up or all down away from its boundary band) and the 2 px floor stops the descent at a distance;
+  step A's CPU estimate (~20) marched every pixel to 0.25 m in close views.
+- Storage buffers: fragment 5 -> 6, vertex 8 -> 10 (S = 4); the table 3 MB, the box list 256 KB.
+- The variant's pipelines (build, sheets, boxes) ~1.6-2.0 s in the page, in parallel with the textured ones.

@@ -168,6 +168,11 @@ export class App {
     // (round 32 step B1) ?cliff=4: the cliff rule (gpu/cliffrule.wgsl) painted on the textured sheets, a module variant
     // compiled only then (render.ts cliffRuleCode); the other cliff looks stay off
     this.render.cliffRuleBuilt = this.render.cliffRuleOn = cv === '4';
+    // (round 32 step B2) ?cliff=5: the rule drawn: SPLIT cells as boxes marched inside (cliffbox.ts); ?cliffAmp= the
+    // per-level amplitudes (7 integers /256, default 0,128,256,256,24,16,8); ?cliffPx= the finest cells, pixels (default 2)
+    this.render.cliffBoxBuilt = this.render.cliffBoxOn = cv === '5';
+    if (cv === '5') this.render.cliffPx = 2;
+    if (q.has('cliffAmp')) this.render.cliffAmp = q.get('cliffAmp')!.split(',').map(Number);
     if (q.has('cliffPx')) this.render.cliffPx = Number(q.get('cliffPx'));
     // (version 3, step 4b) ?cliffDropF= the drop's growth per level; ?cliffHN= the children's hashed split (0..1)
     if (q.has('cliffDropF')) this.render.cliffDropF = Number(q.get('cliffDropF'));

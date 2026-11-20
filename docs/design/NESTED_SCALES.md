@@ -1938,6 +1938,35 @@ bind groups, at an acceptable cost (no march yet)? Yes.
   midpoints each 16 m row becomes its own band (a staircase), each with its own ragged up / down edge in 2 m blocks, not
   one cliff edge (stills local/nested/rB1-side2-cliff0|4.png, rB1-above-cliff0|4.png). The side16 pair was shot before
   the 16 m level opened (the script now waits for it). Open items NS-283..NS-287.
+
+**As built (round 32, step B2, part 1): the rule drawn on real terrain, `?cliff=5` (columns, no notches).**
+- *Table* (src/nested/gpu/cliffbuild.wgsl, src/nested/cliffbox.ts): one compute pass over the 16 m window when the
+  window changes or the store settles after an op (never per frame); 12 words a cell (256 x 256 cells: 3 MB): kind, saddle,
+  a, b, top material; H; L; theta; dTheta (0); h; Lb (the box's bottom: the lowest height in the 13-cell diamond); the
+  mask's bound; per side E / W / N / S the wall height (a sheet neighbour: the higher of that side's two corners, each the
+  mean of the 4 cells round it, + 1 m; a SPLIT neighbour: its floor L). SPLIT cells append to a box list; the instance
+  count is an atomic in the indirect draw arguments (box list 256 KB, args 16 B). One read a cell replaces B1's 5-15
+  column reads a pixel.
+- *Bindings*: a second bind group for the variant's draws (group 1: the table to the vertex and fragment stages, the box
+  list to the vertex stage). Fragment-stage storage buffers 5 -> 6; vertex stage 4 + S -> 6 + S. The build has its own
+  layout (8 storage buffers: table, pages, its three outputs).
+- *Draw* (src/nested/gpu/cliff5.wgsl): the textured sheets (vsSheet5 / fsST5) discard every pixel over a SPLIT cell; one
+  box an instance per SPLIT cell (vsBox5), footprint the cell, from Lb to the box top (H, or higher where a side's wall is
+  higher), drawn after the sheets with the 16 m level's uniforms; the eye is passed flat (an interpolated point plus
+  toEye wobbled per pixel: that was the foot view's moire). fsBox5 marches the cell's quadtree from the front face (or
+  from the eye inside the box): crNodeUp (cellBound's split branch: could any / must every descendant be up) decides a
+  node; a mixed node descends until its cells are under ?cliffPx= pixels (default 2) at the distance reached along the
+  ray, chosen again every step; there isUpLod decides. Hits: a column's side (stone, the crossed face's normal, soft fill,
+  darker the further in from where the ray entered the box), a column's top at H (ground material), the floor at L, a
+  side wall when leaving the cell below that side's wall height, the ground's own wall when entering a side face below
+  L. Leaving the box otherwise: discard. Cap 96 nodes (never reached in the stills). Depth: the box face's (logged).
+  Amplitudes: amp8half by default (0,128,256,256,24,16,8; `?cliffAmp=`).
+- *Closure* (holes below the horizon, the lab's check): first stills side16 1,158 / side2 6,662 / above 5,577; with Lb,
+  the side walls and the box top raised: 0 / 0 / 3; the foot view clean by eye (its gaps were above the horizon cut).
+- *March steps* (nodes looked at, descents included; ?cliffDbg=12, the info target read back): side16 mean 6.6 / max 17,
+  side2 8.6 / 32, above 5.6 / 27, foot 4.4 / 21; none at the cap. The first count (2-3) counted only node exits.
+- Stills local/nested/rB2h-<pose>-cliff0|5.png, -steps.png, -kinds.png (side16, side2, above, foot). Open items
+  NS-288..NS-291.
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

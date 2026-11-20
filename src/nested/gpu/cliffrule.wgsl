@@ -8,7 +8,8 @@
 //
 // The includer defines `fn crH(x: i32, y: i32) -> i32`: the coarse (16 m) cell's height in 1/64 m units, with the TS
 // hAt's edge rule (a coordinate outside the field / window clamped to it, per axis). Parameters are defaultParams()'s,
-// as constants (T 2, fineLevel 6, ampL 0/256/256/256/24/16/8, zeroSum, maskFrom 4, wLevel 3, maskP 4, seed 1).
+// as constants (T 2, fineLevel 6, zeroSum, maskFrom 4, wLevel 3, maskP 4, seed 1); ampL is the includer's CR_AMPL
+// (array<i32, 7>). Step B2 adds the bound (maskMaxOf, remAmp, cellBound's split branch) and isUpLod.
 
 const CR_U: i32 = 1024; // COARSE_U: a coarse cell's width in units (16 m x 64)
 const CR_T: i32 = 2;
@@ -26,7 +27,7 @@ const CR_BOTTOM: u32 = 2u;
 const CR_SPLIT: u32 = 3u;
 const CR_NBX = array<i32, 4>(1, -1, 0, 0);
 const CR_NBY = array<i32, 4>(0, 0, 1, -1);
-const CR_AMPL = array<i32, 7>(0, 256, 256, 256, 24, 16, 8);
+// (CR_AMPL, the per-level amplitudes ampL /256, comes from the includer: step B2 makes the 8 m one a URL choice)
 const CR_SALT_LEVEL: i32 = 0x100;
 const CR_SALT_MASK: i32 = 0x200;
 const CR_SALT_TIE: i32 = 0x600;
@@ -206,3 +207,43 @@ fn crMarginOf(r: CrCell, cx: i32, cy: i32, ix: i32, iy: i32) -> i32 {
   return s * CR_TIE + crTieOf((cx << CR_LF) + ix, (cy << CR_LF) + iy) - crThetaUsed(r);
 }
 fn crIsUp(r: CrCell, cx: i32, cy: i32, ix: i32, iy: i32) -> bool { return crMarginOf(r, cx, cy, ix, iy) >= 0; }
+
+// ---- (step B2) the bound and the LOD representative ----
+/** words a cell in the per-cell table (cliffbuild.wgsl) */
+const CR_REC: u32 = 12u;
+/** an upper bound of the mask over a coarse cell, /256 */
+fn crMaskMaxOf(cx: i32, cy: i32) -> i32 {
+  let ix = crFdiv(cx, CR_MASKP);
+  let iy = crFdiv(cy, CR_MASKP);
+  let s = crSalt(CR_SALT_MASK);
+  let m = max(max(crHash3(ix, iy, s) & 255u, crHash3(ix + 1, iy, s) & 255u), max(crHash3(ix, iy + 1, s) & 255u, crHash3(ix + 1, iy + 1, s) & 255u));
+  return crMaskRemap(i32(m));
+}
+/** the largest total amplitude of levels l+1..fineLevel (the mask at its bound mm) */
+fn crRemAmp(A: i32, l: u32, mm: i32) -> i32 {
+  var s = 0;
+  for (var k = l + 1u; k <= CR_LF; k++) { s += crAmpOf(A, k, mm); }
+  return s;
+}
+/** cellBound's split branch from its parts: whether any / every descendant of level-l cell (jx, jy) can be up, given its
+ *  ancestors' and its own offset sum `known` and ra = crRemAmp(A, l, maskMax). x: any up, y: all up */
+fn crNodeUp(r: CrCell, l: u32, jx: i32, jy: i32, known: i32, ra: i32) -> vec2<bool> {
+  let s = CR_N >> l;
+  let p0 = crWCentre((jx * s) >> CR_WSH);
+  let p1 = crWCentre((jx * s + s - 1) >> CR_WSH);
+  let q0 = crWCentre((jy * s) >> CR_WSH);
+  let q1 = crWCentre((jy * s + s - 1) >> CR_WSH);
+  let wmax = select(r.a * p0, r.a * p1, r.a > 0) + select(r.b * q0, r.b * q1, r.b > 0);
+  let wmin = select(r.a * p1, r.a * p0, r.a > 0) + select(r.b * q1, r.b * q0, r.b > 0);
+  let th = crThetaUsed(r);
+  return vec2<bool>((wmax + known + ra) * CR_TIE + CR_TIE - 1 >= th, (wmin + known - ra) * CR_TIE >= th);
+}
+/** isUpLod: level-l cell (jx, jy) up when its centre would be, the finer levels' offsets taken as zero */
+fn crIsUpLod(r: CrCell, cx: i32, cy: i32, l: u32, jx: i32, jy: i32, known: i32) -> bool {
+  let s = CR_N >> l;
+  let inBlock = l >= CR_LF - CR_WSH;
+  let pc = select(2 * jx * s + s - CR_N, crWCentre((jx * s) >> CR_WSH), inBlock);
+  let qc = select(2 * jy * s + s - CR_N, crWCentre((jy * s) >> CR_WSH), inBlock);
+  let tie = select(CR_TIE >> 1u, crTieOf((cx << CR_LF) + jx, (cy << CR_LF) + jy), s == 1);
+  return (r.a * pc + r.b * qc + known) * CR_TIE + tie >= crThetaUsed(r);
+}
