@@ -159,13 +159,18 @@ export class App {
     this.render.slide = q.get('slide') === '1';
     // (round 31, look experiment) ?cliff=1 steep ground as faceted blocks; ?cliffT= its slope threshold (rise over run)
     // (version 2) ?cliff=2 the ray-marched standing columns; ?cliffN= its cells at most (default 4)
-    this.render.cliff = q.get('cliff') === '1' || q.get('cliff') === '2';
-    this.render.cliffV = q.get('cliff') === '2' ? 2 : 1;
+    // (version 3) ?cliff=3 nested columns; ?cliffPx= the finest level's cell in pixels (default 3)
+    const cv = q.get('cliff');
+    this.render.cliff = cv === '1' || cv === '2' || cv === '3';
+    this.render.cliffV = cv === '3' ? 3 : cv === '2' ? 2 : 1;
     if (q.has('cliffN')) this.render.cliffN = Number(q.get('cliffN'));
     if (q.has('cliffT')) this.render.cliffT = Number(q.get('cliffT'));
-    // ?cliffW= a block's width in metres (default: one column of the drawn level); ?cliffcut=1 the skyline cut compiled
-    // into the textured pipelines (set before they are made, after the first frame) and on
+    if (q.has('cliffPx')) this.render.cliffPx = Number(q.get('cliffPx'));
+    // ?cliffW= a block's width in metres (default: one column of the drawn level; 4 m for version 2, 16 m for 3);
+    // ?cliffcut=1 the skyline cut compiled into the textured pipelines (set before they are made) and on;
+    // ?cliffdbg=1 the march's misses red
     if (q.has('cliffW')) this.render.cliffW = Number(q.get('cliffW'));
+    this.render.cliffDbg = q.get('cliffdbg') === '1';
     this.render.cliffCutBuilt = this.render.cliffCut = q.get('cliffcut') === '1';
     this.nest.rimTop = q.get('rimtop') === '1';
     // (round 23) ?rimsnap=1 the owner's snap (default off until the owner has seen the stills)

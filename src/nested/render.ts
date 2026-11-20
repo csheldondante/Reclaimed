@@ -182,9 +182,13 @@ export class Renderer {
   cliffCutBuilt = false;
   cliffCut = false;
   /** (round 31) which look: 1 the shaded blocks (shCliff), 2 the ray-marched columns (shCol, ?cliff=2) */
-  cliffV: 1 | 2 = 1;
+  cliffV: 1 | 2 | 3 = 1;
+  /** (version 3) ?cliffPx= the finest nested level's cells, pixels (default 3, 1-15) */
+  cliffPx = 3;
   /** (version 2) ?cliffN= the march's cells at most (default 4, 1-15) */
   cliffN = 4;
+  /** (version 2, diagnostics) ?cliffdbg=1: the march's misses drawn red */
+  cliffDbg = false;
   /** the fragment constants of the textured pipelines */
   private texConsts(): Record<string, number> {
     return this.cliffCutBuilt ? { CLIFF_CUT: 1 } : {};
@@ -533,15 +537,17 @@ export class Renderer {
       // (misc2.y, round 22: the sheets' slide, ?slide= / "Round edges")
       // (misc2.z, round 31: ?cliff: bits 0-15 the slope threshold x 1000, 0 off; 16-23 the width code (0: a column of
       // the level; else 128 + log2 of the width in shading units); 24-27 version 2's steps; 30 version 2; 31 the cut:
-      // draw.wgsl texOut)
+      // draw.wgsl texOut) (round 31 version 3: bits 0-11 the threshold x 100, 12-15 the pixel threshold, 28 version 3)
       let cliffBits = 0;
       if (this.cliff) {
         const shadeUnitM = this.mpu / 2 ** this.shadeS;
-        // (version 2: fixed world cells, 4 m by default)
-        const wm = this.cliffV === 2 && this.cliffW <= 0 ? 4 : this.cliffW;
+        // (versions 2 and 3: fixed world cells, 4 m and 16 m by default)
+        const wm = this.cliffW > 0 ? this.cliffW : this.cliffV === 2 ? 4 : this.cliffV === 3 ? 16 : 0;
         const wc = wm > 0 ? 128 + Math.round(Math.log2(wm / shadeUnitM)) : 0;
-        const v2 = this.cliffV === 2 ? (0x40000000 | (Math.min(15, Math.max(1, this.cliffN)) << 24)) : 0;
-        cliffBits = (Math.min(65535, Math.max(1, Math.round(this.cliffT * 1000))) | (wc << 16) | v2 | (this.cliffCut ? 0x80000000 : 0)) >>> 0;
+        // (bit 29: ?cliffdbg=1, the march's misses red; bit 28 version 3, bits 12-15 its pixel threshold)
+        const v2 = this.cliffV >= 2 ? (0x40000000 | (Math.min(15, Math.max(1, this.cliffN)) << 24) | (this.cliffDbg ? 0x20000000 : 0)) : 0;
+        const v3 = this.cliffV === 3 ? (0x10000000 | (Math.min(15, Math.max(1, Math.round(this.cliffPx))) << 12)) : 0;
+        cliffBits = (Math.min(4095, Math.max(1, Math.round(this.cliffT * 100))) | (wc << 16) | v2 | v3 | (this.cliffCut ? 0x80000000 : 0)) >>> 0;
       }
       new Uint32Array(st, lv.depth * DU + 64, 4).set([this.nest.cap, this.slide ? 1 : 0, cliffBits, pages[lv.depth] ?? 0]);
       new Float32Array(st, lv.depth * DU + 80, 16).set(IDENTITY);

@@ -678,27 +678,39 @@ fn texOut(q: vec3<f32>, zo: f32, ng: vec3<f32>, mat: u32, pxL: f32, toEye: vec3<
   si.nb = d.want.z;
   // (want.y, round 21: the forest canopy's crossover footprint, world units a pixel; 0 off: ?canopy, ?canopyfade)
   si.canopy = d.want.y;
-  // (misc2.z, round 31: ?cliff: bits 0-15 the slope threshold x 1000 (0 off), 16-23 the block width code (0: a column
-  // of this level; else 128 + log2 of the width in shading units), bit 31 ?cliffcut's cut on (render.ts uniforms))
+  // (misc2.z, round 31: ?cliff: bits 0-11 the slope threshold x 100 (0 off), 12-15 version 3's pixel threshold, 16-23
+  // the block width code (0: a column of this level; else 128 + log2 of the width in shading units), 24-27 versions 2-3's
+  // cells, 28 version 3, 29 misses red, 30 version 2 or 3, 31 ?cliffcut's cut on (render.ts uniforms))
   let cz = d.misc2.z;
-  si.cliff = f32(cz & 0xffffu) / 1000.0;
+  si.cliff = f32(cz & 0xfffu) / 100.0;
   let wc = i32((cz >> 16u) & 0xffu);
   si.cliffE = select(0, wc - 128 + s, wc != 0);
+  var colMiss = false;
   if (((cz >> 30u) & 1u) != 0u) {
-    // (version 2, ?cliff=2, bit 30: the marched columns, cells of 2^(wc - 128) shading units, bits 24-27 the steps)
+    // (version 2, ?cliff=2, bit 30: the marched columns, cells of 2^(wc - 128) shading units, bits 24-27 the steps;
+    // version 3, bit 28: the nested columns, level 0 cells of that width, cells under (bits 12-15) pixels not drawn)
     if (si.cliff > 0.0) {
-      let col = shCol(si, wc - 128, i32((cz >> 24u) & 15u));
-      if (CLIFF_CUT && col.miss && (cz >> 31u) != 0u) { discard; }
-      si.colW = col.w;
-      si.colN = col.n;
-      si.colTint = col.tint;
-      si.colAo = col.ao;
+      let nst = i32((cz >> 24u) & 15u);
+      var hc: ShCol;
+      if (((cz >> 28u) & 1u) != 0u) {
+        hc = shCol3(si, wc - 128, nst, f32((cz >> 12u) & 15u));
+      } else {
+        hc = shCol(si, wc - 128, nst);
+      }
+      if (CLIFF_CUT && hc.miss && (cz >> 31u) != 0u) { discard; }
+      colMiss = hc.miss;
+      si.colW = hc.w;
+      si.colN = hc.n;
+      si.colTint = hc.tint;
+      si.colAo = hc.ao;
     }
     si.cliff = 0.0;
   } else if (CLIFF_CUT && si.cliff > 0.0 && (cz >> 31u) != 0u) {
     if (cliffCutAt(si, q, ng)) { discard; }
   }
   var col = texShade(si);
+  // (round 31 diagnostics, ?cliffdbg=1, bit 29: version 2's misses red)
+  if (colMiss && ((cz >> 29u) & 1u) != 0u) { col = vec3<f32>(1.0, 0.0, 0.0); }
   if (d.misc.z > 0.5) { col = mix(col, TINTS[u32(d.lvl.w) % 6u] * dot(col, vec3<f32>(0.3, 0.5, 0.2)) * 1.3, 0.55); }
   var o: FOut;
   o.color = vec4<f32>(col, 1.0);

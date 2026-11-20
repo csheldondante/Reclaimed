@@ -186,6 +186,77 @@ await run({ name: 'r31-stills', kind: 'behaviour', size: '960x640', dpr: 1, echo
   await page.evaluate((v) => nested.setView(v), side(D2, D2 * 0.2));
   await settle();
   await pair('side2');
+  // (--variants "name:prop=v;prop=v,...": per view (side16, side2) one still each with those render fields set at run time)
+  const variants = R.opt('variants', '');
+  if (variants) {
+    for (const [view, D] of [['side16', D16], ['side2', D2]]) {
+      await page.evaluate((v) => nested.setView(v), side(D, D * 0.2));
+      await settle();
+      await page.evaluate(() => (nested.app.frozen = true));
+      for (const vs of variants.split(',')) {
+        const [name, sets] = vs.split(':');
+        await page.evaluate((sets) => {
+          const r = nested.app.render;
+          Object.assign(r, { cliff: true, cliffW: 0, cliffDbg: false, cliffN: 4, cliffPx: 3 });
+          for (const kv of sets.split(';')) {
+            const [k, v] = kv.split('=');
+            r[k] = v === 'true' ? true : v === 'false' ? false : Number(v);
+          }
+        }, sets);
+        await sleep(500);
+        const file = `local/nested/${tag}-${view}-${name}.png`;
+        await page.screenshot({ path: file });
+        console.log(`${view} ${name}: ${file}`);
+      }
+      await page.evaluate(() => (nested.app.frozen = false));
+    }
+  }
+  // (--approach "D1,D2,..": cliff on as loaded, a still at each distance along the side line, settled)
+  const approach = R.opt('approach', '');
+  if (approach) {
+    for (const D of approach.split(',').map(Number)) {
+      await page.evaluate(() => Object.assign(nested.app.render, { cliff: true, cliffDbg: false, cliffW: 0, cliffPx: 3 }));
+      await page.evaluate((v) => nested.setView(v), side(D, D * 0.2));
+      await settle();
+      const file = `local/nested/${tag}-approach-${D}.png`;
+      await page.screenshot({ path: file });
+      console.log(`approach ${D}: ${file}; ${JSON.stringify(await info())}`);
+    }
+  }
+  // (--vbench "name:prop=v;..|name:..": frame time per state at side16 and side2, alternating, 3 s each, 3 rounds)
+  const vb = R.opt('vbench', '');
+  if (vb) {
+    const states = vb.split('|').map((s) => s.split(':'));
+    for (const [view, D] of [['side16', D16], ['side2', D2]]) {
+      await page.evaluate((v) => nested.setView(v), side(D, D * 0.2));
+      await settle();
+      await page.evaluate(() => (nested.app.frozen = true));
+      const res = {};
+      for (let rep = 0; rep < 3; rep++)
+        for (const [name, sets] of states) {
+          const m = await page.evaluate(async (sets) => {
+            const a = nested.app;
+            for (const kv of sets.split(';')) {
+              const [k, v] = kv.split('=');
+              a.render[k] = v === 'true' ? true : v === 'false' ? false : Number(v);
+            }
+            await new Promise((res) => setTimeout(res, 600));
+            a.render.gpuSamples.clear();
+            const c0 = a.frameCount;
+            await new Promise((res) => setTimeout(res, 3000));
+            const f = a.frames.slice(-(a.frameCount - c0));
+            let g = 0;
+            for (const s of a.render.gpuSamples.values()) g += s.ms.reduce((x, y) => x + y, 0) / Math.max(1, s.ms.length);
+            return { f: f.reduce((x, y) => x + y, 0) / Math.max(1, f.length), g };
+          }, sets);
+          (res[name] ??= []).push(`${m.f.toFixed(2)}/${m.g.toFixed(2)}`);
+        }
+      await page.evaluate(() => (nested.app.frozen = false));
+      for (const [name, v] of Object.entries(res)) console.log(`${view} ${name}: frame ms / GPU passes ms: ${v.join('  ')}`);
+    }
+  }
+  // (--quick 1: the two pairs only)
+  if (R.opt('quick', '0') === '1') return;
   await bench('side2');
   // the level-load pair (cliff on): from side16, jump to the side2 view and shoot at once, then once it has settled
   await page.evaluate((v) => nested.setView(v), side(D16, D16 * 0.2));
