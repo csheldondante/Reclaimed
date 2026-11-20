@@ -28657,3 +28657,18 @@ the CPU field's optional dome and rA6 pictures. Findings in NESTED_SCALES "As bu
 foot); box pass 4.0 / 4.2 / 4.2 / 3.2 ms. Brush: holes up to 199 pixels round the balls at T 2; none split at T 4 on
 gentle ground.
 
+## 2026-11-20 — Nested scales lab, round 32 (step B5): the teeth round a sphere add's foot (diagnosis, no fix)
+
+**Why.** The owner on rB3b-gentle-add80-side-T4: "the sphere looks fine. The skirt is just bad because of the texture
+sawtooth".
+
+**What.** scripts/nested-rB5-skirt.mjs (commit 0545c053): one 80 m add on rB3's gentle site (no ?cliff), side and close
+views drawn textured, ?tex=0, ?tex=2, the textured diagnostic 3 (Lambert of the shading normal, no material) and the
+level tint; with ?field=1,2,3 the field mesh and its dbg 1 / 2. A transect of the stored columns is printed.
+
+**Found** (stills local/nested/rB5-*, rB5f-*). The geometry is a smooth vertical wall (diagnostic 3: no teeth). The
+2 m columns step from sand (35) at -0.3 m to the add's material (2) at 5.2 then 18.2 m. The material is one a column
+(sheet bake) and flat a triangle, so the ground columns' triangles that span the wall show sand up it: teeth at the 2 m
+column staircase in plan (dense where the rim is diagonal to the grid, long lobes along an axis). ?tex=2 and the field
+mesh keep them (plan-only lookups). Proposed fix and its cost: BACKLOG NS-304.
+
