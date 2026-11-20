@@ -28646,3 +28646,14 @@ counter; GPU time). NESTED_SCALES "As built (round 32, step B3)".
   interleaved comparisons are used.
 - Dropped, kept on exp/nested-b3-low: the solid part below L drawn first (no gain once ordered; pixels change).
 
+## 2026-11-20 — Nested scales lab, round 32 (step B3, the owner's look experiments): brush balls, T 0, a CPU dome
+
+**Why.** The owner asked to see a spherical carve and add under ?cliff=5, and the look "applied everywhere" (T 0).
+
+**What.** scripts/nested-rB3-brush.mjs (four balls a site, side and above views, cliff=0 / T 2 / T 4); ?cliffT=0 allowed;
+the CPU field's optional dome and rA6 pictures. Findings in NESTED_SCALES "As built (round 32, step B3)" and NS-301..303.
+
+**Measured.** T 0: 83 % of cells SPLIT (T 1: 10-15 %, T 2: 4-7 %); holes 146 / 0 / 114 / 0 (side16 / side2 / above /
+foot); box pass 4.0 / 4.2 / 4.2 / 3.2 ms. Brush: holes up to 199 pixels round the balls at T 2; none split at T 4 on
+gentle ground.
+

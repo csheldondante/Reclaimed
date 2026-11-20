@@ -175,8 +175,9 @@ export class App {
     if (q.has('cliffAmp')) this.render.cliffAmp = q.get('cliffAmp')!.split(',').map(Number);
     // ?cliffStrata=0: no strata on the column faces (default on)
     this.render.cliffStrata = q.get('cliffStrata') !== '0';
-    // ?cliffT= with ?cliff=5: the steep threshold, cell widths (an integer >= 1; default 2)
-    if (cv === '5' && q.has('cliffT')) this.render.cliffBoxT = Math.max(1, Math.round(Number(q.get('cliffT'))));
+    // ?cliffT= with ?cliff=5: the steep threshold, cell widths (an integer >= 0; default 2. B3: 0 allowed, every cell that
+    // is not a local top or bottom and not flat with its 4 neighbours splits: the owner's "boxels everywhere" experiment)
+    if (cv === '5' && q.has('cliffT')) this.render.cliffBoxT = Math.max(0, Math.round(Number(q.get('cliffT'))));
     if (q.has('cliffPx')) this.render.cliffPx = Number(q.get('cliffPx'));
     // (version 3, step 4b) ?cliffDropF= the drop's growth per level; ?cliffHN= the children's hashed split (0..1)
     if (q.has('cliffDropF')) this.render.cliffDropF = Number(q.get('cliffDropF'));

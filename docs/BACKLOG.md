@@ -1020,6 +1020,13 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   times 5-8 steps. Next candidates (they change the look, so for the owner): a coarser march for far fragments, or
   culling boxes whose visible faces are all below their neighbours' floors.
 - NS-300 (look, round 32 B3) side2 at T 4 has 31 hole pixels below the horizon (before and after B3); not looked into.
+- NS-301 (design, round 32 B3) A brush's finer shape is not drawn inside SPLIT cells (the cell shows rule columns from
+  the 16 m means); the owner to decide whether edits should show through the rule (stills rB3b-*).
+- NS-302 (look, round 32 B3) Closure holes round brush shapes (up to 199 pixels, gentle 80 m bowl at T 2) and at T 0
+  (146 / 114): NS-289's side-wall estimates.
+- NS-303 (test, round 32 B3) The brush script's slope-site views and the rA6 side view are framed badly (the camera
+  lands near the cliff; the CPU view is low); the edit-pose stills show only the bowl floor; the rebuild lag was not
+  caught. Re-frame before judging those.
 
 - NS-253 (test, round 31) Compile times swing 1.5-2.5x between runs on this machine (drawFieldTex 295-820 ms with no
   change); version 3's textured variants (drawBoxesTexV3 / drawSheetsTexV3) got a 600 ms budget from 341-457 / 401-535 ms.

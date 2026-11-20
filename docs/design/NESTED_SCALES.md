@@ -2031,6 +2031,23 @@ pixel), less work. Two pipeline overrides of cliff5.wgsl, both on (cliffbox.ts `
   Overdraw a box pixel (front faces, mean / max): T 2 side16 6.3 / 25, side2 6.9 / 37, above 3.3 / 10, foot 6.0 / 17;
   T 4 3.6 / 17, 2.9 / 22, 2.3 / 7, 2.4 / 8. March steps a marched fragment 4.7-6.5 (T 2), 5.6-8.4 (T 4). Holes and
   pixels unchanged (0 / 0 / 3 / 0 at T 2; side2 at T 4 has 31 before and after).
+- *The owner's look experiments* (stills only, nothing fixed):
+  - Sphere carves and adds in the real lab (scripts/nested-rB3-brush.mjs, --site gentle | slope; local/nested/rB3b-*):
+    radius 40 m made with the 0.25 m level open, 80 m with the 2 m level open, centred at the ground. The look comes from
+    the 16 m columns only: inside a SPLIT cell the brush's finer shape is not drawn (the sheets of every level are
+    discarded there), the cell shows rule columns from the 16 m means; outside SPLIT cells the fine shape is drawn as
+    before. On gentle ground at T 2 the 80 m bowl's walls and the 80 m dome's flanks become 16 m columns with stone faces
+    (the bowl's floor and the dome's cap stay sheets); the 40 m dome stays a sheet; at T 4 none of the four splits. Holes
+    appear with the balls (gentle T 2: 73 / 199 at the 80 m bowl side / above, 20 at the 80 m dome; slope: up to 122 at
+    T 4), the side walls' estimates (NS-289) not closing round the new shapes. The rebuild lag after an edit was not
+    caught by the stills (the table had been rebuilt by the first still taken).
+  - `?cliffT=0` (allowed from B3): every cell that is not a local top or bottom and not flat with its neighbours splits:
+    83 % of the window (54,508 of 65,536 at side16; T 1: 15 %). Nothing in the rule breaks; closure does: holes 146 at
+    side16, 114 above (0 at side2 and the foot). Box pass 3.2-4.2 ms against the sheets' 2-4 ms saved (frames held the
+    display rate on this desktop). Stills local/nested/rB3z0-*, rB3z-*-T0|T1|T2.
+  - CPU scene: a dome (sphere add, radius 40 m) beside the bowl (test/support/nested-cliffield.ts, `dome`, off by
+    default so the other numbers stay); pictures rA6-domes|domesAbove-T2|T4 (RA_PICS=1 RA_PREFIX=rA6). The side view's
+    framing is poor; the view from above shows the dome's flanks split into columns at T 2, none at T 4.
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

@@ -35,8 +35,8 @@ import { render, type View } from '../../src/nested/exp/cliffview';
 import { makeField } from '../support/nested-cliffield';
 export { BOWL, NXC, NYC, TRENCH, TRENCH_DIR, makeField, terrain } from '../support/nested-cliffield';
 
-function rules(over: Partial<CliffParams> = {}): Rules {
-  return deriveRules(makeField(), { ...defaultParams(), ...over });
+function rules(over: Partial<CliffParams> = {}, dome = false): Rules {
+  return deriveRules(makeField(dome), { ...defaultParams(), ...over });
 }
 function splits(R: Rules): [number, number][] {
   const out: [number, number][] = [];
@@ -388,6 +388,9 @@ export const VIEWS: Record<string, View> = {
   carves: { eye: [210, -10, 300], target: [230, 95, 0], fovDeg: 60, w: 960, h: 640 },
   // round 3: the bowl from further back and higher, so the whole bowl is in frame
   bowlback: { eye: [120, -5, 85], target: [120, 95, 0], fovDeg: 50, w: 960, h: 640 },
+  // round 32 B3: the bowl and the dome beside it (the dome only with the field's dome on: rA6), from the side and above
+  domes: { eye: [162, -40, 90], target: [162, 95, 5], fovDeg: 55, w: 960, h: 640 },
+  domesAbove: { eye: [162, 60, 260], target: [162, 96, 0], fovDeg: 55, w: 960, h: 640 },
 };
 
 const all = (x: number) => [0, x, x, x, x, x, x];
@@ -403,7 +406,12 @@ describe.skipIf(!process.env.RA_PICS)('nested cliff rule pictures', () => {
     const jobs: [string, string, Partial<CliffParams>][] = [];
     const P = process.env.RA_PREFIX ?? 'rA2';
     const none: Partial<CliffParams> = { notchPctL: all(0) };
-    if (P === 'rA4') {
+    let dome = false;
+    if (P === 'rA6') {
+      // round 32 B3: a sphere add (dome, radius 40 m) beside the bowl, at T 2 and 4, no notches
+      dome = true;
+      for (const v of ['domes', 'domesAbove']) for (const T of [2, 4]) jobs.push([`${P}-${v}-T${T}`, v, { ...none, T }]);
+    } else if (P === 'rA4') {
       // round 32 B2: notch heights a fraction 0.1-0.9 of the drop, coarse levels only (defaults "middle")
       const coarse50: Partial<CliffParams> = { notchPctL: [0, 50, 40, 0, 0, 0, 0], notchDepthL: all(4) };
       for (const v of ['near', 'trench']) {
@@ -436,7 +444,7 @@ describe.skipIf(!process.env.RA_PICS)('nested cliff rule pictures', () => {
     const lines: string[] = [];
     for (const [name, v, over] of jobs) {
       if (only && !name.includes(only)) continue;
-      const Q = rules(over);
+      const Q = rules(over, dome);
       const t0 = performance.now();
       const pic = render(Q, VIEWS[v]);
       const ms = performance.now() - t0;

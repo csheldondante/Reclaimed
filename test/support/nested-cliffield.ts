@@ -11,8 +11,9 @@ function sstep(a: number, b: number, x: number): number {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
 }
-/** the synthetic terrain, metres */
-export function terrain(x: number, y: number): number {
+/** the synthetic terrain, metres (dome: round 32 B3, the owner's sphere ADD beside the bowl; off by default so the
+ *  existing numbers stay) */
+export function terrain(x: number, y: number, dome = false): number {
   let z = 20 + 2.5 * Math.sin(x / 37) * Math.cos(y / 53) + 1.5 * Math.sin((x + y) / 23);
   // plateau at 100 m: a curved rim, a bay (inside corners), a bump (outside corners); a 4 m wide edge
   const dMain = y - (300 + 40 * Math.sin(x / 90));
@@ -38,19 +39,25 @@ export function terrain(x: number, y: number): number {
   const along = ux * TRENCH_DIR[0] + uy * TRENCH_DIR[1];
   const across = -ux * TRENCH_DIR[1] + uy * TRENCH_DIR[0];
   if (Math.abs(across) < 24 && along > 0 && along < 260) z = Math.min(z, 20 - 40);
+  // (B3) a sphere add of radius 40 m centred at ground level (20 m) beside the bowl: a dome
+  if (dome) {
+    const rd = Math.hypot(x - DOME[0], y - DOME[1]);
+    if (rd < 40) z = Math.max(z, 20 + Math.sqrt(1600 - rd * rd));
+  }
   return z;
 }
+export const DOME = [205, 100];
 export const BOWL = [120, 90];
 export const TRENCH = [250, 40];
 export const TRENCH_DIR = [Math.cos((27 * Math.PI) / 180), Math.sin((27 * Math.PI) / 180)];
-export function makeField(): Field {
+export function makeField(dome = false): Field {
   const h = new Int32Array(NXC * NYC);
   const S = 8;
   for (let cy = 0; cy < NYC; cy++)
     for (let cx = 0; cx < NXC; cx++) {
       let s = 0;
       for (let j = 0; j < S; j++)
-        for (let i = 0; i < S; i++) s += terrain(cx * COARSE_M + ((i + 0.5) * COARSE_M) / S, cy * COARSE_M + ((j + 0.5) * COARSE_M) / S);
+        for (let i = 0; i < S; i++) s += terrain(cx * COARSE_M + ((i + 0.5) * COARSE_M) / S, cy * COARSE_M + ((j + 0.5) * COARSE_M) / S, dome);
       h[cy * NXC + cx] = Math.round((s / (S * S)) * UPM);
     }
   return { nx: NXC, ny: NYC, h };
