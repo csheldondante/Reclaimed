@@ -733,6 +733,24 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   crossed). A tighter bound (per sample column the warp's actual reach over the z range) is possible; not built.
 - NS-202 (limit, round 26) A field column with nothing inside under it beside one that is inside (a bottomless hole, a
   column that starts with air) is meshed only from FAR + 1 under its support's lowest boundary: the wall below is open.
+- NS-203 (perf, round 26: the gate that stopped the round) The field mesh's whole-window build is 5-25 x the sheets'
+  (level 3: 82-97 ms against 16 on gentle ground, 260-350 against 11-28 at the steepest step); the count pass alone is
+  2-3 x a whole sheet bake. Cause and directions in NESTED_SCALES.md "As built (round 26)": a thread a cell column
+  walking its candidates serially (one column up to 134), each sample evaluated for each of the 4 cell columns that share
+  it, columns walked through the pages again for every sample. Not tuned this round (the brief: stop and report).
+- NS-204 (not built, round 26: steps C-E) The field mesh's join, look and the 16 m level were built in their first form
+  with step B (fade, OVER, skirt; warp, gradient normals, material per pixel, the textured shading) but not checked: no
+  visual-closure check over the poses, no stills side by side, no `?field=1` run. Picked up only if the build cost is
+  solved.
+- NS-205 (limit, round 26) A field bake's pages are reserved at 2 x (1 + max(2, deepest so far)) + 2 a chunk; a first bake
+  that needs more leaves that chunk undrawn (counted as refused) until it is baked again, as the sheets do.
+- NS-206 (limit, round 26) Corners of the field mesh's drawn region: a skirt or a triangle only at straight edges and the
+  footprint's inner corners; at the window's outer corners the skirts meet at one vertex (no corner piece).
+- NS-207 (hack, round 26) The field draw's material: the record holding the point 0.3 columns inside, else the column's
+  nearest inside record; a column with none gives MAT_AIR, which draws magenta (left visible on purpose, not seen in the
+  runs). The OVER cells past a child's window read the parent's column at the converted height.
+- NS-208 (limit, round 26) `?field` is set at load only (no button), levels 1 and up; its pipelines are made after every
+  other one (4.4-4.6 s more on the desktop) and levels wait for them.
 - NS-197 (perf, round 25) Time to the generated terrain in Chrome (desktop): the atlas's kernels and genFill start after
   every boot pipeline (13.4-14.8 s) and the atlas is built at 43-45 s after the page opened (its kernels 15.6-17.3 s,
   genFill 29.5-31 s compiling beside them). The owner's "startup time not yet" ruling: logged, not optimised.

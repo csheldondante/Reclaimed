@@ -175,6 +175,31 @@ export class App {
       const at = (q.get('at') ?? GEN_AT.join(',')).split(',').map(Number);
       this.rootAt = [Math.round((at[0] - this.rootN / 2) / 16) * 16, Math.round((at[1] - this.rootN / 2) / 16) * 16];
     }
+    // (round 26) the field mesh on trial: ?field=<levels, comma separated> or finest (the ladder's last, ?depth); its dials
+    // ?warp= (columns, 0 off), ?ffade= (columns), ?fmargin= (cells), ?fskirt= (columns), ?fjitter= (columns)
+    const fq = q.get('field');
+    if (fq) {
+      const levels = fq === 'finest' ? [this.maxDepth] : fq.split(',').map(Number);
+      let mask = 0;
+      for (const L of levels) {
+        if (!Number.isInteger(L) || L < 1 || L > this.maxDepth) throw new Error(`?field=${fq}: levels 1 to ${this.maxDepth} (the root is not drawn by the field mesh)`);
+        mask |= 1 << L;
+      }
+      const fo = this.nest.fieldOpt;
+      if (q.has('warp')) fo.warp = Math.min(0.95, Math.max(0, Number(q.get('warp'))));
+      if (q.has('ffade')) fo.fade = Math.max(0.5, Number(q.get('ffade')));
+      if (q.has('fmargin')) fo.margin = Math.max(0, Math.min(15, Math.round(Number(q.get('fmargin')))));
+      // (measurement: ?fnorm=cell, normals from the cell's corners instead of the field's gradient)
+      fo.cellNormals = q.get('fnorm') === 'cell';
+      // (measurement: ?fstop=count|verts, the bake stops after that pass, nothing drawn)
+      fo.stop = q.get('fstop') === 'count' ? 2 : q.get('fstop') === 'verts' ? 4 : 0;
+      if (q.has('fskirt')) fo.skirt = Math.max(0, Number(q.get('fskirt')));
+      this.render.fieldOpt.warp = fo.warp;
+      this.render.fieldOpt.skirt = fo.skirt;
+      if (q.has('fjitter')) this.render.fieldOpt.jitter = Math.max(0, Number(q.get('fjitter')));
+      this.nest.enableField(mask);
+      this.fieldDone = false;
+    }
     this.q = q;
   }
   /** (round 25) the generator on (?gen=0: off), and made (the atlas built and the root made from it) */
@@ -632,8 +657,11 @@ export class App {
   private compileAt = 0;
   /** between ops and not switching the smooth draw: a level op, an edit or a shrink may run */
   private get free(): boolean {
-    return this.pipesDone && this.nest.settled && !this.nest.switching && (!this.genOn || this.genReady);
+    return this.pipesDone && this.fieldDone && this.nest.settled && !this.nest.switching && (!this.genOn || this.genReady);
   }
+  /** (round 26) the field mesh's pipelines made (true with no field level); ms after the page opened when they were */
+  fieldDone = true;
+  fieldAt = 0;
   /** (round 25) the atlas built after the first frame (its compiles beside the rest), then, between ops, the root made
    *  from it: every finer level dropped first (they were derived from the placeholder; no edit can have been made, the
    *  brushes waited) */
@@ -778,6 +806,15 @@ export class App {
         this.pipesDone = true;
         this.pipesAt = performance.now();
         console.log(`[boot] first frame ${this.firstFrameAt.toFixed(0)} ms (its pipelines made at ${this.bootAt.toFixed(0)} ms), every pipeline made at ${this.pipesAt.toFixed(0)} ms`);
+        // (round 26) the field mesh's pipelines, its own stage after every other one (?field only); levels wait for them
+        if (this.nest.fieldMask) {
+          const t0 = performance.now();
+          void Promise.all([this.nest.makePipes(GpuNest.FIELD_PIPES), this.render.enableField()]).then(() => {
+            this.fieldDone = true;
+            this.fieldAt = performance.now();
+            console.log(`[field] field pipelines made in ${(this.fieldAt - t0).toFixed(0)} ms (draw ${this.render.fieldCompileMs.toFixed(0)} ms), at ${this.fieldAt.toFixed(0)} ms`);
+          });
+        }
       });
     }
     // (round 20) the textured pipelines, asynchronously after the first frame (the flat draw until they are made)
@@ -989,6 +1026,22 @@ export class App {
         const without = await run(true);
         const withBake = await run(false);
         return { withBake, without };
+      },
+      /** (round 26, measurement) level L's whole window baked again (forced, its own draw: sheets, boxes or the field
+       *  mesh): GPU-done ms, the frames' work held back meanwhile */
+      benchBake: async (L: number) => {
+        this.benchPause = true;
+        const fz = this.frozen;
+        this.frozen = true;
+        await new Promise((r) => requestAnimationFrame(r));
+        await this.device.queue.onSubmittedWorkDone();
+        const t = performance.now();
+        while (!this.nest.rebakeLevel(L)) await new Promise((r) => setTimeout(r, 30));
+        await this.device.queue.onSubmittedWorkDone();
+        const ms = performance.now() - t;
+        this.benchPause = false;
+        this.frozen = fz;
+        return ms;
       },
       /** (test only, readbacks) the manifold check of every level's drawn faces */
       manifold: async () => {

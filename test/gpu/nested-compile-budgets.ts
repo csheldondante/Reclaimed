@@ -46,6 +46,15 @@ export const BUDGET_MS: Record<string, number> = {
   // (round 25) the generator's fill: the atlas's ground(p) (made after the first frame, while the atlas builds).
   // Measured 8,942 ms cold, 2,744 warm (the first run of a changed module pays D3D's compile; terrain/sample.ts saw 6-12 s)
   genFill: 13_400,
+  // (round 26) the field mesh, ?field= only, made after every other pipeline (first measured: fieldBake 2,242 ms, the
+  // field draws 199 / 352, the rest under 200)
+  fieldBake: 3400,
+  fieldRelease: 400,
+  fieldDirClear: 400,
+  fieldDirBuild: 400,
+  fieldDirFinish: 400,
+  drawField: 400,
+  drawFieldTex: 550,
 };
 /** the sum over every pipeline (21.0 s measured; round 25: 26.5 s with genFill cold) */
 export const TOTAL_BUDGET_MS = 40_000;

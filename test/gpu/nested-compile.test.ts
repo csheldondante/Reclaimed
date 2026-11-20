@@ -5,7 +5,8 @@ import { expect, it } from 'vitest';
 import storeWgsl from '../../src/nested/gpu/store.wgsl?raw';
 import nestWgsl from '../../src/nested/gpu/nest.wgsl?raw';
 import { segWgsl, TCAP } from '../../src/nested/gpu/nest';
-import { drawModuleCode, skyDesc } from '../../src/nested/render';
+import { drawModuleCode, fieldDesc, fieldDrawCode, skyDesc } from '../../src/nested/render';
+import fieldWgsl from '../../src/nested/gpu/field.wgsl?raw';
 import { BUDGET_MS, FLOOR_MS, TOTAL_BUDGET_MS, budgetOf } from './nested-compile-budgets';
 import { genModuleParts } from '../../src/nested/gen';
 import { pagesCode } from '../../src/gpu/pages-mode';
@@ -59,6 +60,14 @@ it('nested: both modules compile; every pipeline within its compile budget', asy
   // while the atlas builds; the atlas build's own kernels are timed by test/gpu/nested-gen.test.ts)
   const gen = await mod('gen', pagesCode(genModuleParts().join('\n'), false));
   await timed('genFill', () => device.createComputePipelineAsync({ layout: 'auto', compute: { module: gen, entryPoint: 'genFill' } }));
+  // (round 26) the field mesh (?field= only, made after every other pipeline): its compute module (nest.wgsl +
+  // field.wgsl) and its draw module (the draw module + fielddraw.wgsl)
+  const fieldC = await mod('field', `const TCAP: u32 = ${TCAP}u;\n${segWgsl(4, 64, false)}\n${storeWgsl}\n${nestWgsl}\n${fieldWgsl}`);
+  const fieldD = await mod('field draw', fieldDrawCode(4, 64));
+  expect(errs, errs.join('\n')).toEqual([]);
+  for (const e of ['fieldBake', 'fieldRelease', 'fieldDirClear', 'fieldDirBuild', 'fieldDirFinish']) await timed(e, () => device.createComputePipelineAsync({ layout: 'auto', compute: { module: fieldC, entryPoint: e } }));
+  await timed('drawField', () => device.createRenderPipelineAsync(fieldDesc('auto', fieldD, 'bgra8unorm', 'fsField')));
+  await timed('drawFieldTex', () => device.createRenderPipelineAsync(fieldDesc('auto', fieldD, 'bgra8unorm', 'fsFieldT')));
   const total = Object.values(times).reduce((a, b) => a + b, 0);
   console.log(`[compile] Dawn (${(adapter as unknown as { info?: { backend?: string } }).info?.backend ?? 'default backend'}), ms (budget):\n${Object.entries(times).map(([k, v]) => `  ${k.padEnd(14)} ${v.toFixed(0).padStart(6)} (${budgetOf(k)})`).join('\n')}\n  total          ${total.toFixed(0).padStart(6)} (${TOTAL_BUDGET_MS})`);
   const over = Object.entries(times)

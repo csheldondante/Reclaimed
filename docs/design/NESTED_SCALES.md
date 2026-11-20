@@ -1463,6 +1463,42 @@ by intervals." This supersedes "layered sheets, not surface nets" for this trial
   columns inward along the vertex normal. No stitching, no vertex matching.
 - *Not this round:* textures beyond wiring the existing textured shading, water, the 128 m material squares.
 
+**As built (round 26; STOPPED at step B by the speed gate: the full-window build is 5-25 x the sheets').** The plan
+above, built behind `?field=` (default off); the round stopped where the brief says to, before the join's and the look's
+polish (steps C-E), with the numbers below.
+- *Departures.* (1) The selection's margin is 0, not 1 (step A proved 0 exact: test/unit/nested-field.test.ts; 1 cost
+  two cells a column on gentle ground); `?fmargin=` keeps the dial. (2) The warp's noise runs at half a column's
+  frequency in x and y (fortress: 0.45) so the global lattice cell and fraction split exactly and every chunk computes a
+  shared vertex bit for bit the same; z keeps 0.6. (3) The parent leaves out only the cells wholly inside its child's
+  footprint whatever the child's draw (the plan had a field parent leave out the straddling cells too; then its last
+  vertices could sit 1.5 parent columns out, past any OVER that fits a workgroup); a field child goes k / 2 + 2 columns
+  over a field parent, 2 over a sheet one. (4) `?field` takes levels 1 and up (the root is made in the first frame,
+  before the field's pipelines). (5) Vertices are stored as (cell column - chunk origin, offset in the cell as 2 x
+  unorm16, z f32, octahedral normal), so a vertex two chunks hold lands on the same bits in both.
+- *Sources.* src/nested/fieldsel.ts (the CPU reference), src/nested/gpu/field.wgsl (fieldBake, fieldRelease,
+  fieldDirClear / Build / Finish; appended to nest.wgsl in a module made only with `?field`), src/nested/gpu/
+  fielddraw.wgsl (vsField, fsField flat, fsFieldT textured; appended to the draw module, its own module), GpuNest
+  enableField / fieldOn / rebakeLevel, the field branch in bake(), fieldRelease beside release (demote, slide), the
+  field directory after directory(); Renderer.enableField and the field levels' draw; App ?field, ?warp, ?ffade,
+  ?fmargin, ?fskirt, ?fjitter and the measurement dials ?fnorm=cell, ?fstop=count|verts.
+- *Pages.* Quads: level id 24 + L, the chunk's stack, page 0's first 16 words the header (hash, quads, key, candidate and
+  vertex counts); scratch: 56 + L, let go at the bake's end. Their deepest stack is ctl 11 (`maxCzField`), quads left out
+  for a missing cell ctl 14 (`fieldMiss`: 0 in every run). bakeBound asks 2 x (1 + max(2, maxCzField)) + 2 pages a
+  chunk while a field level is live or next.
+- *Measured (desktop, back to back in one session, scripts/nested-r26-bench.mjs, level 3 field against level 3 sheets
+  at the same pose).* See DEVLOG round 26 step B; in short: whole-window build 260-350 ms against 11-28 at the steepest
+  step, 82-97 against 16 at the root window's centre; carve rebuilt 10-21 ms against 12-16 (with bakes; the bake part 3-9
+  against 3-5); draw 4.9-7.6 ms against 8.6-22 (the field draws fewer, larger triangles); frame 5.2-9 against 7.6-12.
+- *Where the build's time goes* (`?fstop`, `?fnorm`, `?warp=0`, same pose): the count pass and the hash alone 31-46 ms
+  (2-3 x the whole sheet bake); the vertex pass most of the rest (verts-stop 315-380 ms at the step); the gradient's 6
+  evaluations a vertex about 5 %; the warp within the noise (321 ms without it). The vertex pass is a thread per cell
+  column walking its candidate cells in turn, each new sample a warp and 4 column walks through the pages: at the step
+  one column holds up to 134 candidates while most hold 1-2, so a workgroup waits on its longest thread; each sample is
+  evaluated for each of the 4 cell columns that share it; every column is walked again for every sample and sweep.
+  Directions, not built: work spread over the candidate cells after the scan (a thread a cell, not a column); samples
+  evaluated once a chunk into scratch and shared; each column's runs read once into workgroup memory (as the sheet
+  bake's bFillRecs); fewer support columns for the sweep (NS-201).
+
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

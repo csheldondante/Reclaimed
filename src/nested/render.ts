@@ -6,6 +6,7 @@ import storeWgsl from './gpu/store.wgsl?raw';
 import drawWgsl from './gpu/draw.wgsl?raw';
 import detailWgsl from './gpu/detail.wgsl?raw';
 import shadeWgsl from './gpu/shade.wgsl?raw';
+import fieldDrawWgsl from './gpu/fielddraw.wgsl?raw';
 import { MAX_LEVELS, SEG_BASE, TCAP, TPP, segWgsl, type GpuNest } from './gpu/nest';
 
 /** the draw module's source (the page and the compile gate): the pages' segments, the store, (round 20) the detail
@@ -30,6 +31,22 @@ export function skyDesc(layout: GPUPipelineLayout | 'auto', module: GPUShaderMod
     primitive: { topology: 'triangle-list', cullMode: 'none' },
     depthStencil: { format: 'depth32float', depthWriteEnabled: false, depthCompare: 'equal' },
   };
+}
+
+/** (round 26) the field mesh's draw: vsField and a fragment entry (fsField flat, fsFieldT textured) */
+export function fieldDesc(layout: GPUPipelineLayout | 'auto', module: GPUShaderModule, format: GPUTextureFormat, fs: string): GPURenderPipelineDescriptor {
+  return {
+    label: `nest draw field (${fs})`,
+    layout,
+    vertex: { module, entryPoint: 'vsField' },
+    fragment: { module, entryPoint: fs, targets: [{ format }, { format: 'rgba8unorm' }] },
+    primitive: { topology: 'triangle-list', cullMode: 'none' },
+    depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' },
+  };
+}
+/** (round 26) the field draw's module source: the draw module and fielddraw.wgsl */
+export function fieldDrawCode(S: number, segP: number): string {
+  return `${drawModuleCode(S, segP)}\n${fieldDrawWgsl}`;
 }
 
 export interface DrawLevel {
@@ -202,6 +219,69 @@ export class Renderer {
     this.bgFor = want;
   }
 
+  // ---- (round 26) the field mesh's draw (?field=): its own module, layout (the pages read in the fragment stage too: the
+  // material per pixel) and pipelines, made only when a level is drawn by it --------------------------------------------
+  private field: { layout: GPUBindGroupLayout; pl: GPUPipelineLayout; module: GPUShaderModule; ubuf: GPUBuffer; flat?: GPURenderPipeline; tex?: GPURenderPipeline; ready: Promise<void> } | null = null;
+  private fieldBg: GPUBindGroup | null = null;
+  private fieldBgFor: GPUBuffer[] = [];
+  /** (round 26) the field draw's dials: the lookup's warp and the material's jitter (columns), the skirt (columns) */
+  fieldOpt = { warp: 0.45, jitter: 0.35, skirt: 3 };
+  /** (round 26) the field draw's pipelines' creation time, ms */
+  fieldCompileMs = 0;
+  /** (round 26) start making the field draw (its pipelines asynchronously, both flat and textured) */
+  enableField(): Promise<void> {
+    if (this.field) return this.field.ready;
+    const FV = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
+    const ro = { type: 'read-only-storage' as const };
+    const layout = this.device.createBindGroupLayout({
+      label: 'nest field draw',
+      entries: [
+        { binding: 0, visibility: FV, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: DU_SIZE } },
+        { binding: 2, visibility: FV, buffer: { type: 'uniform' } },
+        ...[1, 3, 4, 5, ...Array.from({ length: this.nest.S }, (_, j) => SEG_BASE + j)].map((binding) => ({ binding, visibility: FV, buffer: ro })),
+      ],
+    });
+    const pl = this.device.createPipelineLayout({ bindGroupLayouts: [layout] });
+    const module = this.device.createShaderModule({ label: 'nest field draw', code: fieldDrawCode(this.nest.S, this.nest.segP) });
+    const ubuf = this.device.createBuffer({ label: 'nest field draw uniforms', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    const t0 = performance.now();
+    const f: NonNullable<Renderer['field']> = { layout, pl, module, ubuf, ready: Promise.resolve() };
+    f.ready = Promise.all([this.device.createRenderPipelineAsync(fieldDesc(pl, module, this.format, 'fsField')), this.device.createRenderPipelineAsync(fieldDesc(pl, module, this.format, 'fsFieldT'))]).then(([a, b]) => {
+      f.flat = a;
+      f.tex = b;
+      this.fieldCompileMs = performance.now() - t0;
+    });
+    this.field = f;
+    return f.ready;
+  }
+  get fieldReady(): boolean {
+    return !this.field || !!this.field.tex;
+  }
+  private fieldBind(): GPUBindGroup {
+    const f = this.field!;
+    const segs = this.nest.segBuffers();
+    const want = [this.nest.fieldDir!, ...segs];
+    if (!this.fieldBg || want.length !== this.fieldBgFor.length || !want.every((b, i) => b === this.fieldBgFor[i])) {
+      this.fieldBg = this.device.createBindGroup({
+        label: 'nest field draw',
+        layout: f.layout,
+        entries: [
+          { binding: 0, resource: { buffer: this.ubuf, size: DU_SIZE } },
+          { binding: 1, resource: { buffer: this.nest.tab } },
+          { binding: 2, resource: { buffer: f.ubuf } },
+          { binding: 3, resource: { buffer: this.nest.cam } },
+          { binding: 4, resource: { buffer: this.nest.reg } },
+          { binding: 5, resource: { buffer: this.nest.fieldDir! } },
+          ...segs.map((buffer, j) => ({ binding: SEG_BASE + j, resource: { buffer } })),
+        ],
+      });
+      this.fieldBgFor = want;
+    }
+    const o = this.fieldOpt;
+    this.device.queue.writeBuffer(f.ubuf, 0, new Float32Array([o.warp, o.jitter, o.skirt, 0]));
+    return this.fieldBg;
+  }
+
   draw(levels: DrawLevel[]): GPUTexture {
     const tex = this.ctx.getCurrentTexture();
     this.targets(tex.width, tex.height);
@@ -218,17 +298,28 @@ export class Renderer {
     // finest first: the depth test then spares the coarse levels' fragments under it
     const order = [...levels].sort((a, b) => b.depth - a.depth);
     const tp = this.texDrawn ? this.texPipes : null;
+    // (round 26) a field level is drawn by the field mesh (its own pipeline and bind group), every other one as before
+    const fl = this.nest.fieldMask ? order.filter((lv) => this.nest.fieldOn(lv.depth)) : [];
+    if (fl.length && this.field?.tex) {
+      const bg = this.fieldBind();
+      pass.setPipeline(tp ? this.field.tex : this.field.flat!);
+      for (const lv of fl) {
+        pass.setBindGroup(0, bg, [lv.depth * DU]);
+        pass.drawIndirect(this.nest.fieldArgs!, lv.depth * 16);
+      }
+    }
+    const rest = fl.length ? order.filter((lv) => !this.nest.fieldOn(lv.depth)) : order;
     if (this.nest.smooth) {
       // (round 16) per level the sheets
       const sp = this.smoothPipes();
       pass.setPipeline(tp ? tp.sheet : sp.sheet);
-      for (const lv of order) {
+      for (const lv of rest) {
         pass.setBindGroup(0, this.bg!, [lv.depth * DU]);
         pass.drawIndirect(this.nest.drawArgs, (MAX_LEVELS + lv.depth) * 16);
       }
     } else {
       pass.setPipeline(tp ? tp.box : this.pipe);
-      for (const lv of order) {
+      for (const lv of rest) {
         pass.setBindGroup(0, this.bg!, [lv.depth * DU]);
         pass.drawIndirect(this.nest.drawArgs, lv.depth * 16);
       }

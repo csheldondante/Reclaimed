@@ -76,13 +76,15 @@ export function warpNoise(x: number, y: number, z: number): number {
   const p = (dx: number, dy: number, dz: number) => hash3(ix + dx, iy + dy, iz + dz);
   return l(l(l(p(0, 0, 0), p(1, 0, 0), fx), l(p(0, 1, 0), p(1, 1, 0), fx), fy), l(l(p(0, 0, 1), p(1, 0, 1), fx), l(p(0, 1, 1), p(1, 1, 1), fx), fy), fz);
 }
-/** where the field is looked up for point p: moved sideways by up to W columns (W = 0: not moved) */
+/** where the field is looked up for point p: moved sideways by up to W columns (W = 0: not moved). As field.wgsl fWarp:
+ *  the noise at half a column's frequency in x and y (fortress: 0.45; 0.5 splits the global lattice exactly, so every
+ *  chunk computes the same bits), 0.6 in z, the second noise shifted by whole lattice cells */
 export function warpXY(x: number, y: number, z: number, W: number): [number, number] {
   if (W <= 0) return [x, y];
-  const qx = x * 0.45;
-  const qy = y * 0.45;
+  const qx = x * 0.5;
+  const qy = y * 0.5;
   const qz = z * 0.6;
-  return [x + (warpNoise(qx, qy, qz) - 0.5) * 2 * W, y + (warpNoise(qx + 17.3, qy + 5.1, qz + 9.7) - 0.5) * 2 * W];
+  return [x + (warpNoise(qx, qy, qz) - 0.5) * 2 * W, y + (warpNoise(qx + 17, qy + 5, qz + 9) - 0.5) * 2 * W];
 }
 
 // ---- a level as the field reads it ---------------------------------------------------------------------------------

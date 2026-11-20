@@ -27884,3 +27884,43 @@ window, four levels open, candidate / crossed): at the root window's centre, no 
 column), no warp: 1.05 / 1.05, 1.37 / 1.30, 4.42 / 3.57, 8.16 / 5.46; warp 0.45: 1.14, 1.86, 8.99, 16.17. So gentle
 ground costs about a cell and a half a column; steep ground at the fine levels is where the cells are, and the warp
 doubles the candidates there (NS-201).
+
+## 2026-11-20 — Nested scales lab, round 26, step B: the field mesh on the GPU; STOPPED by the speed gate
+
+The GPU build and its draw, behind `?field=` (NESTED_SCALES.md "As built (round 26)"): fieldBake (a workgroup a chunk:
+the hash skip, candidate cells per cell column by the step A sweep, a workgroup scan, scratch pages, a vertex per
+crossed candidate with the field's gradient for its normal, quads counted, scanned and written self-contained into the
+chunk's quad pages), fieldRelease beside release, the field's own page list and draw arguments, and a draw (flat and
+textured) with the material per pixel. The join's first form (fade, OVER, skirt) and the warp went in with it, as the
+plan has them. It works: level 3 drawn by the field mesh at the steepest step and at the window centre, 0 quads left out
+(fieldMiss), 0 refused, the HUD and the brushes as before.
+
+**The gate (desktop, scripts/nested-r26-bench.mjs, one session, sheets and field pages alternated at the same pose,
+level 3 the field level, medians):**
+
+| pose | variant | whole level-3 window rebuilt | carve with bakes / without | draw | frame |
+|---|---|---|---|---|---|
+| steepest step, run 1 | sheets | 13.0, 12.1 ms | 13.5 / 10.2, 14.0 / 10.3 | 8.6, 9.1 | 7.6, 7.9 |
+| | field | 300.3, 299.5 ms | 18.0 / 11.5, 21.3 / 12.0 | 4.9, 4.9 | 5.2, 5.3 |
+| steepest step, run 2 | sheets | 27.8 ms | 15.3 / 9.7 | 22.2 | 9.4 |
+| | field | 291.8 ms | 10.2 / 6.9 | 5.3 | 5.8 |
+| root window centre | sheets | 16.3 ms | 16.2 / 13.3 | 17.4 | 12.0 |
+| | field | 97.0 (82.4) ms | 18.1 / 12.1 | 7.6 | 9.1 |
+
+So the whole-window build is 10-25 x the sheets' at the step and 5-6 x on gentle ground: far past the brief's 2 x, so
+the round stops here and reports (C-E not polished, NS-204). The carve is near the sheets (bake part 3-9 ms against 3-5;
+this machine's noise is about as large), and the draw and the frame are faster than the sheets at every pose.
+
+**Where the time goes** (same pose, the step; measurement dials): `?fstop=count` (hash + candidate count only) 31-32 ms,
+already 2-3 x a whole sheet bake (46 at the centre); `?fstop=verts` 315-380 ms (so the vertex pass is nearly all of it;
+the quads are cheap); `?fnorm=cell` (no gradient evaluations) 244-280 ms (about 5 %); `?warp=0` 258-321 ms (within the
+noise). The vertex pass is a thread per cell column walking its candidates one after another (up to 134 in one column at
+the step, 1-2 in most), each new sample a warp and four column walks through the pages; each sample is evaluated once
+for each of the four cell columns sharing it; the sweep walks every support column's records again for every cell
+column. Directions (not built): a thread a candidate cell after the scan; samples evaluated once a chunk and shared;
+each column's runs read once into workgroup memory.
+
+**Compile (Dawn, the compile gate; made only with `?field`, after every other pipeline):** fieldBake 2,242 ms first run,
+1,179 the second; fieldRelease 78-91; fieldDirClear / Build / Finish 76-170; the field draws 99-199 (flat), 291-352
+(textured). Budgets at about 1.5 x the first run (fieldBake 3,400, textured draw 550, the rest the 400 floor). In Chrome
+the field's pipelines take 4.4-4.6 s after the boot pipelines; levels wait for them.
