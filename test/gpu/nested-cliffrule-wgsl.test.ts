@@ -26,6 +26,7 @@ const CR_AMPL = array<i32, 7>(${defaultParams().ampL.join(', ')});
 @group(0) @binding(2) var<storage, read> splits: array<vec2<i32>>;
 @group(0) @binding(3) var<storage, read_write> cellOut: array<i32>;
 @group(0) @binding(4) var<storage, read_write> bits: array<u32>;
+fn crT() -> i32 { return U[1].z; }
 fn crH(x: i32, y: i32) -> i32 {
   let X = clamp(x - U[1].x, 0, U[0].x - 1);
   let Y = clamp(y - U[1].y, 0, U[0].y - 1);
@@ -72,10 +73,10 @@ function units(z: number): number {
   return f + (v - f >= 0.5 ? 1 : 0);
 }
 
-async function compare(name: string, zs: Float32Array, nx: number, ny: number, ox: number, oy: number): Promise<{ cells: number; splits: number; cols: number; cellMis: number; colMis: number }> {
+async function compare(name: string, zs: Float32Array, nx: number, ny: number, ox: number, oy: number, T = 2): Promise<{ cells: number; splits: number; cols: number; cellMis: number; colMis: number }> {
   const g = await testGpu();
   const dev = g.device;
-  const p = { ...defaultParams() };
+  const p = { ...defaultParams(), T };
   const f: Field = { nx, ny, h: new Int32Array(nx * ny) };
   for (let i = 0; i < nx * ny; i++) f.h[i] = units(zs[i]);
   const ts = [];
@@ -98,7 +99,7 @@ async function compare(name: string, zs: Float32Array, nx: number, ny: number, o
     return b;
   };
   const hz = sb(zs);
-  const ub = sb(new Int32Array([nx, ny, nS, 0, ox, oy, 0, 0]), GPUBufferUsage.UNIFORM);
+  const ub = sb(new Int32Array([nx, ny, nS, 0, ox, oy, T, 0]), GPUBufferUsage.UNIFORM);
   const sp = sb(new Int32Array(spl.length ? spl.map((v, i) => v + (i % 2 ? oy : ox)) : [0, 0]));
   const co = sb(nx * ny * 11 * 4);
   const nb = Math.max(1, nS * 128);
@@ -170,6 +171,11 @@ it('B1: the WGSL cliff rule equals the TS on the synthetic field (negative origi
   expect(r.splits).toBeGreaterThan(100);
   expect(r.cellMis).toBe(0);
   expect(r.colMis).toBe(0);
+  // (step B2: the threshold is a parameter; one non-default T)
+  const r4 = await compare('synthetic T 4', zs, f.nx, f.ny, -20, -16, 4);
+  expect(r4.splits).toBeGreaterThan(20);
+  expect(r4.cellMis).toBe(0);
+  expect(r4.colMis).toBe(0);
 }, 120_000);
 
 it('B2: the table build and the ?cliff=5 draw modules compile', async () => {
@@ -206,9 +212,17 @@ it.skipIf(!process.env.NESTED_B1_COST)('B1: compile time, default textured sheet
     const errs = info.messages.filter((x) => x.type === 'error').map((x) => `${x.lineNum}:${x.linePos} ${x.message}`);
     expect(errs, errs.join('\n')).toEqual([]);
     const t0 = performance.now();
+    if (fsName === 'crBuild') {
+      await device.createComputePipelineAsync({ layout: 'auto', compute: { module: m, entryPoint: fsName } });
+      const ms = performance.now() - t0;
+      device.destroy();
+      return ms;
+    }
+    // (step B2: the box draw's own vertex entry; the sheets' with the 16 m level's z origin)
+    const vs = fsName === 'fsBox5' ? 'vsBox5' : fsName === 'fsST5' ? 'vsSheet5' : 'vsSheet';
     await device.createRenderPipelineAsync({
       layout: 'auto',
-      vertex: { module: m, entryPoint: 'vsSheet' },
+      vertex: { module: m, entryPoint: vs },
       fragment: { module: m, entryPoint: fsName, targets: [{ format: 'bgra8unorm' }, { format: 'rgba8unorm' }] },
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' },
@@ -221,6 +235,10 @@ it.skipIf(!process.env.NESTED_B1_COST)('B1: compile time, default textured sheet
     ['sheetsTex default', def, 'fsST'],
     ['sheetsTex in variant', v4, 'fsST'],
     ['sheets cliff=4', v4, 'fsST4'],
+    // (step B2, ?cliff=5)
+    ['sheets cliff=5', cliffBoxCode(4, 64, 1, 1024, CLIFF_AMP_B2), 'fsST5'],
+    ['boxes cliff=5', cliffBoxCode(4, 64, 1, 1024, CLIFF_AMP_B2), 'fsBox5'],
+    ['table build', cliffBuildCode(4, 64, 1, 1024, CLIFF_AMP_B2), 'crBuild'],
   ];
   const res: Record<string, number[]> = {};
   for (let r = 0; r < ROUNDS; r++)

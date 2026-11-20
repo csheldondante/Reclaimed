@@ -12,7 +12,10 @@
 // (array<i32, 7>). Step B2 adds the bound (maskMaxOf, remAmp, cellBound's split branch) and isUpLod.
 
 const CR_U: i32 = 1024; // COARSE_U: a coarse cell's width in units (16 m x 64)
-const CR_T: i32 = 2;
+// (the steep threshold T, cell widths, comes from the includer as `fn crT() -> i32` (step B2: ?cliffT=, a uniform of the
+// table build, so a change rebuilds the table without a new pipeline). The rule tests the RANGE over a cell and its 4
+// neighbours: a plane of slope s along an axis has range 2 s w, so T means s > T / 2 (T 2: 45 deg, 4: 63, 8: 76, 16: 83);
+// along a diagonal the range is sqrt(2) s w, so s > T / sqrt(2) (T 2: 55 deg))
 const CR_LF: u32 = 6u;
 const CR_N: i32 = 64; // 1 << fineLevel
 const CR_MASKFROM: u32 = 4u;
@@ -97,7 +100,7 @@ fn crKindOf(cx: i32, cy: i32) -> CrKind {
   }
   let range = max(hi, h) - min(lo, h);
   var kind = CR_SHEET;
-  if (range > CR_T * CR_U) { kind = select(select(CR_SPLIT, CR_BOTTOM, h <= lo), CR_TOP, h >= hi); }
+  if (range > crT() * CR_U) { kind = select(select(CR_SPLIT, CR_BOTTOM, h <= lo), CR_TOP, h >= hi); }
   return CrKind(kind, hi, lo, hiN, loN, h, nb);
 }
 fn crIsSheet(cx: i32, cy: i32) -> bool { return crKindOf(cx, cy).kind != CR_SPLIT; }

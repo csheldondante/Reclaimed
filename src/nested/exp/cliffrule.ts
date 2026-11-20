@@ -82,6 +82,9 @@ export interface CliffParams {
   segFit: boolean;
   /** the notch depth test by the column's own margin over the threshold (O(1)); false = round 2's sampled tops */
   notchMargin: boolean;
+  /** (round 32 B2) a notch's height as a hashed fraction of the face's drop H - L, [min, max] (spans cut consecutively
+   *  from L); [0, 0] = round 3's z-segments (notchSeg, notchHMax, segFit) */
+  notchFrac: [number, number];
   /** erosion on (drops only, up columns within 2 units of a lower column) */
   erode: boolean;
   /** erosion's largest drop, half-units (default 2: 0, 0.5 or 1 m) */
@@ -100,9 +103,12 @@ export function defaultParams(): CliffParams {
     maskFrom: 4,
     wLevel: 3,
     maskP: 4,
-    // "tame": 8 m 5 % depth <= 1, 4 m 10 % <= 2, 2 m and finer 15 % <= 4
-    notchPctL: [0, 5, 10, 15, 15, 15, 15],
-    notchDepthL: [0, 1, 2, 4, 4, 4, 4],
+    // (round 32 B2, the owner: coarse notches make the overhangs, the little ones "are not worth it") "middle": 8 m 25 %
+    // depth <= 2, 4 m 25 % <= 3, 2 m and finer none; heights a fraction 0.1-0.9 of the drop. Round 3's "tame" was
+    // [0, 5, 10, 15, 15, 15, 15] / [0, 1, 2, 4, 4, 4, 4] with notchFrac [0, 0]
+    notchPctL: [0, 25, 25, 0, 0, 0, 0],
+    notchDepthL: [0, 2, 3, 4, 4, 4, 4],
+    notchFrac: [0.1, 0.9],
     notchSeg: 5,
     notchHMax: 2,
     erodeUnit: 4,
@@ -598,32 +604,62 @@ export function notchLevel(R: Rules, r: CellRule, cx: number, cy: number, gx: nu
   const pct = p.notchPctL[l] ?? 0;
   if (pct <= 0) return null;
   const c = COARSE_U >> l;
-  // the z-segments: anchored at L; with segFit their length is at most the face's usable band (L up to H less this
-  // level's top cell and the erosion band), so a face tall enough for one notch of this level gets the stated share
-  const band = r.H - c - erodeMaxU(p) - r.L;
-  const bandCells = fdiv(band, c);
-  if (bandCells < 1) return null;
-  const segCells = p.segFit ? Math.min(p.notchSeg, bandCells) : p.notchSeg;
-  const Sz = segCells * c;
-  const j = fdiv(z - r.L, Sz);
   // the key: a slot along the face (2^slotLog cells of this level along the axis more perpendicular to hi -> lo), one
   // per coarse cell across it
   const ksh = p.fineLevel - l;
   const alongX = Math.abs(r.a) < Math.abs(r.b);
   const ka = (alongX ? gx : gy) >> (ksh + p.slotLog);
   const kb = alongX ? cy : cx;
-  const hn = hash3(ka, kb, salt(p, SALT_NOTCH + l) ^ Math.imul(j, 0x27d4eb2d));
   const ks = 1 << ksh;
   const mk = maskAt(2 * (gx >> ksh) * ks + ks, 2 * (gy >> ksh) * ks + ks, p);
-  if (hn % 25600 >= pct * mk) return null;
-  const h2 = mix(hn);
-  const len = Math.min(segCells, 1 + (h2 % p.notchHMax));
-  const start = (h2 >>> 8) % (segCells - len + 1);
-  const lo = r.L + j * Sz + start * c;
-  const hi = lo + len * c;
-  if (z < lo || z >= hi) return null;
   // this level's top cell is never a notch (nor the erosion band under it)
-  if (hi > r.H - c - erodeMaxU(p)) return null;
+  const topLim = r.H - c - erodeMaxU(p);
+  let lo: number;
+  let hi: number;
+  let h2: number;
+  if (p.notchFrac[1] > 0) {
+    // (round 32 B2, the owner: "extend .1-.9 of the height of drop from the cliff to the floor so that there are somewhere
+    // between 0 and 10 long notches per column") the face's z from L is cut into consecutive spans, each a hashed
+    // notchFrac[0]..[1] of the drop H - L (at least one cell of the level), each span a notch with the level's share;
+    // a span is cut back to below the top cell
+    if (z < r.L || z >= topLim) return null;
+    const D = r.H - r.L;
+    const f0 = Math.round(p.notchFrac[0] * 256);
+    const f1 = Math.max(f0, Math.round(p.notchFrac[1] * 256));
+    let s0 = r.L;
+    let k = 0;
+    for (;;) {
+      const hk = hash3(ka, kb, salt(p, SALT_NOTCH + l) ^ Math.imul(k, 0x27d4eb2d));
+      const len = Math.max(c, (D * (f0 + ((hk >>> 8) % (f1 - f0 + 1)))) >> 8);
+      if (z < s0 + len) {
+        if (hk % 25600 >= pct * mk) return null;
+        lo = s0;
+        hi = Math.min(s0 + len, topLim);
+        h2 = mix(hk);
+        break;
+      }
+      s0 += len;
+      k++;
+    }
+  } else {
+    // the z-segments: anchored at L; with segFit their length is at most the face's usable band (L up to H less this
+    // level's top cell and the erosion band), so a face tall enough for one notch of this level gets the stated share
+    const band = topLim - r.L;
+    const bandCells = fdiv(band, c);
+    if (bandCells < 1) return null;
+    const segCells = p.segFit ? Math.min(p.notchSeg, bandCells) : p.notchSeg;
+    const Sz = segCells * c;
+    const j = fdiv(z - r.L, Sz);
+    const hn = hash3(ka, kb, salt(p, SALT_NOTCH + l) ^ Math.imul(j, 0x27d4eb2d));
+    if (hn % 25600 >= pct * mk) return null;
+    h2 = mix(hn);
+    const len = Math.min(segCells, 1 + (h2 % p.notchHMax));
+    const start = (h2 >>> 8) % (segCells - len + 1);
+    lo = r.L + j * Sz + start * c;
+    hi = lo + len * c;
+    if (z < lo || z >= hi) return null;
+    if (hi > topLim) return null;
+  }
   const s = 1 << ksh; // the level's cell in fine columns
   const dCells = 1 + ((h2 >>> 16) % Math.max(1, p.notchDepthL[l] ?? 1));
   if (p.notchMargin) {

@@ -9,18 +9,19 @@
 //   w0 kind | saddle << 2 | (a + 8) << 4 | (b + 8) << 8 | top material id << 12;  w1 H;  w2 L;  w3 theta;
 //   w4 dTheta (0: not stored yet);  w5 h;  w6 Lb (the box's bottom);  w7 maskMax (the mask's bound over the cell, /256);
 //   w8..w11 the side walls E, W, N, S (a sheet neighbour's edge height, about; i32 min for none)
-// Box list entry: (cx - gx) | (cy - gy) << 16.
+// Box list (in the same buffer, after the n x n records): (cx - gx) | (cy - gy) << 16.
 
 struct CrBU {
-  /** the window: gx, gy, n */
+  /** the window: gx, gy, n; w the steep threshold T (cell widths) */
   win: vec4<i32>,
 }
 @group(0) @binding(0) var<uniform> bu: CrBU;
 @group(0) @binding(1) var<storage, read> tab: array<u32>;
 @group(0) @binding(2) var<storage, read_write> crTabW: array<u32>;
-@group(0) @binding(3) var<storage, read_write> crListW: array<u32>;
 @group(0) @binding(4) var<storage, read_write> crArgsW: array<atomic<u32>>;
 fn tabLoad(i: u32) -> u32 { return tab[i]; }
+/** the steep threshold, cell widths (bu.win.w: ?cliffT=, cliffbox.ts) */
+fn crT() -> i32 { return bu.win.w; }
 
 var<private> crMissing: bool;
 /** the top of column (L, X, Y)'s highest solid record (local units) and its material id; (-1e30, 0) when none */
@@ -108,6 +109,6 @@ fn crBuild(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroup
   }
   if (kind == CR_SPLIT) {
     let k = atomicAdd(&crArgsW[1], 1u);
-    crListW[k] = u32(lx) | (u32(ly) << 16u);
+    crTabW[CR_REC * u32(n * n) + k] = u32(lx) | (u32(ly) << 16u);
   }
 }

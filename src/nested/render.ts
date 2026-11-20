@@ -255,6 +255,10 @@ export class Renderer {
   /** ?cliffAmp= the per-level amplitudes (7 integers /256; default amp8half) */
   cliffAmp = CLIFF_AMP_B2;
   cliffBox: CliffBox | null = null;
+  /** (step B2) ?cliffStrata=0|1: strata on the column faces (default on; a uniform, switchable at run time) */
+  cliffStrata = true;
+  /** (step B2) ?cliffT= the steep threshold for ?cliff=5, cell widths (default 2; the table is rebuilt on a change) */
+  cliffBoxT = 2;
   private texPipes: { box: GPURenderPipeline; sheet: GPURenderPipeline; sky: GPURenderPipeline; sheet4?: GPURenderPipeline } | null = null;
   private texCompile: Promise<void> | null = null;
   /** (round 20) the textured pipelines' creation time, ms (asynchronous, after the first frame) */
@@ -273,7 +277,7 @@ export class Renderer {
       // (step B2, ?cliff=5: the table, the box list and the variant's pipelines, made beside these; drawn once ready)
       if (this.cliffBoxBuilt && !this.cliffBox) {
         this.cliffRuleLv = cliffRuleLevel(this.mpu, this.nest.k);
-        this.cliffBox = new CliffBox(this.device, this.nest, this.cliffRuleLv, (64 * this.mpu) / this.nest.k ** this.cliffRuleLv, this.cliffAmp, this.layout, sd, this.format);
+        this.cliffBox = new CliffBox(this.device, this.nest, this.cliffRuleLv, (64 * this.mpu) / this.nest.k ** this.cliffRuleLv, this.cliffAmp, this.layout, sd, this.format, { buffer: this.ubuf, size: DU_SIZE });
       }
       if (this.cliffRuleBuilt) {
         this.cliffRuleLv = cliffRuleLevel(this.mpu, this.nest.k);
@@ -447,8 +451,9 @@ export class Renderer {
     // (round 32 step B2, ?cliff=5: the table rebuilt first when the 16 m window changed; nothing otherwise. Before the
     // uniforms: they carry the window the table was built for)
     const cb = this.cliffBox && this.cliffBoxOn && this.texDrawn && !this.texDrawn2 ? this.cliffBox : null;
+    if (cb) cb.T = this.cliffBoxT;
     cb?.update(enc);
-    const cbg = cb?.ready ? cb.drawGroup() : null;
+    const cbg = cb?.ready ? cb.groups() : null;
     this.uniforms(levels);
     // (round 28, measurement: ?gputime=1) a render pass a level and one for the sky, each timed and its fragments counted;
     // otherwise one pass. The passes after the first load what it drew, so the image is the same.
@@ -501,7 +506,7 @@ export class Renderer {
         const p = begin(`L${lv.depth} sheets`);
         if (cb && cbg && tp) {
           p.setPipeline(cb.sheet);
-          p.setBindGroup(1, cbg);
+          p.setBindGroup(1, cbg.sheet1);
         } else p.setPipeline(t2 ? t2.sheet : tp ? (this.cliffRuleOn && tp.sheet4 ? tp.sheet4 : tp.sheet) : sp.sheet);
         p.setBindGroup(0, this.bg!, [lv.depth * DU]);
         p.drawIndirect(this.nest.drawArgs, (MAX_LEVELS + lv.depth) * 16);
@@ -510,8 +515,9 @@ export class Renderer {
       if (cb && cbg && tp && levels.some((l) => l.depth === cb.lv)) {
         const p = begin('cliff boxes');
         p.setPipeline(cb.box);
-        p.setBindGroup(0, this.bg!, [cb.lv * DU]);
-        p.setBindGroup(1, cbg);
+        // (the boxes' own group 0: the uniform, the camera and the registry only; vertex stage 3 storage buffers)
+        p.setBindGroup(0, cbg.box0, [cb.lv * DU]);
+        p.setBindGroup(1, cbg.box1);
         p.drawIndirect(cb.args, 0);
       }
     } else {
@@ -656,7 +662,9 @@ export class Renderer {
       // (cl3.yzw, round 32 step B1, ?cliff=4: the 16 m level's window gx, gy, n; n 0 when it has none: cliff4.wgsl)
       // (step B2: the window the table was built for)
       const w16 = this.cliffBox ? this.cliffBox.built : this.cliffRuleBuilt ? this.nest.wins[this.cliffRuleLv] : null;
-      new Float32Array(st, lv.depth * DU + 176, 12).set([this.pxAng, this.cliffPx, this.cliffDbg, this.cliffDropF, this.cliffHN, this.cliffSink, this.cliffPatch, this.cliffGap, this.cliffGapD, w16 ? w16.gx : 0, w16 ? w16.gy : 0, w16 ? w16.n : 0]);
+      // (cl3.x with ?cliff=5: the strata on the column faces, 1 on / 0 off; version 3's gap depth otherwise)
+      const cl3x = this.cliffBox ? (this.cliffStrata ? 1 : 0) : this.cliffGapD;
+      new Float32Array(st, lv.depth * DU + 176, 12).set([this.pxAng, this.cliffPx, this.cliffDbg, this.cliffDropF, this.cliffHN, this.cliffSink, this.cliffPatch, this.cliffGap, cl3x, w16 ? w16.gx : 0, w16 ? w16.gy : 0, w16 ? w16.n : 0]);
     }
     this.device.queue.writeBuffer(this.ubuf, 0, st);
   }

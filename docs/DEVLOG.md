@@ -28593,3 +28593,30 @@ here), scripts/nested-rB2-stills.mjs (four poses, closure, steps, kinds, bench).
   step A's CPU estimate (~20) marched every pixel to 0.25 m in close views.
 - Storage buffers: fragment 5 -> 6, vertex 8 -> 10 (S = 4); the table 3 MB, the box list 256 KB.
 - The variant's pipelines (build, sheets, boxes) ~1.6-2.0 s in the page, in parallel with the textured ones.
+
+## 2026-11-20 — Nested scales lab, round 32 (step B2, part 2): bench, storage limits, strata, fill, T, notch heights
+
+**Why.** The owner tests on a phone (WebGPU's default is 8 storage buffers a stage); faces read near black; the owner
+asked for strata ("texture them with some horizontal noise to make it look like strata"), for the steepness threshold
+at 2 / 4 / 8 / 16, and for notches that span a fraction of the drop (0.1-0.9) at the coarse levels only.
+
+**What.** The box list in the table buffer; the sheets bind the table to the fragment stage only; the boxes their own
+group 0 (uniform, camera, registry). Strata and a stronger fill in cliff5.wgsl. ?cliffT= through the build's uniform
+(cliffrule.wgsl crT()). cliffrule.ts notchFrac and the "middle" defaults; cliffview.ts hollow darkening; unit test:
+notches per face; pictures rA4 / rA5; exactness at T 4.
+
+**Measured.**
+- Frame (HUD mean ms) / GPU passes (?gputime=1 sum, ms), cliff=0 vs cliff=5, 2 rounds of 3 s (before the fill and strata
+  changes; the march is the same): side16 9.90 / 3.2-3.3 vs 9.91 / 5.5-6.0 (boxes 3.2); side2 9.84-9.90 / 5.2-5.4 vs
+  10.74-10.83 / 9.6-9.7 (boxes 7.6, the L2 sheets 4.2 -> 0.7); above 9.81-9.91 / 5.5-5.9 vs 9.83-9.91 / 5.9-6.0 (boxes
+  3.3); foot 9.91-9.93 / 4.9 vs 9.87 / 5.9-6.1 (boxes 3.7). side2 drops below the display rate: box pixels 582,452 of
+  614,400 there, with overdraw (front faces of boxes behind boxes march too, no early depth).
+- Dawn compile (7 alternating rounds, median): default sheets 325 ms, fsST from the variant module 322, cliff=4 549,
+  cliff=5 sheets 404, boxes 361, table build 372.
+- Storage buffers (adapter 16, requested 16, S = 4): sheets vertex 8 / fragment 6, boxes 3 / 1, build 7.
+- Face luminance at side2 (display, p5 / p25 / p50): fill 1.0 with strata 35 / 48 / 62; fill 1.6 without strata 55 / 66
+  / 74, with strata 42 / 56 / 71; sunlit stone ~100-120.
+- T: SPLIT cells side16 4,629 / 1,641 / 132 / 0, side2 2,625 / 600 / 48 / 0 at T 2 / 4 / 8 / 16 (65,536 cells).
+- 8 m amplitude 0 / a quarter (above view): steps mean 5.8 / max 32 both; closure 0 / 1 hole pixels.
+- Notches per face column (synthetic): middle 0 / 0.45 / 3, coarse50 0 / 0.63 / 3; CPU march steps near view none 20.9,
+  middle 26.0, coarse50 29.6 a pixel.

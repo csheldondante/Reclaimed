@@ -355,7 +355,7 @@ export function render(R: Rules, v: View): Picture {
           shMax = Math.max(shMax, ss.steps);
           shN++;
         }
-        if (doAo) ao = occlusion(R, hit, hx, hy, hz);
+        if (doAo) ao = occlusion(R, hit, hx, hy, hz) * (C.notches ? hollow(R, hit, hx, hy, hz) : 1);
       }
       const o = (py * w + px) * 3;
       const col = shade(hit, dz, sun, lit, ao);
@@ -383,6 +383,21 @@ function levelFor(C: Ctx, t: number, Lf: number): number {
   return l;
 }
 
+/** (round 32 B2) a hollow's shadow, larger and deeper hollows darker: points 1, 3 and 8 m out from the hit (along a
+ *  face's normal; for a notch floor or ceiling, the 4 plan directions) that have solid rock 1.5 or 5 m above them are
+ *  overhung; up to 3 of them darken the hit to 0.4 */
+function hollow(R: Rules, hit: Hit, x: number, y: number, z: number): number {
+  if (hit.kind !== HIT_SIDE && hit.kind !== HIT_FLOOR && hit.kind !== HIT_CEIL) return 1;
+  const dirs = hit.kind === HIT_SIDE ? [[hit.nx, hit.ny]] : [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  let n = 0;
+  for (const [ux, uy] of dirs)
+    for (const d of [1, 3, 8]) {
+      const qx = x + ux * (d + 0.1);
+      const qy = y + uy * (d + 0.1);
+      if (solidAt(R, qx, qy, z + 1.5) || solidAt(R, qx, qy, z + 5)) n += 1 / dirs.length;
+    }
+  return 1 - 0.2 * n;
+}
 /** a cheap recess term: 4 solid tests 0.75 m around the hit, in front of a face (or above a top) */
 function occlusion(R: Rules, hit: Hit, x: number, y: number, z: number): number {
   const d = 0.75;

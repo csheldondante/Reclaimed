@@ -23,7 +23,14 @@ await run({ name: 'rB2-stills', kind: 'behaviour', size: '960x640', dpr: 1, echo
   await page.waitForFunction(() => window.nested && nested.app.pipesReady && nested.app.genReady && nested.app.frameCount > 30, { timeout: 180000, polling: 200 });
   await page.waitForFunction(() => nested.app.render.texDrawn && nested.app.render.cliffBox && nested.app.render.cliffBox.ready, { timeout: 120000, polling: 200 });
   const pipes = await page.evaluate(() => ({ tex: nested.app.render.texCompileMs, box: nested.app.render.cliffBox.compileMs, S: nested.app.nest.S }));
-  console.log(`pipelines: textured ${pipes.tex.toFixed(0)} ms; cliff boxes (build + sheets + boxes, in parallel) ${pipes.box.toFixed(0)} ms; fragment storage buffers 1 + S + 1 = ${2 + pipes.S}`);
+  console.log(`pipelines: textured ${pipes.tex.toFixed(0)} ms; cliff boxes (build + sheets + boxes, in parallel) ${pipes.box.toFixed(0)} ms; segments S ${pipes.S}`);
+  const lim = await page.evaluate(async () => {
+    const ad = await navigator.gpu.requestAdapter();
+    return { adapter: ad.limits.maxStorageBuffersPerShaderStage, device: nested.app.render.device.limits.maxStorageBuffersPerShaderStage };
+  });
+  console.log(`storage buffers per stage: adapter ${lim.adapter}, device (requested) ${lim.device}`);
+  // (--strata 1: a strata off / on pair at side2 and side16 instead of the box pairs)
+  const strata = R.opt('strata', '0') === '1';
   const settle = async (minLive = 0) => {
     for (let i = 0; i < 400; i++) {
       await sleep(150);
@@ -93,14 +100,20 @@ await run({ name: 'rB2-stills', kind: 'behaviour', size: '960x640', dpr: 1, echo
     const out = [];
     const hs = [];
     for (const on of [false, true]) {
-      await page.evaluate((on) => (nested.app.render.cliffBoxOn = on), on);
+      await page.evaluate(
+        ({ on, strata }) => {
+          if (strata) nested.app.render.cliffStrata = on;
+          else nested.app.render.cliffBoxOn = on;
+        },
+        { on, strata },
+      );
       await page.evaluate(() => {
         nested.app.frozen = false;
         return new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(res))));
       });
       await page.evaluate(() => (nested.app.frozen = true));
       await sleep(400);
-      const file = `local/nested/${tag}-${name}-cliff${on ? 5 : 0}.png`;
+      const file = strata ? `local/nested/${tag}-${name}-strata${on ? 1 : 0}.png` : `local/nested/${tag}-${name}-cliff${on ? 5 : 0}.png`;
       await page.screenshot({ path: file });
       out.push(file);
       hs.push(await holes(pitch));
@@ -153,6 +166,43 @@ await run({ name: 'rB2-stills', kind: 'behaviour', size: '960x640', dpr: 1, echo
     above: [look([C[0] - spot.dir[0] * 0.25, C[1] - spot.dir[1] * 0.25, spot.hi + 0.9], [C[0] + spot.dir[0] * 0.15, C[1] + spot.dir[1] * 0.15, zMid]), 3],
     foot: [look([C[0] + spot.dir[0] * 0.25 + perp[0] * 0.05, C[1] + spot.dir[1] * 0.25 + perp[1] * 0.05, spot.lo + 0.04], [C[0], C[1], spot.hi]), 3],
   };
+  // (--tlist 2,4,8,16: per pose a still at each steep threshold T (render.cliffBoxT; the table rebuilt) and the SPLIT cells
+  // in the window (the box count from the indirect arguments, read back: measurement only); nothing else)
+  const tlist = R.opt('tlist', '').split(',').filter(Boolean).map(Number);
+  if (tlist.length) {
+    for (const [name, [v, minLive]] of Object.entries(poses)) {
+      if (only.length && !only.includes(name)) continue;
+      await page.evaluate((v) => nested.setView(v), v);
+      await settle(minLive);
+      await page.evaluate(() => (nested.app.frozen = true));
+      for (const T of tlist) {
+        const r = await page.evaluate(async (T) => {
+          const a = nested.app;
+          const cb = a.render.cliffBox;
+          const b0 = cb.builds;
+          a.render.cliffBoxT = T;
+          for (let i = 0; i < 100 && cb.builds === b0; i++) await new Promise((res) => setTimeout(res, 50));
+          await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(res))));
+          const dev = a.render.device;
+          const buf = dev.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+          const enc = dev.createCommandEncoder();
+          enc.copyBufferToBuffer(cb.args, 0, buf, 0, 16);
+          dev.queue.submit([enc.finish()]);
+          await buf.mapAsync(GPUMapMode.READ);
+          const n = new Uint32Array(buf.getMappedRange())[1];
+          buf.unmap();
+          buf.destroy();
+          return { n, cells: cb.built.n * cb.built.n, rebuilt: cb.builds !== b0 };
+        }, T);
+        await sleep(300);
+        const file = `local/nested/${tag}-${name}-T${T}.png`;
+        await page.screenshot({ path: file });
+        console.log(`${name} T ${T}: SPLIT cells ${r.n} of ${r.cells} (${((100 * r.n) / r.cells).toFixed(2)} %), rebuilt ${r.rebuilt}; ${file}`);
+      }
+      await page.evaluate(() => (nested.app.frozen = false));
+    }
+    return;
+  }
   for (const [name, [v, minLive]] of Object.entries(poses)) {
     if (only.length && !only.includes(name)) continue;
     await page.evaluate((v) => nested.setView(v), v);

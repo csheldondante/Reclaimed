@@ -9,6 +9,8 @@
 // axis, the TS hAt's edge rule. A column with no solid record (not loaded) sets crMissing (the pixel is painted magenta).
 
 var<private> crMissing: bool;
+/** the steep threshold, cell widths (B1: step A's default) */
+fn crT() -> i32 { return 2; }
 fn crH(x: i32, y: i32) -> i32 {
   let g = vec3<i32>(i32(d.cl3.y), i32(d.cl3.z), i32(d.cl3.w));
   let X = clamp(x, g.x, g.x + g.z - 1);

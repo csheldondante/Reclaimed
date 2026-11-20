@@ -9,11 +9,13 @@
 //   Depth is the box face's (logged limit).
 // Not yet: notches (?cliffGap), shadows.
 
+// (the table, then the box list after its n x n records: one buffer, so the box draw binds one storage buffer to the
+// vertex stage beside the camera and the registry: cliffbox.ts)
 @group(1) @binding(0) var<storage, read> crTab: array<u32>;
-@group(1) @binding(1) var<storage, read> crList: array<u32>;
 
 /** (cliffrule.wgsl's crKindOf needs a height source; the draw never derives a cell, it reads the table) */
 fn crH(x: i32, y: i32) -> i32 { return 0; }
+fn crT() -> i32 { return 2; }
 
 /** the march's step cap (nodes visited a pixel) */
 const CR5_CAP: i32 = 96;
@@ -120,7 +122,7 @@ const CR5_TRI = array<u32, 6>(0u, 1u, 2u, 0u, 2u, 3u);
 fn vsBox5(@builtin(vertex_index) vi: u32, @builtin(instance_index) inst: u32) -> VBox {
   var o: VBox;
   let g = cr5Win();
-  let ent = crList[inst];
+  let ent = crTab[CR_REC * u32(g.z * g.z) + inst];
   let lx = i32(ent & 0xffffu);
   let ly = i32(ent >> 16u);
   let idx = u32(ly * g.z + lx);
@@ -186,11 +188,47 @@ fn cr5Shade(q: vec3<f32>, zo: f32, n: vec3<f32>, mat: u32, pxL: f32, toEye: vec3
   if (side) {
     si.colW = 1.0;
     si.colN = n;
-    si.colTint = 1.0;
+    // (the strata, cl3.x on: a brightness by world height; the pixel's size in metres for the fade)
+    var st = 1.0;
+    if (d.cl3.x > 0.5) {
+      let k = pow(d.misc.w, f32(CR_LV));
+      let mpl = d.geo.x / k;
+      let pm = vec3<f32>((vec2<f32>(d.lvl.xy) + q.xy) * mpl, (zo + q.z / k) * d.geo.x);
+      st = cr5Strata(pm, pxL * mpl);
+    }
+    si.colTint = st;
     si.colAo = ao;
-    si.colFill = 0.25;
+    // (a fill strong enough that a face turned from the sun stays readable stone: shFinish adds colFill x the sun x a
+    // squared half-Lambert; at 1.0 the darkest faces in side2 read 35 against ~100-120 for sunlit stone (display
+    // luminance), so 1.6: see DEVLOG)
+    si.colFill = CR5_FILL;
   }
   return texShade(si);
+}
+const CR5_FILL: f32 = 1.6;
+
+// ---- (step B2) strata on the column faces: shading only, a function of the world position alone (metres) ----------
+/** a hashed value in -1..1 for layer boundary or layer k */
+fn cr5Hs(k: i32, salt: i32, lane: i32) -> f32 { return f32(crHash3(k, lane, salt) & 1023u) / 511.5 - 1.0; }
+/** one scale of layers along z: nominal thickness T, each boundary moved by up to J (< T / 2, so they stay in order), a
+ *  hashed brightness of +-amp a layer, faded out where a layer is under about 2 pixels (pxM metres a pixel) */
+fn cr5Layer(z: f32, T: f32, J: f32, salt: i32, pxM: f32, amp: f32) -> f32 {
+  let j0 = i32(floor(z / T));
+  var j = j0;
+  if (z < f32(j0) * T + J * cr5Hs(j0, salt, 1)) {
+    j = j0 - 1;
+  } else if (z >= f32(j0 + 1) * T + J * cr5Hs(j0 + 1, salt, 1)) {
+    j = j0 + 1;
+  }
+  let fade = smoothstep(1.0, 3.0, T / max(pxM, 1e-6));
+  return 1.0 + amp * cr5Hs(j, salt, 2) * fade;
+}
+/** the strata brightness at world point pm (metres): two scales (layers of 0.5-3.5 m and 0.16-1 m), the layers drifting
+ *  up and down slowly along the wall (value noise over plan position, up to about +-2.8 m) */
+fn cr5Strata(pm: vec3<f32>, pxM: f32) -> f32 {
+  let dz = 2.0 * (2.0 * vnoise(pm.xy / 80.0) - 1.0) + 0.8 * (2.0 * vnoise(pm.xy / 23.0 + vec2<f32>(17.0)) - 1.0);
+  let z = pm.z + dz;
+  return cr5Layer(z, 2.0, 0.75, 0x7101, pxM, 0.24) * cr5Layer(z, 0.6, 0.22, 0x7202, pxM, 0.10);
 }
 
 @fragment

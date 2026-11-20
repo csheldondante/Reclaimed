@@ -1,8 +1,16 @@
 // Nested scales lab, round 32 step B2 (docs/design/NESTED_SCALES.md "As built (round 32, step B2)"): ?cliff=5, the cliff
-// rule drawn on real terrain. Owns the per-cell table of the 16 m window and the SPLIT cells' box list (built on the GPU by
-// gpu/cliffbuild.wgsl when the window's contents change: a new window, or the store settling after an op; never per frame),
-// and the module variant's two pipelines: the textured sheets with SPLIT cells discarded (fsST5) and the boxes marched
-// inside (vsBox5 / fsBox5, gpu/cliff5.wgsl). Renderer calls update() before its passes and draws through it.
+// rule drawn on real terrain. Owns the per-cell table of the 16 m window and the SPLIT cells' box list (one buffer: the
+// list after the cells; built on the GPU by gpu/cliffbuild.wgsl when the window's contents change: a new window, or the
+// store settling after an op; never per frame), and the module variant's two pipelines: the textured sheets with SPLIT
+// cells discarded (fsST5) and the boxes marched inside (vsBox5 / fsBox5, gpu/cliff5.wgsl). Renderer calls update() before
+// its passes and draws through it.
+//
+// Storage buffers per stage (WebGPU's default limit is 8; the page asks for the adapter's, and the pool takes
+// S = min(4, limit - 6) segments, so the default draws use 4 + S in the vertex stage):
+//   sheets: the default group 0 (vertex 4 + S, fragment 1 + S) + the table to the fragment stage only: vertex 4 + S,
+//           fragment 2 + S (8 / 6 with S = 4; 6 / 4 on a device limited to 8, where S = 2);
+//   boxes:  their own group 0 (the uniform, the camera, the registry: nothing else is read) + the table: vertex 3,
+//           fragment 1.
 import storeWgsl from './gpu/store.wgsl?raw';
 import cliffRuleWgsl from './gpu/cliffrule.wgsl?raw';
 import cliffBuildWgsl from './gpu/cliffbuild.wgsl?raw';
@@ -27,6 +35,8 @@ export class CliffBox {
   built: Win | null = null;
   /** table builds so far (measurement) */
   builds = 0;
+  /** the steep threshold T, cell widths (?cliffT=, default 2; a change rebuilds the table) */
+  T = 2;
   /** the pipelines' creation time, ms */
   compileMs = 0;
   ready = false;
@@ -34,15 +44,16 @@ export class CliffBox {
   box!: GPURenderPipeline;
   private buildPipe!: GPUComputePipeline;
   private buildLayout: GPUBindGroupLayout;
-  readonly drawLayout: GPUBindGroupLayout;
+  private sheetG1: GPUBindGroupLayout;
+  private boxG0: GPUBindGroupLayout;
+  private boxG1: GPUBindGroupLayout;
   private tab: GPUBuffer | null = null;
-  private list: GPUBuffer | null = null;
   readonly args: GPUBuffer;
   private ubuf: GPUBuffer;
   private cap = 0;
   private dirty = true;
   private key = '';
-  private drawBg: GPUBindGroup | null = null;
+  private bgs: { sheet1: GPUBindGroup; box0: GPUBindGroup; box1: GPUBindGroup } | null = null;
   readonly whenReady: Promise<void>;
 
   constructor(
@@ -54,16 +65,20 @@ export class CliffBox {
     layout0: GPUBindGroupLayout,
     sheetDesc: GPURenderPipelineDescriptor,
     format: GPUTextureFormat,
+    /** the draw's uniform buffer and its binding size (the boxes' own group 0 binds it with the level's offset) */
+    private drawU: { buffer: GPUBuffer; size: number },
   ) {
-    const VF = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
+    const V = GPUShaderStage.VERTEX;
+    const F = GPUShaderStage.FRAGMENT;
     const ro = { type: 'read-only-storage' as const };
-    // (group 1 of the variant's draws: the table to the vertex and fragment stages, the box list to the vertex stage: the
-    // fragment stage's storage buffers go from 1 + S to 2 + S)
-    this.drawLayout = device.createBindGroupLayout({
-      label: 'cliff box draw',
+    this.sheetG1 = device.createBindGroupLayout({ label: 'cliff sheets g1', entries: [{ binding: 0, visibility: F, buffer: ro }] });
+    this.boxG1 = device.createBindGroupLayout({ label: 'cliff boxes g1', entries: [{ binding: 0, visibility: V | F, buffer: ro }] });
+    this.boxG0 = device.createBindGroupLayout({
+      label: 'cliff boxes g0',
       entries: [
-        { binding: 0, visibility: VF, buffer: ro },
-        { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: ro },
+        { binding: 0, visibility: V | F, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: drawU.size } },
+        { binding: 3, visibility: V, buffer: ro },
+        { binding: 4, visibility: V, buffer: ro },
       ],
     });
     const C = GPUShaderStage.COMPUTE;
@@ -74,24 +89,22 @@ export class CliffBox {
         { binding: 0, visibility: C, buffer: { type: 'uniform' } },
         { binding: 1, visibility: C, buffer: ro },
         { binding: 2, visibility: C, buffer: rw },
-        { binding: 3, visibility: C, buffer: rw },
         { binding: 4, visibility: C, buffer: rw },
         ...Array.from({ length: nest.S }, (_, j) => ({ binding: SEG_BASE + j, visibility: C, buffer: ro })),
       ],
     });
-    this.args = device.createBuffer({ label: 'cliff box args', size: 16, usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    this.args = device.createBuffer({ label: 'cliff box args', size: 16, usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
     this.ubuf = device.createBuffer({ label: 'cliff build uniform', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const t0 = performance.now();
     const mb = device.createShaderModule({ label: 'cliff table build', code: cliffBuildCode(nest.S, nest.segP, lv, upl, ampL) });
     const md = device.createShaderModule({ label: 'nest draw (cliff boxes)', code: cliffBoxCode(nest.S, nest.segP, lv, upl, ampL) });
-    const pl = device.createPipelineLayout({ bindGroupLayouts: [layout0, this.drawLayout] });
     const targets = [{ format }, { format: 'rgba8unorm' as GPUTextureFormat }];
     this.whenReady = Promise.all([
       device.createComputePipelineAsync({ label: 'cliff table build', layout: device.createPipelineLayout({ bindGroupLayouts: [this.buildLayout] }), compute: { module: mb, entryPoint: 'crBuild' } }),
-      device.createRenderPipelineAsync({ ...sheetDesc, label: 'nest draw sheets (cliff boxes)', layout: pl, vertex: { module: md, entryPoint: 'vsSheet5' }, fragment: { module: md, entryPoint: 'fsST5', targets } }),
+      device.createRenderPipelineAsync({ ...sheetDesc, label: 'nest draw sheets (cliff boxes)', layout: device.createPipelineLayout({ bindGroupLayouts: [layout0, this.sheetG1] }), vertex: { module: md, entryPoint: 'vsSheet5' }, fragment: { module: md, entryPoint: 'fsST5', targets } }),
       device.createRenderPipelineAsync({
         label: 'nest draw cliff boxes',
-        layout: pl,
+        layout: device.createPipelineLayout({ bindGroupLayouts: [this.boxG0, this.boxG1] }),
         vertex: { module: md, entryPoint: 'vsBox5' },
         fragment: { module: md, entryPoint: 'fsBox5', targets },
         primitive: { topology: 'triangle-list', cullMode: 'none' },
@@ -111,19 +124,18 @@ export class CliffBox {
     if (!this.ready) return;
     const w = this.nest.wins[this.lv];
     if (!w) return;
-    const key = `${w.gx},${w.gy},${w.n}`;
+    const key = `${w.gx},${w.gy},${w.n},${this.T}`;
     if (key !== this.key || !this.nest.settled || this.nest.switching) this.dirty = true;
     if (!this.dirty || !this.nest.settled || this.nest.switching) return;
     const cells = w.n * w.n;
     if (cells > this.cap) {
       this.tab?.destroy();
-      this.list?.destroy();
       this.cap = cells;
-      this.tab = this.device.createBuffer({ label: 'cliff table', size: cells * REC * 4, usage: GPUBufferUsage.STORAGE });
-      this.list = this.device.createBuffer({ label: 'cliff box list', size: cells * 4, usage: GPUBufferUsage.STORAGE });
-      this.drawBg = null;
+      // (the cells' records, then the box list: one word a SPLIT cell at most)
+      this.tab = this.device.createBuffer({ label: 'cliff table', size: cells * (REC + 1) * 4, usage: GPUBufferUsage.STORAGE });
+      this.bgs = null;
     }
-    this.device.queue.writeBuffer(this.ubuf, 0, new Int32Array([w.gx, w.gy, w.n, 0]));
+    this.device.queue.writeBuffer(this.ubuf, 0, new Int32Array([w.gx, w.gy, w.n, this.T]));
     this.device.queue.writeBuffer(this.args, 0, new Uint32Array([36, 0, 0, 0]));
     // (the segments can be replaced by a grow: the build's bind group is made for each build)
     const bg = this.device.createBindGroup({
@@ -133,7 +145,6 @@ export class CliffBox {
         { binding: 0, resource: { buffer: this.ubuf } },
         { binding: 1, resource: { buffer: this.nest.tab } },
         { binding: 2, resource: { buffer: this.tab! } },
-        { binding: 3, resource: { buffer: this.list! } },
         { binding: 4, resource: { buffer: this.args } },
         ...this.nest.segBuffers().map((buffer, j) => ({ binding: SEG_BASE + j, resource: { buffer } })),
       ],
@@ -150,17 +161,23 @@ export class CliffBox {
     this.dirty = false;
     this.builds++;
   }
-  /** group 1 of the variant's draws */
-  drawGroup(): GPUBindGroup | null {
-    if (!this.tab || !this.list) return null;
-    this.drawBg ??= this.device.createBindGroup({
-      label: 'cliff box draw',
-      layout: this.drawLayout,
-      entries: [
-        { binding: 0, resource: { buffer: this.tab } },
-        { binding: 1, resource: { buffer: this.list } },
-      ],
-    });
-    return this.drawBg;
+  /** the variant's bind groups: group 1 of the sheets, groups 0 and 1 of the boxes */
+  groups(): { sheet1: GPUBindGroup; box0: GPUBindGroup; box1: GPUBindGroup } | null {
+    if (!this.tab) return null;
+    const tab = this.tab;
+    this.bgs ??= {
+      sheet1: this.device.createBindGroup({ label: 'cliff sheets g1', layout: this.sheetG1, entries: [{ binding: 0, resource: { buffer: tab } }] }),
+      box1: this.device.createBindGroup({ label: 'cliff boxes g1', layout: this.boxG1, entries: [{ binding: 0, resource: { buffer: tab } }] }),
+      box0: this.device.createBindGroup({
+        label: 'cliff boxes g0',
+        layout: this.boxG0,
+        entries: [
+          { binding: 0, resource: { buffer: this.drawU.buffer, size: this.drawU.size } },
+          { binding: 3, resource: { buffer: this.nest.cam } },
+          { binding: 4, resource: { buffer: this.nest.reg } },
+        ],
+      }),
+    };
+    return this.bgs;
   }
 }

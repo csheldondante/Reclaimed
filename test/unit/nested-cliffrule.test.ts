@@ -247,6 +247,44 @@ describe('nested cliff rule (round 32 step A)', () => {
     console.log(`notch probes ${probes}: air ${air} (${((100 * air) / probes).toFixed(2)} % of all up/down column z under H; only faces within depth of a lower column can open)`);
   });
 
+  it('notches per column face (round 32 B2: heights a fraction of the drop; reported)', () => {
+    // a face column: up, with the column one step toward lo down. Its notches: the separate air intervals from L to H
+    const report = (label: string, Q: Rules) => {
+      const counts: number[] = [];
+      let hFrac = 0;
+      let nN = 0;
+      for (const [cx, cy] of splits(Q)) {
+        const r = cellOf(Q, cx, cy);
+        const sx = -Math.sign(r.a);
+        const sy = -Math.sign(r.b);
+        for (let iy = 0; iy < N; iy += 2)
+          for (let ix = 0; ix < N; ix += 2) {
+            const gx = cx * N + ix;
+            const gy = cy * N + iy;
+            if (preTop(Q, gx, gy) !== r.H || preTop(Q, gx + sx, gy + sy) !== r.L) continue;
+            let n = 0;
+            for (let z = r.L; z < r.H; ) {
+              const nz = notchAt(Q, gx, gy, z);
+              if (nz) {
+                n++;
+                hFrac += (nz[1] - nz[0]) / (r.H - r.L);
+                nN++;
+                z = nz[1];
+              } else z += 16;
+            }
+            counts.push(n);
+          }
+      }
+      const mean = counts.reduce((s, x) => s + x, 0) / Math.max(1, counts.length);
+      const line = `notches per column face (${label}): ${counts.length} face columns, min ${Math.min(...counts)} mean ${mean.toFixed(2)} max ${Math.max(...counts)}; faces with none ${counts.filter((x) => x === 0).length}; a notch's height / drop mean ${(hFrac / Math.max(1, nN)).toFixed(2)}`;
+      console.log(line);
+      return { mean, max: Math.max(...counts) };
+    };
+    const mid = report('middle (default)', R);
+    report('coarse50', rules({ notchPctL: [0, 50, 40, 0, 0, 0, 0], notchDepthL: [0, 4, 4, 4, 4, 4, 4] }));
+    expect(mid.max).toBeLessThanOrEqual(20);
+  });
+
   it('the O(1) margin depth test against round 2 sampled tops (reported)', () => {
     for (const [label, over] of [
       ['tame', {}],
@@ -364,7 +402,19 @@ describe.skipIf(!process.env.RA_PICS)('nested cliff rule pictures', () => {
     const only = process.env.RA_ONLY;
     const jobs: [string, string, Partial<CliffParams>][] = [];
     const P = process.env.RA_PREFIX ?? 'rA2';
-    if (P === 'rA2') {
+    const none: Partial<CliffParams> = { notchPctL: all(0) };
+    if (P === 'rA4') {
+      // round 32 B2: notch heights a fraction 0.1-0.9 of the drop, coarse levels only (defaults "middle")
+      const coarse50: Partial<CliffParams> = { notchPctL: [0, 50, 40, 0, 0, 0, 0], notchDepthL: all(4) };
+      for (const v of ['near', 'trench']) {
+        jobs.push([`${P}-${v}-none`, v, none]);
+        jobs.push([`${P}-${v}-middle`, v, {}]);
+        jobs.push([`${P}-${v}-coarse50`, v, coarse50]);
+      }
+    } else if (P === 'rA5') {
+      // round 32 B2: the steep threshold T at 2 and 4 under the carves, no notches
+      for (const v of ['near', 'trench', 'bowlback']) for (const T of [2, 4]) jobs.push([`${P}-${v}-T${T}`, v, { ...none, T }]);
+    } else if (P === 'rA2') {
       // round 2 (with round 2's notch rule: sampled depth, cell keys, fixed segments)
       const r2: Partial<CliffParams> = { slotLog: 0, segFit: false, notchMargin: false, notchHMax: 3 };
       for (const v of ['far', 'near', 'above', 'bowl', 'trench', 'carves']) jobs.push([`${P}-${v}-dramatic15`, v, { ...r2, ...dramatic(15) }]);

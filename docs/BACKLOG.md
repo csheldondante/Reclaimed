@@ -996,7 +996,17 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
 - NS-290 (limit, round 32 B2) The table is rebuilt only when the store settles: during an edit or a slide the draw uses
   the last table and its window. A column with no solid record turns its cell into a sheet.
 - NS-291 (hack, round 32 B2) The ?cliff=5 draw module defines a stub crH (returns 0) only because cliffrule.wgsl's
-  crKindOf needs a height source to compile; the draw never derives a cell.
+  crKindOf needs a height source to compile; the draw never derives a cell. (B2 part 2: crT() likewise.)
+- NS-292 (perf, round 32 B2) ?cliff=5 costs 4.3 ms of GPU at side2 (boxes 7.6 ms, the page's frame 10.8 ms over the
+  display's 9.9); every front face of every box marches, those behind nearer boxes too (no early depth: the depth is
+  written per fragment). Options: front-to-back box order, a depth pre-pass of the box faces, or sheets-first culling.
+- NS-293 (look, round 32 B2) The fill (colFill 1.6) is a constant; faces turned from the sun read 42-66 against ~110 for
+  sunlit stone at side2. A per-scene fill or sky light on faces may be wanted.
+- NS-294 (port, round 32 B2) The drop-fraction notches (cliffrule.ts notchFrac) are CPU only; ?cliffGap=1 in the
+  shader not built.
+- NS-295 (look, round 32 B2) The CPU hollow darkening (cliffview.ts hollow) probes 12 solid tests a hit; a shader port
+  needs it O(1) (the notch's own depth and height are known at the hit).
+
 - NS-253 (test, round 31) Compile times swing 1.5-2.5x between runs on this machine (drawFieldTex 295-820 ms with no
   change); version 3's textured variants (drawBoxesTexV3 / drawSheetsTexV3) got a 600 ms budget from 341-457 / 401-535 ms.
 - NS-254 (hack, round 31) The pixel's size per unit of distance (draw uniform cl.x) is written by the app each frame

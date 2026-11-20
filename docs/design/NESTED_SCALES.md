@@ -1967,6 +1967,35 @@ bind groups, at an acceptable cost (no march yet)? Yes.
   side2 8.6 / 32, above 5.6 / 27, foot 4.4 / 21; none at the cap. The first count (2-3) counted only node exits.
 - Stills local/nested/rB2h-<pose>-cliff0|5.png, -steps.png, -kinds.png (side16, side2, above, foot). Open items
   NS-288..NS-291.
+
+**As built (round 32, step B2, part 2): storage limits, strata, fill, the threshold T, notch heights from the drop.**
+- *Storage buffers per stage.* The page requests the adapter's limit (16 here); the pool takes S = min(4, limit - 6)
+  segments. The box list moved into the table buffer (after the n x n records); the sheets bind the table to the
+  fragment stage only (vertex 4 + S, fragment 2 + S: 8 / 6 here, 6 / 4 on an 8-limit phone, where S = 2); the boxes have
+  their own group 0 (the uniform, the camera, the registry) and the table: vertex 3, fragment 1. The build: 7 (uniform
+  aside). No stage of the variant needs more than 8.
+- *Fill.* Column faces get colFill 1.6 (shFinish's squared half-Lambert share of the sun): display luminance at side2,
+  faces p5 / p25 / p50 = 55 / 66 / 74 without strata (42 / 56 / 71 with), sunlit stone ~100-120, tops ~200.
+- *Strata* (cliff5.wgsl cr5Strata, `?cliffStrata=0` off, a uniform: cl3.x): the stone's brightness by world height in
+  metres: two scales of layers (2 m +- 0.75 and 0.6 m +- 0.22, boundaries moved by integer hashes, +-24 % and +-10 %),
+  the height first shifted by a slow value noise over plan position (periods 80 m and 23 m, up to about +-2.8 m) so the
+  layers drift along the wall; each scale fades out under about 2 pixels a layer. World position only.
+- *T* (`?cliffT=`, integer, default 2; render.cliffBoxT, a uniform of the table build: a change rebuilds the table).
+  cliffrule.wgsl takes T from the includer (crT()). The rule compares the RANGE over a cell and its 4 neighbours with T
+  cell widths: on a plane of slope s along an axis the range is 2 s w, so T means s > T / 2: T 2 45 deg, 4 63 deg, 8
+  76 deg, 16 83 deg; along a diagonal the range is sqrt(2) s w (T 2: 55 deg). SPLIT cells in the window: side16's 4,629 /
+  1,641 / 132 / 0 and side2's 2,625 / 600 / 48 / 0 at T 2 / 4 / 8 / 16. WGSL = TS at T 4 on the synthetic field (111
+  split cells, 454,656 columns, 0 mismatches).
+- *Notch heights from the drop* (cliffrule.ts notchFrac, default [0.1, 0.9]; [0, 0] = round 3's segments): the face's z
+  from L is cut into consecutive spans, each a hashed 0.1-0.9 of H - L (at least a cell of the level), each a notch with
+  the level's share, cut back under the level's top cell; slot key and margin depth test as before. Defaults now
+  "middle": 8 m 25 % depth <= 2, 4 m 25 % depth <= 3, finer levels 0 (the owner: the little ones are not worth it).
+  cliffview.ts darkens hollows: points 1, 3, 8 m out from a face (or round a notch floor / ceiling) with rock 1.5 or 5 m
+  above them, up to 3, to 0.4. Notches per face column (synthetic field, every other column of every split cell): middle
+  min 0 / mean 0.45 / max 3 (61 % none), height / drop mean 0.42; coarse50 0 / 0.63 / 3, 0.48. Not ported to the shader.
+- Stills: local/nested/rB2i-* (the four poses with the fill), rB2s-side2|side16-strata0|1.png, rB2T-side16|side2-T2|4|8|
+  16.png, rB2a0-above-cliff5.png (8 m amplitude 0), rB2a64-above-cliff5.png (a quarter); CPU pictures rA4-near|trench-
+  none|middle|coarse50.png, rA5-near|trench|bowlback-T2|T4.png.
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.
