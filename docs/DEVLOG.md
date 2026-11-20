@@ -28341,3 +28341,20 @@ budget except one cold run (sheets 412 of 400, with the untouched sheetBake also
 **Reading.** Yes at the 16 m level (blocks read, though as man-made masonry more than natural columns); poor when the
 finer level opens (block size follows the drawn level). Limits NS-241..NS-245. Version 2 (`?cliff=2`, next): columns
 by a ray march through fixed world cells.
+
+## 2026-11-20 — Nested scales lab, round 31 (version 2): standing columns by a ray march (`?cliff=2`)
+
+**Why.** The owner wanted lit vertical columns seen from the side, not painted masonry; version 2 marches the view ray
+through hashed columns in the pixel shader (no geometry, no reads) so faces, tops and depth come out of the march.
+
+**What.** NESTED_SCALES.md "As built (round 31, version 2)": shade.wgsl shCol (fixed world cells, `?cliffW=` default 4 m,
+`?cliffN=` steps default 4), applied in texShade through new ShadeIn fields; draw.wgsl texOut runs it and discards a miss
+when `?cliffcut=1` is compiled in and on. Uniform word: bit 30 version 2, bits 24-27 the steps. (Code in fc539f71; these
+notes in the next commit: the doc edits missed that commit.)
+
+**Measured.** Same views as version 1 (stills local/nested/r31v2-side16-*, r31v2-side2-*). Frame time at side2, 3 s each,
+3 times: page frame 9.91 / 9.91 / 9.91 ms off vs 9.92 / 9.91 / 9.91 on; GPU passes 5.46 / 6.20 / 6.27 vs 6.34 / 5.91 /
+5.93 ms (no clear difference). Compile (Dawn): boxes / sheets / field textured 340 / 344 / 421 ms, within budget.
+
+**Reading.** At side2 the wall reads as standing columns (too regular, thin, shaded faces near black); at side16 4 m
+cells are noise. Next: cell size (8, 16, by footprint), a fill on shaded faces, the miss discard. Limits NS-246, NS-247.

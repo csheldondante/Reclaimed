@@ -884,6 +884,11 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   to hide the missing notch floor; not yet run in a browser (no stills, no timing).
 - NS-245 (measurement, round 31) Frame time of `?cliff=1` measured headless on the desktop only (+~0.3 ms GPU passes,
   within noise; page frame 9.9 ms either way); not on the phone.
+- NS-246 (hack, round 31) `?cliff=2` takes the ground near a pixel as one plane (curvature ignored: neighbouring pixels
+  can disagree on a column's top), clamps the normal's z to 0.05, and uses an axis-aligned regular cell grid (square
+  posts). A miss after `?cliffN` cells falls back to the smooth shading (columns stop abruptly).
+- NS-247 (limit, round 31) `?cliff=2` hits are lit by the existing sun and ambient only: no shadows between columns;
+  faces away from the sun read near black (step b of round 31 looks at a fill).
 - NS-229 (perf, round 28) The boot gate's "every boot pipeline" is the first frame's pipelines and then derive's compile
   (7.6-9.1 s in Chrome, 2.4 s in Dawn), which grew with rounds 25 and 27; the 512 MB reload read 17,971 and 19,409 ms
   against 19,000 this round. Cut derive's compile (the generator and material code out of the layer pass's unrolled

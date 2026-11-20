@@ -1711,6 +1711,16 @@ as stone masonry (blocks clearly, natural columns less); with the 2 m level open
 the coarse level's big blocks meet the fine level's small ones (NS-241). `?cliffcut=1` (skyline notches by discard,
 draw.wgsl cliffCutAt, behind the override CLIFF_CUT so it is compiled in only then) is built but not yet run (NS-244).
 Measurements in DEVLOG round 31.
+
+**As built (round 31, version 2): standing columns by a ray march, `?cliff=2`.** shade.wgsl shCol, called from draw.wgsl
+texOut (so a miss can be discarded). On a steep pixel the ground is the plane through it with the geometric normal; plan
+cells of a fixed world width (`?cliffW=` metres, default 4, a power of two of the shading unit; nothing changes when a
+level opens) each hold a column whose top is the plane at the cell centre snapped down to a half cell, less 0..2 half
+cells by an integer hash. The view ray is stepped across cells (2D DDA, `?cliffN=` cells, default 4): a side hit takes
+the crossed face's axis as normal, a top hit up; the start cell first (inside it: followed back to its top or face).
+Per-column tint, dark vertical edge lines, a lit rim under a side's top, darker deeper hits; a miss shades as version 0
+(or is discarded with `?cliffcut=1`). Stills local/nested/r31v2-side2-*, r31v2-side16-*: at side2 the lower wall reads
+as standing columns (regular square posts, shaded faces near black); at side16 the 4 m cells are a streaky noise.
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.
