@@ -77,6 +77,31 @@ Round 32, the real thing:
 - Stored correction on the CPU: up to ~50 fine columns (12 m) at full 8 m amplitude, ~34 at half. It is 0 in
   the shader, so shader means are off.
 
+## Corrections from the owner after the first version of this document (2026-11-20, late)
+- **The owner judges looks, not the orchestrator.** "I really want you to show me and ask me to judge the look
+  because I don't always agree with your judgement". Show every variant asked for, in the real view, side by
+  side; describe faults; ask. Never drop, defer or alter a look on the orchestrator's taste.
+- **Notches are wanted.** On the CPU pictures `rA4-trench-middle`, `rA4-trench-coarse50` and
+  `rA2-near-dramatic30`: "The notches look great in two of the three pictures and with better lighting are
+  likely fine in the third". The orchestrator had recommended dropping them: wrong. They had never been built
+  in the shader; a builder was porting them (`?cliffGap=1` in the `?cliff=5` march; four versions: none,
+  coarse middle, coarse many, every level) when this was written. The earlier "little notches are not worth
+  it" was said about test pictures; "every level" is being shown once more in the real view.
+- **Fine columns are wanted.** "Why do the columns look wider again and not pixel width? I thought it looked
+  so much cooler with smaller columns." Cause: step A round 2 cut the 1 / 0.5 / 0.25 m amplitudes to 3-10 % of
+  a cell and decides up/down per 2 m block (the orchestrator's fix for pin-stripes, never shown to the owner as
+  a before/after). Queued: fine levels back to a full cell of noise, three settings side by side, the block
+  size down to 0.5 m in one, with frame time.
+- **A brushed sphere at T=4 is fine.** "the sphere looks fine … The lighting and shape look fine to me". No
+  stone columns are needed there. The ring of teeth at its foot is the MATERIAL boundary, not geometry (step
+  B5, script `scripts/nested-rB5-skirt.mjs`, stills `local/nested/rB5-*`): the material is one per column and
+  flat per triangle (`nest.wgsl` sheet bake ~3560, `draw.wgsl` `sheetVert` ~331, `@interpolate(flat)`), so on a
+  vertical wall sand-coloured triangles climb the dome. Proposed fix, not built: on steep pixels choose the
+  material per pixel by the pixel's height against the neighbouring columns' solids, with a narrow blend
+  (2-4 column reads per steep pixel; estimated under 0.5 ms). This is probably the cause of most of the rim
+  complaints in the owner's phone screenshots of round 27. The "rule at the 2 m level" round was started and
+  stopped before any edit; it may still be wanted for real cliffs that exist only at 2 m.
+
 ## Open decisions for the owner
 1. Threshold default: 2 or 4.
 2. Notches: port coarse ones to the shader, or drop (orchestrator's view from the CPU pictures: drop for now).
