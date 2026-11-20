@@ -25,7 +25,7 @@ await run({ name: 'r31-stills', kind: 'behaviour', size: '960x640', dpr: 1, echo
     if (m.type() === 'error') console.log(`[page ${m.type()}] ${m.text()}`);
   });
   page.on('pageerror', (e) => console.log(`[page exception] ${e.message}`));
-  await page.goto(`https://localhost:${port}/nested.html?cliff=1${q}${extra}`, { waitUntil: 'load' });
+  await page.goto(`https://localhost:${port}/nested.html?cliff=${R.opt('cliff', '1')}${q}${extra}`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.nested && nested.app.pipesReady && nested.app.genReady && (!nested.app.nest.fieldMask || nested.app.fieldDone) && nested.app.frameCount > 30, { timeout: 300000, polling: 200 });
   // (the textured pipelines made: the cliff shading lives there)
   await page.waitForFunction(() => nested.app.render.texDrawn, { timeout: 120000, polling: 200 });

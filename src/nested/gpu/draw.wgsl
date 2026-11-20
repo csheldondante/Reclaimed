@@ -684,7 +684,18 @@ fn texOut(q: vec3<f32>, zo: f32, ng: vec3<f32>, mat: u32, pxL: f32, toEye: vec3<
   si.cliff = f32(cz & 0xffffu) / 1000.0;
   let wc = i32((cz >> 16u) & 0xffu);
   si.cliffE = select(0, wc - 128 + s, wc != 0);
-  if (CLIFF_CUT && si.cliff > 0.0 && (cz >> 31u) != 0u) {
+  if (((cz >> 30u) & 1u) != 0u) {
+    // (version 2, ?cliff=2, bit 30: the marched columns, cells of 2^(wc - 128) shading units, bits 24-27 the steps)
+    if (si.cliff > 0.0) {
+      let col = shCol(si, wc - 128, i32((cz >> 24u) & 15u));
+      if (CLIFF_CUT && col.miss && (cz >> 31u) != 0u) { discard; }
+      si.colW = col.w;
+      si.colN = col.n;
+      si.colTint = col.tint;
+      si.colAo = col.ao;
+    }
+    si.cliff = 0.0;
+  } else if (CLIFF_CUT && si.cliff > 0.0 && (cz >> 31u) != 0u) {
     if (cliffCutAt(si, q, ng)) { discard; }
   }
   var col = texShade(si);

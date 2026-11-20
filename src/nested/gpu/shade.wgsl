@@ -52,6 +52,139 @@ struct ShadeIn {
   cliff: f32,
   /** (round 31) a block's width: 2^cliffE columns of the drawn level (0: one column; ?cliffW= metres fixes it in the world) */
   cliffE: i32,
+  /** (round 31, version 2, ?cliff=2) the marched columns' hit (draw.wgsl texOut calls shCol): its weight (0 none), face
+   *  normal, tint and occlusion */
+  colW: f32,
+  colN: vec3<f32>,
+  colTint: f32,
+  colAo: f32,
+}
+
+// ---- (round 31, version 2, ?cliff=2) standing columns by a ray march, no geometry, no buffer or texture reads ---------
+// On a steep pixel (shSteep, as version 1) the ground near it is taken as the plane through the pixel with the geometric
+// normal. A plan grid of square cells of a FIXED world width (2^k shading units: ?cliffW= metres, default 4) holds one
+// column a cell, solid below its top: the plane's height at the cell centre snapped down to a half cell (absolute z),
+// less 0..2 half cells by an integer hash of the cell. Tops only go down, so the ray starts inside a column by at most
+// the snap. The view ray is marched from the pixel across plan cells (2D DDA, at most `steps` cells): the first cell
+// whose top is above the ray where it enters is a side hit (normal the crossed face's axis), the ray falling to a cell's
+// top inside it is a top hit (normal up). The starting cell first: if the pixel is already inside its column, the ray is
+// followed back to where it came in (its top or a face). No hit within the steps: `miss` (version 0's shading, or a
+// discard with ?cliffcut=1). Faded out under ~3-6 pixels a cell. Cost: up to steps + 1 integer hashes and a short loop.
+struct ShCol {
+  w: f32,
+  n: vec3<f32>,
+  tint: f32,
+  ao: f32,
+  miss: bool,
+}
+/** a column's top relative to the pixel, cells: the plane (normal gn) at the cell centre ctr (cells from the pixel),
+ *  snapped down to a half cell in absolute z (zAbs, cells), less 0..2 half cells by the cell's hash */
+fn shColTop(c: vec2<i32>, ctr: vec2<f32>, gn: vec3<f32>, zAbs: f32) -> f32 {
+  let hc = -(gn.x * ctr.x + gn.y * ctr.y) / gn.z;
+  let h = shH3(c.x, c.y, 5099);
+  return (floor((zAbs + hc) * 2.0) - f32(h % 3u)) * 0.5 - zAbs;
+}
+fn shCol(si: ShadeIn, k: i32, steps: i32) -> ShCol {
+  let ng = si.ng;
+  var r = ShCol(0.0, ng, 1.0, 1.0, false);
+  if (ng.z < -0.01) { return r; }
+  let cellPx = ldexp(1.0, k) / max(si.pxW, 1e-30);
+  let w = shSteep(ng, si.cliff) * clamp(log2(cellPx) - 1.6, 0.0, 1.0);
+  if (w <= 0.0) { return r; }
+  let p = si.p;
+  // the pixel in cells: the start cell (whole, through integers) and the point in it
+  let e = -p.s - k;
+  let sx0 = dbSplit(p.o.x, p.f.x, e);
+  let sy0 = dbSplit(p.o.y, p.f.y, e);
+  let c0 = vec2<i32>(sx0.c, sy0.c);
+  let p0 = vec2<f32>(sx0.t, sy0.t);
+  let zAbs = ldexp(p.zo + ldexp(p.f.z, -p.s), -k);
+  let gn = vec3<f32>(ng.xy, max(ng.z, 0.05));
+  let v = si.view;
+  let sx = select(-1, 1, v.x >= 0.0);
+  let sy = select(-1, 1, v.y >= 0.0);
+  let idx = 1.0 / max(abs(v.x), 1e-6);
+  let idy = 1.0 / max(abs(v.y), 1e-6);
+  var T = shColTop(c0, vec2<f32>(0.5) - p0, gn, zAbs);
+  var ci = vec2<i32>(0);
+  var hit = false;
+  var hn = vec3<f32>(0.0, 0.0, 1.0);
+  var th = 0.0;
+  var zh = 0.0;
+  if (T > 0.0) {
+    // inside the start column: back along the ray to its top or the face it came through
+    let bx = select(1.0 - p0.x, p0.x, v.x >= 0.0) * idx;
+    let by = select(1.0 - p0.y, p0.y, v.y >= 0.0) * idy;
+    let bt = select(1e30, T / -v.z, v.z < 0.0);
+    hit = true;
+    if (bt <= min(bx, by)) {
+      th = -bt;
+      zh = T;
+    } else if (bx < by) {
+      hn = vec3<f32>(-f32(sx), 0.0, 0.0);
+      th = -bx;
+      zh = -v.z * bx;
+    } else {
+      hn = vec3<f32>(0.0, -f32(sy), 0.0);
+      th = -by;
+      zh = -v.z * by;
+    }
+  } else {
+    var tmx = select(p0.x, 1.0 - p0.x, v.x >= 0.0) * idx;
+    var tmy = select(p0.y, 1.0 - p0.y, v.y >= 0.0) * idy;
+    var z = 0.0;
+    var t = 0.0;
+    for (var i = 0; i < steps; i++) {
+      let tx = min(tmx, tmy);
+      // falling onto this column's top inside the cell
+      if (v.z < 0.0) {
+        let tt = t + (T - z) / v.z;
+        if (tt <= tx) {
+          hit = true;
+          th = tt;
+          zh = T;
+          break;
+        }
+      }
+      z += v.z * (tx - t);
+      t = tx;
+      if (tmx < tmy) {
+        ci.x += sx;
+        tmx += idx;
+        hn = vec3<f32>(-f32(sx), 0.0, 0.0);
+      } else {
+        ci.y += sy;
+        tmy += idy;
+        hn = vec3<f32>(0.0, -f32(sy), 0.0);
+      }
+      T = shColTop(c0 + ci, vec2<f32>(ci) + vec2<f32>(0.5) - p0, gn, zAbs);
+      if (z < T) {
+        hit = true;
+        th = t;
+        zh = z;
+        break;
+      }
+    }
+  }
+  if (!hit) {
+    r.miss = true;
+    return r;
+  }
+  // ---- the hit: per-column tint, a dark line at the vertical cell edges of a side, a lit rim under a side's top,
+  // deeper hits (further along the ray from the pixel) darker
+  let hp = p0 + v.xy * th;
+  let lw = max(0.04, 0.9 / cellPx);
+  let fr = fract(select(hp.x, hp.y, abs(hn.x) > 0.5));
+  let edge = select(1.0 - smoothstep(0.5 * lw, lw, min(fr, 1.0 - fr)), 0.0, hn.z > 0.5);
+  let rim = select((1.0 - smoothstep(lw, lw + 0.08, T - zh)) * (1.0 - edge), 0.0, hn.z > 0.5);
+  let cc = c0 + ci;
+  let hb = shH3(cc.x + 40503, cc.y - 7919, 31);
+  let j = f32(hb & 1023u) / 1023.0;
+  r.w = w;
+  r.n = hn;
+  r.tint = (0.80 + 0.32 * j) * (1.0 - 0.55 * edge) * (1.0 + 0.2 * rim);
+  r.ao = (1.0 - 0.6 * edge) * mix(1.0, 0.5, smoothstep(0.0, 2.0, abs(th)));
+  return r;
 }
 
 // ---- (round 31, look experiment, ?cliff=1) steep ground shaded as stacked faceted stone blocks, no new geometry --------
@@ -300,6 +433,13 @@ fn texShade(si: ShadeIn) -> vec3<f32> {
   // the band bumps mostly flattened on it (flat faces), tint and joints into the albedo and occlusion
   var so = si;
   so.cliff = 0.0;
+  // (version 2, ?cliff=2: the marched column's face, found by draw.wgsl texOut)
+  if (si.colW > 0.0) {
+    so.ng = normalize(mix(ng, si.colN, si.colW));
+    g *= 1.0 - 0.7 * si.colW;
+    alb *= mix(1.0, si.colTint, si.colW);
+    ao *= mix(1.0, si.colAo, si.colW);
+  }
   if (si.cliff > 0.0) {
     let ck = shCliff(si);
     if (ck.w > 0.0) {

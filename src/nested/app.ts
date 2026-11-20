@@ -158,7 +158,10 @@ export class App {
     // the uncarved side's height (a bake option: set before the first bake). (round 25) default off, ?slide=1 on
     this.render.slide = q.get('slide') === '1';
     // (round 31, look experiment) ?cliff=1 steep ground as faceted blocks; ?cliffT= its slope threshold (rise over run)
-    this.render.cliff = q.get('cliff') === '1';
+    // (version 2) ?cliff=2 the ray-marched standing columns; ?cliffN= its cells at most (default 4)
+    this.render.cliff = q.get('cliff') === '1' || q.get('cliff') === '2';
+    this.render.cliffV = q.get('cliff') === '2' ? 2 : 1;
+    if (q.has('cliffN')) this.render.cliffN = Number(q.get('cliffN'));
     if (q.has('cliffT')) this.render.cliffT = Number(q.get('cliffT'));
     // ?cliffW= a block's width in metres (default: one column of the drawn level); ?cliffcut=1 the skyline cut compiled
     // into the textured pipelines (set before they are made, after the first frame) and on
