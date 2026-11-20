@@ -152,6 +152,8 @@ export class App {
     this.wantSmooth = q.get('smooth') === '1';
     // (round 20) the textured draw, default on (?tex=0 the flat shading of rounds 6-19); ?bands=split the per-level cut-off
     this.render.tex = q.get('tex') !== '0';
+    // (round 27) ?tex=2: the tiling textures (generated after every boot pipeline; ?tex=1 drawn until they are ready)
+    this.render.tex2 = q.get('tex') === '2';
     // (round 22) ?slide=0|1 the sheets' slide onto carved edges (default per the round's gate); ?rimtop=1 a rim corner at
     // the uncarved side's height (a bake option: set before the first bake). (round 25) default off, ?slide=1 on
     this.render.slide = q.get('slide') === '1';
@@ -250,6 +252,19 @@ export class App {
     this.ui();
   }
 
+  /** (round 27) the textured draw's mode: 0 flat, 1 the function stack, 2 the tiling textures */
+  get texMode(): 0 | 1 | 2 {
+    return !this.render.tex ? 0 : this.render.tex2 ? 2 : 1;
+  }
+  setTexMode(m: 0 | 1 | 2): void {
+    this.render.tex = m !== 0;
+    this.render.tex2 = m === 2;
+    const b = this.buttons.get('tex');
+    if (b) {
+      b.classList.toggle('on', m !== 0);
+      b.textContent = ['Textured: off', 'Textured', 'Textured 2'][m];
+    }
+  }
   // ---- input -----------------------------------------------------------------------------------------------------------
   private ui(): void {
     const bar = document.getElementById('bar')!;
@@ -308,11 +323,9 @@ export class App {
     });
     this.buttons.get('smooth')!.classList.toggle('on', this.wantSmooth);
     // (round 20) textured materials and light, default on; off: the flat shading exactly as before (artifact work)
-    add('tex', 'Textured', () => {
-      this.render.tex = !this.render.tex;
-      this.buttons.get('tex')!.classList.toggle('on', this.render.tex);
-    });
-    this.buttons.get('tex')!.classList.toggle('on', this.render.tex);
+    // (round 27) the button cycles flat (0), the function textures (1) and the tiling textures (2)
+    add('tex', 'Textured', () => this.setTexMode(((this.texMode + 1) % 3) as 0 | 1 | 2));
+    this.setTexMode(this.texMode);
     // (round 22) the sheets' vertices slid onto the carved edges (draw only: the bake keeps the slide either way)
     add('slide', 'Round edges', () => {
       this.render.slide = !this.render.slide;
@@ -825,6 +838,13 @@ export class App {
         }
       });
     }
+    // (round 27) the tiling textures: generated after every boot pipeline, a material a frame (their own pipelines made
+    // asynchronously first); ?tex=2's draws made when first wanted
+    if (this.pipesDone && !this.render.texgen.ready && this.render.texgen.step()) {
+      const tg = this.render.texgen;
+      void this.device.queue.onSubmittedWorkDone().then(() => console.log(`[tex2] material textures made: generator pipelines ${tg.ms.compile.toFixed(0)} ms, layers encoded ${tg.ms.layers.map((x) => x.toFixed(1)).join(', ')} ms, done at ${performance.now().toFixed(0)} ms after the page opened (${(tg.bytes / 2 ** 20).toFixed(1)} MB)`));
+    }
+    if (this.render.tex && this.render.tex2) this.render.prepareTex2();
     // (round 20) the textured pipelines, asynchronously after the first frame (the flat draw until they are made)
     if (this.render.tex && !this.render.prepareTex()) this.texWaited = true;
     else if (this.texWaited && this.render.texDrawn) {
@@ -864,6 +884,7 @@ export class App {
       const s = this.nest.pipeStatus;
       lines.push(`Preparing: ${s.made} of ${s.total} GPU programs made; levels and brushes wait for them (compiling: ${s.pending.slice(0, 3).join(', ')}${s.pending.length > 3 ? ', ...' : ''}).`);
     }
+    if (this.pipesDone && !this.render.texgen.ready) lines.push(`Preparing the material textures: ${this.render.texgen.done} of 5 made.`);
     if (this.genOn && !this.genReady)
       lines.push(`Preparing the terrain: building the world map (${((performance.now() - (this.genAsked || performance.now())) / 1000).toFixed(0)} s); the land shown until then is a placeholder, and levels and brushes wait for it.`);
     if (this.lifts) lines.push(`The camera was lifted out of solid ${this.lifts} times.`);
@@ -1176,6 +1197,12 @@ export class App {
         if (split !== undefined) this.render.bandsSplit = split;
         this.buttons.get('tex')?.classList.toggle('on', on);
         while (this.render.texDrawn !== on) await new Promise((r) => setTimeout(r, 30));
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      },
+      /** (round 27) the textured mode 0 / 1 / 2; resolves once the frame draws what was asked */
+      texMode: async (m: 0 | 1 | 2) => {
+        this.setTexMode(m);
+        while (this.render.texDrawn !== (m !== 0) || this.render.texDrawn2 !== (m === 2)) await new Promise((r) => setTimeout(r, 30));
         await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       },
       /** (round 21) the forest canopy from afar on or off (and its crossover footprint); resolves after two frames */

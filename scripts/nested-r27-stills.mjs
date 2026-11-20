@@ -18,7 +18,7 @@ await run({ name: 'r27-stills', kind: 'behaviour', size: '960x640', dpr: 1, echo
   });
   page.on('pageerror', (e) => console.log(`[page exception] ${e.message}`));
   await page.goto(`https://localhost:${port}/nested.html?smooth=1${R.opt('extra', '')}`, { waitUntil: 'load' });
-  await page.waitForFunction(() => window.nested && nested.app.pipesReady && nested.app.genReady && nested.app.fieldDone && nested.app.frameCount > 30, { timeout: 300000, polling: 200 });
+  await page.waitForFunction(() => window.nested && nested.app.pipesReady && nested.app.genReady && nested.app.fieldDone && (!nested.app.render.tex2 || nested.app.render.texDrawn2) && nested.app.frameCount > 30, { timeout: 300000, polling: 200 });
   await sleep(1500);
   const spot = await page.evaluate(async () => {
     const a = nested.app;

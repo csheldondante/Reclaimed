@@ -98,50 +98,32 @@ fn fdWarp(I: vec2<i32>, f: vec3<f32>) -> vec2<f32> {
  *  16 m level) reads as itself wherever the mesh, which follows the columns only to about half a cell, puts the pixel;
  *  deeper in, the record holding z (strata on a wall); MAT_AIR when the column has nothing inside */
 fn fdMatOf(lv: u32, X: i32, Y: i32, z: f32) -> u32 {
-  let n = recCount(lv, X, Y);
-  var bm = MAT_AIR;
-  var bd = 1e30;
-  var held = MAT_AIR;
-  var pIn = false;
-  var pMat = MAT_AIR;
-  var below = -1e30;
-  for (var j = 0u; j < n; j++) {
-    let r = recAt(lv, X, Y, j);
-    let t = bitcast<f32>(r.x);
-    let inside = fdInside(r.y);
-    // (a surface at `below`, between record j - 1 and j: its inside side's material)
-    if (j > 0u && inside != pIn) {
-      let dd = abs(z - below);
-      if (dd < bd) {
-        bd = dd;
-        bm = select(pMat, r.y & 0xffu, inside);
-      }
-    }
-    if (inside && z >= below && z < t) { held = r.y & 0xffu; }
-    pIn = inside;
-    pMat = r.y & 0xffu;
-    below = t;
-  }
-  // (the last record's top, with air above it)
-  if (pIn && abs(z - below) < bd) {
-    bd = abs(z - below);
-    bm = pMat;
-  }
-  if (bd <= 0.5 || held == MAT_AIR) { return bm; }
-  return held;
+  // (round 27: the body moved to draw.wgsl surfMatD, shared with the sheets' ?tex=2 border mix; the inside test is
+  // fdInside's: solid when fdu.p.w is 0)
+  return surfMatD(lv, X, Y, z, u32(fdu.p.w)).x;
 }
 /** the material at window-relative point q of the drawn level: q moved 0.02 columns inside along n, warped as the field
  *  was looked up, jittered by up to fdu.p.y columns (borders read ragged, not as the column squares); outside the window
  *  (the cells past its edge, where the field is the parent's) the parent's column. (0.3 columns at first: at the 16 m
  *  level that is 4.8 m, under the generator's half-metre soil, so whole hills read as their stone) */
-fn fdMat(q: vec3<f32>, n: vec3<f32>) -> u32 {
+fn fdMat(q: vec3<f32>, n: vec3<f32>) -> u32 { return fdMatJ(q, n, fdu.p.y); }
+/** (round 27) the lookup's point in the drawn level's window (column units, warped as the field was; no jitter), for
+ *  ?tex=2's border mix */
+fn fdLookP(q: vec3<f32>, n: vec3<f32>) -> vec2<f32> {
+  let p = q - n * 0.02;
+  let pi = vec2<i32>(floor(p.xy));
+  let f = vec3<f32>(p.xy - vec2<f32>(pi), p.z);
+  return vec2<f32>(pi) + f.xy + fdWarp(d.lvl.xy + pi, f);
+}
+/** fdMat with the jitter given (?tex=2: none, its border mix blends by height instead) */
+fn fdMatJ(q: vec3<f32>, n: vec3<f32>, jit: f32) -> u32 {
   let L = u32(d.lvl.w);
   let p = q - n * 0.02;
   let pi = vec2<i32>(floor(p.xy));
   let I = d.lvl.xy + pi;
   let f = vec3<f32>(p.xy - vec2<f32>(pi), p.z);
   let jc = vec3<i32>(floor(q * 4.0));
-  let jo = (vec2<f32>(fdHash3(jc + vec3<i32>(41, 0, 0)), fdHash3(jc + vec3<i32>(0, 43, 0))) - 0.5) * (2.0 * fdu.p.y);
+  let jo = (vec2<f32>(fdHash3(jc + vec3<i32>(41, 0, 0)), fdHash3(jc + vec3<i32>(0, 43, 0))) - 0.5) * (2.0 * jit);
   let g = f.xy + fdWarp(I, f) + jo;
   let C = I + vec2<i32>(floor(g));
   let r = vec2<i32>(C - d.lvl.xy);
@@ -196,4 +178,15 @@ fn fsFieldT(v: VOutF) -> FOut {
     return o;
   }
   return texOut(v.q, v.zo, n, mat, pxL, v.toEye, v.dEye);
+}
+/** (round 27, ?tex=2) the tiling textures (tex.wgsl): the lookup's own material without the jitter, and its neighbours
+ *  at the warped lookup point blended by height (draw.wgsl matMix) */
+@fragment
+fn fsFieldT2(v: VOutF) -> FOut {
+  let qx = dpdx(v.q);
+  let qy = dpdy(v.q);
+  let n = fdNormal(v);
+  let own = fdMatJ(v.q, n, 0.0);
+  let mm = matMix(u32(d.lvl.w), fdLookP(v.q, n), v.q.z - n.z * 0.02, own);
+  return texOut2(v.q, v.zo, n, mm, qx, qy, v.toEye, v.dEye);
 }

@@ -57,6 +57,14 @@ export const BUDGET_MS: Record<string, number> = {
   fieldFlip: 400,
   drawField: 400,
   drawFieldTex: 550,
+  // (round 27) ?tex=2: the tiling textures' draws (made when first wanted; with the macro tile measured 222-350 / 386-399
+  // ms boxes / sheets, the field's 334-555) and their generator (after every boot pipeline: texGen 452 warm, 1,700 cold
+  // with one tgMat call site; five call sites took 4,759; texMip 10)
+  drawBoxesTex2: 550,
+  drawSheetsTex2: 600,
+  drawFieldTex2: 850,
+  texGen: 2600,
+  texMip: 400,
 };
 /** the sum over every pipeline (21.0 s measured; round 25: 26.5 s with genFill cold) */
 export const TOTAL_BUDGET_MS = 40_000;

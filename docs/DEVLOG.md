@@ -28056,3 +28056,67 @@ sand and stone either way). A checkerboard of stone and sand on one steep slope 
 **Gates.** typecheck; nested unit tests 77 of 77; compile gate passed; boot gate passed (cold 6,776 / 9,929 / 9,409 ms;
 512 MB reload 9,575 / 18,864 / 13,848; 256 MB 8,003 / 16,044 / 11,865); full self-test 47 of 47 (668 s); generator test
 passed; round 26 visual closure: sheets 0 at all 9 poses, field 0 except border-out 1 pixel (NS-217).
+
+## 2026-11-20 — Nested scales lab, round 27 part 2: tiling triplanar textures generated on the GPU (`?tex=2`)
+
+**Why.** The owner: "I feel like tiling fractal voronoi or other triplanar might make cleaner looking sharper stone
+textures". The function stack (up to nine 3D gradient noises a pixel) is soft and streaks at grazing angles (NS-148).
+Design and build in NESTED_SCALES.md "As built (round 27, part 2)". Default stays `?tex=1`; the owner picks from stills.
+
+**Draw time, ms (nested.benchDraw: the frame's draw alone, uncapped, GPU done; median of 3 alternations of 10 draws, the
+same page and pose back to back; desktop 960 x 640). Final textures, one session, the GPU visibly shared (the same poses
+read 3.5-6 ms in an earlier quiet session):**
+
+| pose | sheets tex=1 | sheets tex=2 | field tex=1 | field tex=2 |
+|---|---|---|---|---|
+| cliff from 5 m | 7.63 | 7.04 | 9.98 | 12.13 |
+| cliff from 100 m | 11.71 | 8.14 | 6.00 | 6.41 |
+| sand from 2 m | 9.49 | 8.87 | 7.62 | 7.77 |
+| soil from 2 m | 6.93 | 5.96 | 7.73 | 6.66 |
+| border from 10 m | 8.29 | 7.85 | 9.92 | 10.42 |
+| grazing | 9.88 | 8.75 | 7.28 | 7.96 |
+| carved bowl | 8.97 | 7.94 | 10.92 | 9.45 |
+| from 300 m | 7.32 | 7.50 | 4.80 | 6.22 |
+
+The quieter earlier session (textures before the fades and the macro tile, so tex=2 then did a little less): sheets
+tex=1 / tex=2 cliff5 5.71 / 4.48, cliff100 3.56 / 3.13, sand2 3.90 / 3.92, soil2 6.15 / 4.54, border10 4.51 / 4.54,
+grazing 4.15 / 3.84, bowl 4.63 / 3.52, high300 3.00 / 3.32. In short: the sheets draw is the same or cheaper with tex=2
+close up and about equal from 300 m; the field draw is mixed (+-1-2 ms, worse at the cliff from 5 m and from 300 m), its
+per-pixel lookups now including the border mix's three neighbours. Noise between runs is 1-2 ms on this shared GPU.
+
+**Memory and time.** Textures 13.3 MB (2 arrays, 512 x 512 x 5, 10 mips, rgba8). Generator compile: texGen 452-498 ms
+warm, 1,700 cold in Dawn (budget 2,600; with five tgMat call sites 4,759 ms, so one call site in a loop), texMip 10; in
+the page the two
+pipelines 3.0-3.3 s (made after every boot pipeline, asynchronously), each layer's encode under 0.5 ms, all five layers
+made by 17-19 s after the page opened (a layer a frame). On the GPU the whole generation is about 80 ms (Dawn test: 1,030
+ms from the start including 952 ms of compile). Draw compiles (Dawn, with the macro tile): sheets tex=2 380-399 ms,
+boxes 215-350, field 334-555 (budgets 600 / 550 / 850); tex=1's draws unchanged (192-328).
+
+**Continuity (test/gpu/nested-tex.test.ts).** 512 points, each as four levels give it (own window origin, local point,
+z origin, derivatives scaled by 8^L), txMat and texShade2 on all: adjacent levels differ by at most 2.5e-4 in texture
+colour, 6.9e-5 in height, 1.2e-3 in slope, 2.6e-4 in shaded colour (an 8-bit step is 3.9e-3); a point moved half a fine
+texel changes the colour by 9.1e-3 (not vacuous).
+
+**Stills (local/nested/r27-<pose>-tex1|tex2.png sheets, r27-field-<pose>-tex1|tex2.png the field at the finest level,
+r27-mat-tex2-high.png from 2 km), looked at:** cliff from 5 m: fractured blocks with open and closed joints, facets and
+hairline cracks, crisp; still reads partly as cracked mud (the cells are too even in size). Cliff from 100 m: the coarse
+tile's 32 m repeat shows as a lattice of blocks, the macro tile's cracks over it. From 300 m: macro blocks and cracks
+read as fractured rock (before the macro tile a flat mean colour; before the fade a regular knit of the fine tile); the
+macro tile's specks read as dots. Sand from 2 m: ripples and fine grains, no streaks; soft blotches from the coarse
+tile. Soil: crumbs, lumps and grey pebbles; the crumbs' outlines still faintly cellular. Grazing: ripples to the horizon
+without streaks (NS-148's streaks gone). Border from 10 m: tex=1 shows the 0.25 m column staircase, tex=2 a ragged line
+following the texture heights. Bowl: the walls stone with blocks; the rim fangs are geometry (NS-198). 2 km: the root's
+128 m squares become rounded, ragged patches. No seams at projection changes seen; sand overexposed in both modes.
+
+**tex=1 unchanged.** The tex=1 path is the same code by construction (texShade split into its materials and shFinish
+with the same operations; fdMatOf's body moved unchanged to draw.wgsl surfMatD). Pixel compare of the round 26 poses
+(scripts/nested-r27-same.mjs): runs of identical code differ by 0-12,600 pixels at some poses (window and page state
+differ between runs: the HUD's page counts differ); part 1's commit against part 2 shows differences of the same kind
+and size, 0 at bowl, cliff, border-out (sheets) and bowl, overhang, cave (field).
+
+**Gates.** typecheck; nested unit tests 77 of 77; compile gate passed (one rerun: derive read 2,747 once, 2,371-2,420
+otherwise, nest.wgsl unchanged by part 2); continuity test passed; full self-test 47 of 47 (672 s); round 26 visual
+closure: sheets 0, field 1 pixel at border-out in one run and 49 in another (identical code; NS-217). Boot gate: cold
+passes (7,006 / 10,367 / 9,826 ms) and 256 MB passes, but the 512 MB reload's "every boot pipeline" read 19,260 and
+20,014 ms against 19,000; part 1's commit, checked out and run right after, read 20,460 there: the machine's load at
+the time, not this change (the textures and their pipelines start after every boot pipeline is made).

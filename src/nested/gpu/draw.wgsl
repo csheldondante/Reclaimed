@@ -20,7 +20,7 @@ struct DrawU {
   kid: vec4<i32>,
   // (round 25) x metres a world unit (a root column), y the fog's distance in metres (0: round 21's haze, the toy root),
   // z the textured shading's scale: its bands and materials in world units / 2^z (5 at 128 m: 4 m, near the 3.2 m root
-  // column their constants were tuned at)
+  // column their constants were tuned at); (round 27) w: ?tex=2's fine tile, log2 tiles a world unit (6: 2 m tiles)
   geo: vec4<f32>,
 }
 
@@ -533,6 +533,86 @@ fn flatOut(v: VOut, px: f32) -> FOut {
   let coarse = d.want.x > 0.0 && v.dEye < d.want.x;
   o.info = vec4<f32>(1.0, f32(d.lvl.w) / 8.0, select(0.0, 1.0, coarse), 1.0);
   return o;
+}
+
+// ---- (round 27) the material at a column's surface (both draws), and the border mix of ?tex=2 -------------------------
+/** the material of column (lv, X, Y) at height z (round 26's fielddraw fdMatOf, shared): within half a column of one of
+ *  the column's surfaces (an inside / outside boundary) the inside record at that surface, so a thin top layer reads as
+ *  itself wherever a mesh puts the pixel; deeper in, the record holding z (strata on a wall); MAT_AIR when the column has
+ *  nothing inside. x the material word, y the distance to the nearest surface (f32 bits, local units). sel: which
+ *  records are inside (0 solid; anything else none yet: water later) */
+fn surfMatD(lv: u32, X: i32, Y: i32, z: f32, sel: u32) -> vec2<u32> {
+  let n = recCount(lv, X, Y);
+  var bm = MAT_AIR;
+  var bd = 1e30;
+  var held = MAT_AIR;
+  var pIn = false;
+  var pMat = MAT_AIR;
+  var below = -1e30;
+  for (var j = 0u; j < n; j++) {
+    let r = recAt(lv, X, Y, j);
+    let t = bitcast<f32>(r.x);
+    let inside = sel == 0u && matSolid(r.y);
+    // (a surface at `below`, between record j - 1 and j: its inside side's material)
+    if (j > 0u && inside != pIn) {
+      let dd = abs(z - below);
+      if (dd < bd) {
+        bd = dd;
+        bm = select(pMat, r.y & 0xffu, inside);
+      }
+    }
+    if (inside && z >= below && z < t) { held = r.y & 0xffu; }
+    pIn = inside;
+    pMat = r.y & 0xffu;
+    below = t;
+  }
+  // (the last record's top, with air above it)
+  if (pIn && abs(z - below) < bd) {
+    bd = abs(z - below);
+    bm = pMat;
+  }
+  if (bd <= 0.5 || held == MAT_AIR) { return vec2<u32>(bm, bitcast<u32>(bd)); }
+  return vec2<u32>(held, bitcast<u32>(bd));
+}
+/** (?tex=2) the pixel's material and, at a border, the neighbouring one: P the pixel's point in the drawn level's window
+ *  (column units), z its height, own the material the draw gives it (the sheet's column, the field's lookup). The four
+ *  column centres round P carry bilinear weights; the three other than P's own column are looked up at z (surfMatD:
+ *  a neighbour whose surface is more than a column from z, outside the window, or empty counts as own). b is the other
+ *  material of most weight, wb its share of a's and b's. Never the normal or the slope. */
+fn matMix(L: u32, P: vec2<f32>, z: f32, own: u32) -> MatMix {
+  let fl = floor(P);
+  let f = P - fl - vec2<f32>(0.5);
+  let sx = select(-1, 1, f.x >= 0.0);
+  let sy = select(-1, 1, f.y >= 0.0);
+  let t = abs(f);
+  let a = matId(own);
+  let C = vec2<i32>(fl);
+  let nn = d.lvl.z;
+  var ms = array<u32, 3>(a, a, a);
+  var ws = array<f32, 3>(t.x * (1.0 - t.y), (1.0 - t.x) * t.y, t.x * t.y);
+  for (var i = 0; i < 3; i++) {
+    let o = select(select(vec2<i32>(sx, sy), vec2<i32>(0, sy), i == 1), vec2<i32>(sx, 0), i == 0);
+    let r = C + o;
+    if (r.x < 0 || r.y < 0 || r.x >= nn || r.y >= nn || ws[i] <= 0.0) { continue; }
+    let m = surfMatD(L, d.lvl.x + r.x, d.lvl.y + r.y, z, 0u);
+    if (m.x != MAT_AIR && bitcast<f32>(m.y) <= 1.0) { ms[i] = matId(m.x); }
+  }
+  var wa = (1.0 - t.x) * (1.0 - t.y);
+  var b = a;
+  var wb = 0.0;
+  for (var i = 0; i < 3; i++) {
+    if (ms[i] == a) {
+      wa += ws[i];
+      continue;
+    }
+    var w = 0.0;
+    for (var j = 0; j < 3; j++) { w += select(0.0, ws[j], ms[j] == ms[i]); }
+    if (w > wb) {
+      wb = w;
+      b = ms[i];
+    }
+  }
+  return MatMix(a, b, wb / max(wa + wb, 1e-6));
 }
 
 // ---- (round 20) the textured draw: shade.wgsl's materials and light behind the "Textured" toggle (?tex=1, default) ----

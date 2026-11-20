@@ -7,12 +7,24 @@ import drawWgsl from './gpu/draw.wgsl?raw';
 import detailWgsl from './gpu/detail.wgsl?raw';
 import shadeWgsl from './gpu/shade.wgsl?raw';
 import fieldDrawWgsl from './gpu/fielddraw.wgsl?raw';
+import texWgsl from './gpu/tex.wgsl?raw';
+import texDrawWgsl from './gpu/texdraw.wgsl?raw';
 import { MAX_LEVELS, SEG_BASE, TCAP, TPP, segWgsl, type GpuNest } from './gpu/nest';
+import { TexGen, TEX_TILE_M } from './texgen';
 
 /** the draw module's source (the page and the compile gate): the pages' segments, the store, (round 20) the detail
- *  bands and the textured shading, then the draws */
+ *  bands and the textured shading, then the draws; (round 27) the tiling textures and their entry points (?tex=2) */
 export function drawModuleCode(S: number, segP: number): string {
-  return `const TCAP: u32 = ${TCAP}u;\n${segWgsl(S, segP, true)}\n${storeWgsl}\n${detailWgsl}\n${shadeWgsl}\n${drawWgsl}`;
+  return `const TCAP: u32 = ${TCAP}u;\n${segWgsl(S, segP, true)}\n${storeWgsl}\n${detailWgsl}\n${shadeWgsl}\n${drawWgsl}\n${texWgsl}\n${texDrawWgsl}`;
+}
+/** (round 27) the draw layouts' texture entries (?tex=2: tex.wgsl bindings 6-8, the fragment stage) */
+function texEntries(): GPUBindGroupLayoutEntry[] {
+  const F = GPUShaderStage.FRAGMENT;
+  return [
+    { binding: 6, visibility: F, texture: { sampleType: 'float', viewDimension: '2d-array' } },
+    { binding: 7, visibility: F, texture: { sampleType: 'float', viewDimension: '2d-array' } },
+    { binding: 8, visibility: F, sampler: { type: 'filtering' } },
+  ];
 }
 
 const DU = 256;
@@ -83,13 +95,19 @@ export class Renderer {
     // (compute too: the watertight check's capture runs the vertex code in a compute pass)
     const V = GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE;
     const ro = { type: 'read-only-storage' as const };
+    // (round 27: the table and the pages in the fragment stage too: ?tex=2's border mix looks up the neighbouring
+    // columns per pixel; 1 + S storage buffers there)
+    const VF = V | GPUShaderStage.FRAGMENT;
     this.layout = device.createBindGroupLayout({
       label: 'nest draw',
       entries: [
-        { binding: 0, visibility: V | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: DU_SIZE } },
-        ...[1, 3, 4, 5, ...Array.from({ length: nest.S }, (_, j) => SEG_BASE + j)].map((binding) => ({ binding, visibility: V, buffer: ro })),
+        { binding: 0, visibility: VF, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: DU_SIZE } },
+        ...[3, 4, 5].map((binding) => ({ binding, visibility: V, buffer: ro })),
+        ...[1, ...Array.from({ length: nest.S }, (_, j) => SEG_BASE + j)].map((binding) => ({ binding, visibility: VF, buffer: ro })),
+        ...texEntries(),
       ],
     });
+    this.texgen = new TexGen(device);
     this.module = device.createShaderModule({ label: 'nest draw', code: drawModuleCode(nest.S, nest.segP) });
     this.pl = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
     // (round 19, NS-141: asynchronous; the app draws once `ready` resolves)
@@ -175,12 +193,40 @@ export class Renderer {
   }
   /** the HUD's line while the textured draw is wanted and not yet made */
   get texText(): string {
+    if (this.tex && this.tex2 && this.texPipes && !this.texDrawn2) return `textured 2: ${this.texgen.ready ? 'compiling its draws' : `making the material textures, ${this.texgen.done} of 5`}; the function textures until then`;
     if (!this.tex || this.texPipes || !this.texCompile) return '';
     return `textured: compiling the textured draws (${(performance.now() - this.texAt).toFixed(0)} ms so far); flat until then`;
   }
   /** whether this frame draws textured */
   get texDrawn(): boolean {
     return this.tex && !!this.texPipes;
+  }
+  // ---- (round 27) ?tex=2: the tiling textures (texgen.ts, tex.wgsl) ----------------------------------------------------
+  /** the material textures (made at once, generated a layer a frame after every boot pipeline: App.frame) */
+  readonly texgen: TexGen;
+  /** the textured draw with the tiling textures instead of the function stack (?tex=2; `tex` must be on too) */
+  tex2 = false;
+  private tex2Pipes: { box: GPURenderPipeline; sheet: GPURenderPipeline } | null = null;
+  private tex2Compile: Promise<void> | null = null;
+  /** the ?tex=2 draws' creation time, ms (asynchronous, when first wanted) */
+  tex2CompileMs = 0;
+  /** whether the ?tex=2 pipelines are made; starts their asynchronous creation when not */
+  prepareTex2(): boolean {
+    if (this.tex2Pipes) return true;
+    if (!this.tex2Compile) {
+      const t0 = performance.now();
+      const box: GPURenderPipelineDescriptor = { ...this.boxDesc(), label: 'nest draw boxes (tex=2)', fragment: { module: this.module, entryPoint: 'fsT2', targets: [{ format: this.format }, { format: 'rgba8unorm' }] } };
+      const sheet: GPURenderPipelineDescriptor = { ...this.sheetDesc(), label: 'nest draw sheets (tex=2)', fragment: { module: this.module, entryPoint: 'fsST2', targets: [{ format: this.format }, { format: 'rgba8unorm' }] } };
+      this.tex2Compile = Promise.all([this.device.createRenderPipelineAsync(box), this.device.createRenderPipelineAsync(sheet)]).then(([b, s]) => {
+        this.tex2Pipes = { box: b, sheet: s };
+        this.tex2CompileMs = performance.now() - t0;
+      });
+    }
+    return false;
+  }
+  /** whether this frame draws ?tex=2 (its pipelines and the textures ready; ?tex=1 until then) */
+  get texDrawn2(): boolean {
+    return this.texDrawn && this.tex2 && !!this.tex2Pipes && this.texgen.ready && (!this.field || !!this.field.tex2);
   }
   private boxDesc(): GPURenderPipelineDescriptor {
     return {
@@ -200,6 +246,13 @@ export class Renderer {
     this.depth = this.device.createTexture({ size: [w, h], format: 'depth32float', usage: GPUTextureUsage.RENDER_ATTACHMENT });
     this.info = this.device.createTexture({ size: [w, h], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
   }
+  private texBinds(): GPUBindGroupEntry[] {
+    return [
+      { binding: 6, resource: this.texgen.viewA },
+      { binding: 7, resource: this.texgen.viewN },
+      { binding: 8, resource: this.texgen.sampler },
+    ];
+  }
   private bind(): void {
     const segs = this.nest.segBuffers();
     const want = [this.nest.dir, ...segs];
@@ -214,6 +267,7 @@ export class Renderer {
         { binding: 4, resource: { buffer: this.nest.reg } },
         { binding: 5, resource: { buffer: this.nest.dir } },
         ...segs.map((buffer, j) => ({ binding: SEG_BASE + j, resource: { buffer } })),
+        ...this.texBinds(),
       ],
     });
     this.bgFor = want;
@@ -221,7 +275,7 @@ export class Renderer {
 
   // ---- (round 26) the field mesh's draw (?field=): its own module, layout (the pages read in the fragment stage too: the
   // material per pixel) and pipelines, made only when a level is drawn by it --------------------------------------------
-  private field: { layout: GPUBindGroupLayout; pl: GPUPipelineLayout; module: GPUShaderModule; ubuf: GPUBuffer; flat?: GPURenderPipeline; tex?: GPURenderPipeline; ready: Promise<void> } | null = null;
+  private field: { layout: GPUBindGroupLayout; pl: GPUPipelineLayout; module: GPUShaderModule; ubuf: GPUBuffer; flat?: GPURenderPipeline; tex?: GPURenderPipeline; tex2?: GPURenderPipeline; ready: Promise<void> } | null = null;
   private fieldBg: GPUBindGroup | null = null;
   private fieldBgFor: GPUBuffer[] = [];
   /** (round 26) the field draw's dials: the lookup's warp and the material's jitter (columns), the skirt (columns) */
@@ -239,6 +293,7 @@ export class Renderer {
         { binding: 0, visibility: FV, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: DU_SIZE } },
         { binding: 2, visibility: FV, buffer: { type: 'uniform' } },
         ...[1, 3, 4, 5, ...Array.from({ length: this.nest.S }, (_, j) => SEG_BASE + j)].map((binding) => ({ binding, visibility: FV, buffer: ro })),
+        ...texEntries(),
       ],
     });
     const pl = this.device.createPipelineLayout({ bindGroupLayouts: [layout] });
@@ -251,6 +306,8 @@ export class Renderer {
       f.tex = b;
       this.fieldCompileMs = performance.now() - t0;
     });
+    // (round 27, ?tex=2: made beside them, not waited for: the field draws ?tex=1 until it is made)
+    void this.device.createRenderPipelineAsync(fieldDesc(pl, module, this.format, 'fsFieldT2')).then((p) => (f.tex2 = p));
     this.field = f;
     return f.ready;
   }
@@ -273,6 +330,7 @@ export class Renderer {
           { binding: 4, resource: { buffer: this.nest.reg } },
           { binding: 5, resource: { buffer: this.nest.fieldDir! } },
           ...segs.map((buffer, j) => ({ binding: SEG_BASE + j, resource: { buffer } })),
+          ...this.texBinds(),
         ],
       });
       this.fieldBgFor = want;
@@ -298,11 +356,13 @@ export class Renderer {
     // finest first: the depth test then spares the coarse levels' fragments under it
     const order = [...levels].sort((a, b) => b.depth - a.depth);
     const tp = this.texDrawn ? this.texPipes : null;
+    // (round 27) ?tex=2: the tiling textures' pipelines (the sky stays tp's)
+    const t2 = this.texDrawn2 ? this.tex2Pipes : null;
     // (round 26) a field level is drawn by the field mesh (its own pipeline and bind group), every other one as before
     const fl = this.nest.fieldMask ? order.filter((lv) => this.nest.fieldOn(lv.depth)) : [];
     if (fl.length && this.field?.tex) {
       const bg = this.fieldBind();
-      pass.setPipeline(tp ? this.field.tex : this.field.flat!);
+      pass.setPipeline(t2 && this.field.tex2 ? this.field.tex2 : tp ? this.field.tex : this.field.flat!);
       for (const lv of fl) {
         pass.setBindGroup(0, bg, [lv.depth * DU]);
         pass.drawIndirect(this.nest.fieldArgs!, lv.depth * 16);
@@ -312,13 +372,13 @@ export class Renderer {
     if (this.nest.smooth) {
       // (round 16) per level the sheets
       const sp = this.smoothPipes();
-      pass.setPipeline(tp ? tp.sheet : sp.sheet);
+      pass.setPipeline(t2 ? t2.sheet : tp ? tp.sheet : sp.sheet);
       for (const lv of rest) {
         pass.setBindGroup(0, this.bg!, [lv.depth * DU]);
         pass.drawIndirect(this.nest.drawArgs, (MAX_LEVELS + lv.depth) * 16);
       }
     } else {
-      pass.setPipeline(tp ? tp.box : this.pipe);
+      pass.setPipeline(t2 ? t2.box : tp ? tp.box : this.pipe);
       for (const lv of rest) {
         pass.setBindGroup(0, this.bg!, [lv.depth * DU]);
         pass.drawIndirect(this.nest.drawArgs, lv.depth * 16);
@@ -360,7 +420,8 @@ export class Renderer {
       const c = this.nest.wins[lv.depth + 1];
       new Int32Array(st, lv.depth * DU + 144, 4).set(c ? [c.gx, c.gy, c.n, 1] : [0, 0, 0, 0]);
       // (round 25) metres a world unit, the fog's distance (metres), the shading's scale
-      new Float32Array(st, lv.depth * DU + 160, 4).set([this.mpu, this.fogM, this.shadeS, 0]);
+      // (round 27) w: ?tex=2's fine tile, log2 tiles a world unit (2 m tiles: 6 with 128 m root columns)
+      new Float32Array(st, lv.depth * DU + 160, 4).set([this.mpu, this.fogM, this.shadeS, Math.round(Math.log2(this.mpu / TEX_TILE_M))]);
     }
     this.device.queue.writeBuffer(this.ubuf, 0, st);
   }

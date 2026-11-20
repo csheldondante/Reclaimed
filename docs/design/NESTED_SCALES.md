@@ -1562,7 +1562,49 @@ matDiffers; restrict's per-material sums by rBucket (a role by its role). The dr
 differ at any level; restrict 1.9e-3 mm / 3.8e-3 mm (levels 1, 2); the root slide round trip 0 of 8,192. Stills
 local/nested/r27-mat-before|after-<zoom-L0..L3|high>.png.
 
-## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
+**As built (round 27, part 2): tiling textures generated on the GPU, `?tex=2`.** The owner: "tiling fractal voronoi or
+other triplanar might make cleaner looking sharper stone textures". `?tex=0|1|2` (flat, the round 20 function stack, the
+tiling textures); default 1; the Textured button cycles 0 -> 1 -> 2 ("Textured: off", "Textured", "Textured 2").
+- *Generation (src/nested/texgen.ts, gpu/texgen.wgsl).* Two rgba8unorm 2D arrays, 512 x 512, 5 layers (material id - 1:
+  stone, soil, sand, clay, plants), 10 mips: A = albedo (sRGB values) + roughness, N = normal x, y + height + cavity.
+  13.3 MB. Every lattice is periodic in the tile (hashes of the wrapped cell), so the tile wraps. Stone: warped cellular
+  blocks (4 a tile) with a second joint family open in stretches (9 a tile), joints that gape or close along their length
+  (V-cracks 0.5-4 % of a cell wide), angular facets (each 14-a-tile cell a tilted plane), thin cracks inside half the
+  blocks, a ridged surface, stains, mineral specks. Soil: soft-edged crumbs (48), lumps, pebbles (one 14-cell in seven).
+  Sand: bent asymmetric ripples (16 a tile) and grains (110). Clay: plates with thin cracks. Plants: tufts (40) of blades
+  (160), greens and dry blades. Normals from the height's slope at the tile's relief (a fraction of the tile's side, so the
+  same slopes at any world size). texGen writes mip 0 (one tgMat call site in a loop: five call sites compiled 4.8 s),
+  texMip the chain. Staged: made after every boot pipeline (App.frame), the generator's pipelines asynchronously, then a
+  material a frame; the HUD says "Preparing the material textures: n of 5". Generated at every boot, also with ?tex=1, so
+  the button switches at once (NS-222).
+- *Sampling (gpu/tex.wgsl txMat, texShade2; gpu/texdraw.wgsl fsST2 / fsT2; fielddraw.wgsl fsFieldT2).* World tile sizes:
+  fine 2 m (`geo.w` = round(log2(metres a world unit / 2))), coarse 16 x = 32 m. The tile coordinate of each axis is the
+  DPt's integer window origin and local fraction split in integers first (detail.wgsl dbSplit / dbAxisZ at the tile's
+  frequency): the same world point gets the same texel from any level, exactly, anywhere on the 65 km world. Projections:
+  |geometric normal|^4 picks them (never the material), then the textures' heights sharpen the change (the taller
+  texel's projection wins over a band of 0.25 in weight). Gradients: the level-local point's screen derivatives scaled
+  to the tile, textureSampleGrad (trilinear, anisotropic 16 x). Combining: the fine tile's colour times the coarse tile's
+  relative to the tile's mean (its last mip), slopes added, heights 0.65 / 0.35. The coarse tile is read 2-4 mips
+  blurrier than the pixel needs (per material: it brings the large variation, not 16 x sand grains), each scale fades to
+  the mean as its tile shrinks from 256 to 64 pixels (its repeat showed as a grid), a third, macro tile (256 x the fine,
+  512 m: colour and slope only, the same blur) carries the look from a few hundred metres where the other two have
+  faded (without it the far stone was a flat mean), and one 64 m gradient noise tones the colour +-14 % so the coarse
+  repeat does not line up. The light, canopy and haze are round 20-25's (shade.wgsl texShade
+  split into the materials and shFinish, which both modes call).
+- *Material and borders.* The pixel's own material: the sheet's column (flat, the top interval) or the field's lookup
+  (fdMatJ without the jitter). At a border (draw.wgsl matMix): the four column centres round the pixel carry bilinear
+  weights; the three other than the pixel's own column are looked up at the pixel's height (surfMatD, the field's
+  fdMatOf body moved to draw.wgsl and shared); a neighbour whose surface is more than a column away, outside the window or
+  empty counts as own. The other material of most weight is blended in by height: B where `wB + 0.35 hB > wA + 0.35 hA`
+  over a band of +-0.04, so a border is a sharp, ragged line through the texture (sand in the rock's cracks), not a
+  gradient; with 0.25 m columns the band is centimetres, with the root's 128 m columns metres (no 128 m squares from 2 km
+  with ?tex=2). For this the draw layout shows the table and the pages to the fragment stage (1 + S storage buffers).
+- *Departures.* Bedded rock: the material table has no bedded rock, so none (stone's strata on walls stay ?tex=1's). The
+  box draw (fsT2) has no border mix. Three world scales, not two (the macro tile), the coarse tile's blur, the fades and
+  the broad tone were not in the brief: added after looking at the stills (the grid, the 16 x grains, the blank far
+  stone).
+- *Measured (DEVLOG round 27 part 2):* timing table, continuity (test/gpu/nested-tex.test.ts), compile times.
+ (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.
 

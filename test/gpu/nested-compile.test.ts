@@ -7,6 +7,7 @@ import nestWgsl from '../../src/nested/gpu/nest.wgsl?raw';
 import { segWgsl, TCAP } from '../../src/nested/gpu/nest';
 import { drawModuleCode, fieldDesc, fieldDrawCode, skyDesc } from '../../src/nested/render';
 import fieldWgsl from '../../src/nested/gpu/field.wgsl?raw';
+import texgenWgsl from '../../src/nested/gpu/texgen.wgsl?raw';
 import { BUDGET_MS, FLOOR_MS, TOTAL_BUDGET_MS, budgetOf } from './nested-compile-budgets';
 import { genModuleParts } from '../../src/nested/gen';
 import { pagesCode } from '../../src/gpu/pages-mode';
@@ -55,6 +56,11 @@ it('nested: both modules compile; every pipeline within its compile budget', asy
   await timed('drawBoxesTex', render('vs', 'fsT'));
   await timed('drawSheetsTex', render('vsSheet', 'fsST'));
   await timed('drawSky', () => device.createRenderPipelineAsync(skyDesc('auto', draw, 'bgra8unorm')));
+  // (round 27) ?tex=2: the tiling textures' draws (made when first wanted) and their generator (after every boot pipeline)
+  await timed('drawBoxesTex2', render('vs', 'fsT2'));
+  await timed('drawSheetsTex2', render('vsSheet', 'fsST2'));
+  const texgen = await mod('texgen', texgenWgsl);
+  for (const e of ['texGen', 'texMip']) await timed(e, () => device.createComputePipelineAsync({ layout: 'auto', compute: { module: texgen, entryPoint: e } }));
   for (const e of DRAW_COMPUTE) await timed(e, () => device.createComputePipelineAsync({ layout: 'auto', compute: { module: draw, entryPoint: e } }));
   // (round 25) the generator's fill: the atlas's ground(p) and gen.wgsl, its own module (made after the first frame,
   // while the atlas builds; the atlas build's own kernels are timed by test/gpu/nested-gen.test.ts)
@@ -68,6 +74,7 @@ it('nested: both modules compile; every pipeline within its compile budget', asy
   for (const e of ['fieldBake', 'fieldRelease', 'fieldDirClear', 'fieldDirBuild', 'fieldDirFinish', 'fieldFlip']) await timed(e, () => device.createComputePipelineAsync({ layout: 'auto', compute: { module: fieldC, entryPoint: e } }));
   await timed('drawField', () => device.createRenderPipelineAsync(fieldDesc('auto', fieldD, 'bgra8unorm', 'fsField')));
   await timed('drawFieldTex', () => device.createRenderPipelineAsync(fieldDesc('auto', fieldD, 'bgra8unorm', 'fsFieldT')));
+  await timed('drawFieldTex2', () => device.createRenderPipelineAsync(fieldDesc('auto', fieldD, 'bgra8unorm', 'fsFieldT2')));
   const total = Object.values(times).reduce((a, b) => a + b, 0);
   console.log(`[compile] Dawn (${(adapter as unknown as { info?: { backend?: string } }).info?.backend ?? 'default backend'}), ms (budget):\n${Object.entries(times).map(([k, v]) => `  ${k.padEnd(14)} ${v.toFixed(0).padStart(6)} (${budgetOf(k)})`).join('\n')}\n  total          ${total.toFixed(0).padStart(6)} (${TOTAL_BUDGET_MS})`);
   const over = Object.entries(times)

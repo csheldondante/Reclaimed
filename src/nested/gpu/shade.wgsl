@@ -213,6 +213,18 @@ fn texShade(si: ShadeIn) -> vec3<f32> {
     }
     default: {}
   }
+  return shFinish(si, alb, rough, ao, g, av, mv);
+}
+/** (round 27: split from texShade so ?tex=2, tex.wgsl texShade2, shares it) the forest canopy, the shading normal, the
+ *  light and the haze from a material's albedo (sRGB values), roughness, occlusion, height gradient g (world units of
+ *  the shading), its variation av (-1..1) and the broad noise mv */
+fn shFinish(si: ShadeIn, alb0: vec3<f32>, rough0: f32, ao0: f32, g0: vec3<f32>, av: f32, mv: f32) -> vec3<f32> {
+  let p = si.p;
+  let ng = si.ng;
+  var alb = alb0;
+  var rough = rough0;
+  var ao = ao0;
+  var g = g0;
   // ---- (round 21) the forest canopy from afar (see shCrowns above)
   // (round 25: on the plant layer, by the footprint alone; round 21's fade on the normal's z is gone, the material decides)
   var cw = 0.0;

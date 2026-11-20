@@ -709,6 +709,31 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   pixel (twice, deterministic; round 26 measured 0). Every generated column now shares one structure, so enhance's top
   surface interpolates across former material borders (gCompat) and level 3's geometry changed there a little; the
   single pixel is at the field window's join. Not examined further.
+- NS-218 (hack, round 27 part 2) The tiling textures' look is hand-tuned literals: texgen.wgsl (cell counts, warps,
+  colours, crack widths, reliefs per material) and tex.wgsl (TX_COARSE 16 x, TX_HPROJ 0.5, TX_HMAT 0.35, the coarse
+  tile's mip bias per material 2/3/4/2/3, the fade from 128 to 32 pixels a tile, the broad tone's 64 m and +-14 %). No
+  panel; into NS-151's.
+- NS-219 (limit, round 27 part 2) The border mix (draw.wgsl matMix) looks up three neighbouring columns per pixel in the
+  fragment stage (the table and the pages are now visible there); a neighbour whose surface is more than a column from
+  the pixel's height, outside the window, or empty counts as the pixel's own material; the box draw (fsT2) has no mix.
+  Cost is in the timing table (DEVLOG round 27); a per-level material map written by the bakes would make it 3 texel
+  loads (not built).
+- NS-220 (limit, round 27 part 2) The textures' mips: albedo averaged in its sRGB-encoded values (not linear), normals
+  averaged as unit vectors and normalised, height and cavity averaged. Roughness from slope variance is lost in the mips.
+- NS-221 (look, round 27 part 2) Each scale fades to the tile's mean as its tile shrinks from 256 to 64 pixels (else its
+  repeat showed as a grid), and a third, macro tile (512 m) carries the far look, so past a few kilometres every scale
+  is gone (the material's mean, toned by one 64 m noise, plus light, canopy and haze). The coarse tile's 32 m repeat is
+  still visible at about 100 m as a lattice of blocks on stone (local/nested/r27-cliff100-tex2.png), and the macro
+  tile's mineral specks read as dots from 300 m. A per-tile random offset blended over a noise would hide repeats; not
+  built.
+- NS-222 (limit, round 27 part 2) The textures are generated at every boot (after every boot pipeline, a material a
+  frame, 13.3 MB), also when ?tex=1 is the mode, so the button switches to tex=2 at once; ?tex=2's draws compile when it
+  is first wanted. Its light, canopy and haze are tex=1's (shade.wgsl shFinish), the canopy still in shading units
+  (NS-193).
+- NS-223 (look, round 27 part 2) ?tex=2's stone from a few metres reads partly as cracked mud or crazy paving: the
+  cellular blocks are too even in size and outline (r27-cliff5-tex2.png); soil's crumbs stay faintly cellular; sand is
+  overexposed in both modes (the light, not the texture). For the owner's pick; more joint families of different
+  spacing and bedding along one axis would break the even cells.
 - NS-188 (DONE round 27 part 1: materials decided per level from the generator at each level's columns, roles in the
   material byte; see NS-213-215) (limit, round 25) Materials are decided per ROOT column (128 m) and finer levels inherit the root's structure
   through enhance (thicknesses interpolate; the count and materials are the parent's): soil and plants cover a cliff that
