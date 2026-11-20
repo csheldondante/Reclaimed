@@ -117,6 +117,21 @@ Round 32, the real thing:
   fault is only the material-boundary teeth. Not designed yet: which material decides a column's style where
   cover lies over stone, and how a sheet of cover meets boxel stone.
 
+- **The owner's answers to that reading (2026-11-20, final):**
+  1. Fine columns with notches at every level in the real shader (`rB6fine-*` stills): "I think so". Further
+     idea, not asked for yet: "hexels or even varying column shape to be voronoi at various columns scales when
+     you zoom in could work. What I do like is the stepped look over some threshold and the pixel walking in to
+     pixel scale noise to show detail at a distance".
+  2. Slope: "Keep it above some slope I do think slightly less noise on flatter surfaces is at least a knob we
+     want". So a threshold stays, plus a setting that reduces noise as the surface flattens.
+  3. Materials need NO special rule: "it is based on the heights of the top of the column. If the dirt is thick
+     enough it will settle on the angle of repose if the drop is high enough it will repose down to the edge
+     and then have exposed rock on the vertical until the height where dirt settles on the next step. It should
+     just work". I.e. the rule runs on column top heights; loose layers are ordinary intervals that the
+     simulation settles on the steps; vertical faces show whatever solid is there. The orchestrator's "style
+     chosen by material" reading was more than the owner meant. This makes slumping (the first simulation
+     slice) the thing that produces dirt on ledges and bare rock on faces.
+
 ## Open decisions for the owner
 1. Threshold default: 2 or 4.
 2. Notches: port coarse ones to the shader, or drop (orchestrator's view from the CPU pictures: drop for now).
