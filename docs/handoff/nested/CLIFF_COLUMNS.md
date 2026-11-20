@@ -127,7 +127,10 @@ Round 32, the real thing:
      you zoom in could work. What I do like is the stepped look over some threshold and the pixel walking in to
      pixel scale noise to show detail at a distance".
   2. Slope: "Keep it above some slope I do think slightly less noise on flatter surfaces is at least a knob we
-     want". So a threshold stays, plus a setting that reduces noise as the surface flattens.
+     want". The owner then corrected the orchestrator's reading: "my point is there will visually be less noise
+     on flatter surfaces that aren't stepped not a new setting." So: a threshold stays (the knob IS the
+     threshold); ground below it is plain smooth sheet and is calmer for that reason. Do NOT build a separate
+     noise-by-slope setting.
   3. Materials need NO special rule: "it is based on the heights of the top of the column. If the dirt is thick
      enough it will settle on the angle of repose if the drop is high enough it will repose down to the edge
      and then have exposed rock on the vertical until the height where dirt settles on the next step. It should
@@ -146,7 +149,7 @@ Round 32, the real thing:
   (NS-305); no exactness test for notches (NS-306); thin bright vertical lines are sunlit one-column side faces
   (NS-308, unconfirmed). T=0 with these settings: 133 hole px in the far view.
 - **Where the orchestrator stopped (no builder running):** next small steps in order: (1) NS-307 notch cost,
-  re-measure; (2) the material-boundary fix for brush skirts (NS-304); (3) the noise-by-slope setting;
+  re-measure; (2) the material-boundary fix for brush skirts (NS-304); (3) settle the threshold default with the owner (no separate noise setting);
   (4) gates (self-test, never completed since round 28) and a phone bench before any phone link;
   (5) first simulation slice: slumping on stepped stone, which the look now depends on.
 
