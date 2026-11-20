@@ -27831,3 +27831,30 @@ at 1,500 m (800 m/s did not: the runs are short and noisy).
 **Boot gate (scripts/nested-smoothboot.mjs, the default page: generator on, `smooth=1`):** cold first frame 7,170 ms,
 every boot pipeline 14,841 ms, first sheet frame 10,873 ms; reloads at maxbuf 512 / 256: 8,574 / 8,029, 16,694 / 15,683,
 12,107 / 11,516 (budgets 11,000, 19,000, 16,000): passed.
+
+**Cruise, second run** (after genFill's one-call-site fix; warm shader cache: genFill 15.9 s, atlas at 25.6 s): p95 is
+noise-dominated on this desktop: at 300 m 18.9 / 16.5 / 20.6 / 17.7 / 20.6 / 22.1 ms for 100-3200 m/s; at 1500 m 10.1 /
+24.2 / 24.6 / 24.6 / 14.7 / 21.0 (worst 50-123 ms). The script's verdict is the same as the first run (200 m/s at 300 m,
+1,600 m/s at 1,500 m) but not monotonic in speed: read it as "holds at 100-200 m/s, hitches of 20-120 ms otherwise"
+(NS-196). Generation stayed ahead in every run (root front 13.0-21.9 km).
+
+**End gate.** typecheck; nested unit tests 68 of 68; gpu: compile gate passed (genFill 9,317 cold / 2,711 warm, rootGen
+278-307, derive 2,110-2,397, total 18.8-26.4 s of 40), nested-detail passed (canopy on vs off differs 0.43 far: plants
+carry it now), nested-gen passed (now with a level 2 carve before the zoom cycle: 0 columns differ; restrict <= 1.9e-6
+level units, 0.004 mm); boot gate passed (above). Full self-test (`?selftest=1`, smooth on): 45 of 47 on the first run:
+the two failures were the smooth reference check (smoothref.ts), which compares the drawn sheets with the reference's
+SLID vertices while the draw's slide is now off by default; smoothref turns the slide on for its check; `smooth=only`
+then 12 of 12 (the other 35 passed in the full run: oracle, carves, the watertight suite on boxes and sheets, pit, cave,
+shaft, cruise screens). Perf gate (scripts/nested-perf.mjs, gen=0) fails its own thresholds, as does the commit before
+this round in the same hour (a detached worktree at 97a1dd8c, same script, slide 0): carve at level 1 with bakes median
+44.5 ms here against 56.1 there (budget 15), worst uncapped draw 13.55 against 15.32 (budget 8), frames at vsync p50 <=
+11.6 against 13.0 (budget 12: passes here, not there). No regression from this round; the thresholds are not met on this
+machine today (NS-199).
+
+**Stills (local/nested/r25-*.png, scripts/nested-r25-stills.mjs `--below 200`: a 127 m land step, not the crystal
+oddity).** Wrong, plainly: (1) materials come in 128 m squares at every level: sand, dirt and isolated bare-stone squares
+(root columns whose 1 m slope sample was steep) read as a pixelated map from high up and as hard square patches at levels
+1-2 (NS-188); (2) the 127 m step at level 1 is a row of sawtooth fangs along the root cells' edges (NS-198); (3) at 2 km
+up the default fog washes most of the view to grey (`?fog=`); (4) the 0.25 m level adds nothing of its own (NS-189).
+Reads well: dune and badland relief at levels 2 and 3, distant crystal spires and ridgelines through the fog in the
+cruise view, no seams between levels.

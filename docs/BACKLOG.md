@@ -718,6 +718,12 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   400 m/s and faster the p95 frame is 21-34 ms (worst 48-56) against 10 ms at 100-200 m/s. At 1,500 m (levels 0-1) the
   p95 holds to 1,600 m/s except a noisy 800 m/s run. Not profiled (which op: the slide's derive, its bake, the pool's
   header wait). Desktop only; the phone bench is the owner's.
+- NS-198 (look, round 25) Steps of a root column or more come out at level 1 as rows of sawtooth fangs along the root
+  cells' edges (r25-zoom-L1): enhance's limited PPM of a one-cell step plus the generator's detail; the generator writes
+  no edge samples (NS-165) and the slide is off. The main visual defect after NS-188's 128 m material squares.
+- NS-199 (perf, round 25) scripts/nested-perf.mjs fails its own thresholds on this desktop before and after round 25
+  (carve with bakes 44.5 ms vs 56.1 at the base, budget 15; uncapped draw 13.6 vs 15.3, budget 8): re-baseline on a quiet
+  GPU (NS-169) or the phone bench.
 - NS-197 (perf, round 25) Time to the generated terrain in Chrome (desktop): the atlas's kernels and genFill start after
   every boot pipeline (13.4-14.8 s) and the atlas is built at 43-45 s after the page opened (its kernels 15.6-17.3 s,
   genFill 29.5-31 s compiling beside them). The owner's "startup time not yet" ruling: logged, not optimised.
