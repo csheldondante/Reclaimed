@@ -900,6 +900,46 @@ export class App {
         }
         return { eyeZ: cam[2], dNear: cam[28], dHit: cam[29], lifts: cam[27], level: cam[30], levels: out };
       },
+      /** (round 26, measurement, a readback) the field mesh's selection on every live level's window (fieldsel.ts, the
+       *  CPU reference): cell columns, candidate cells and crossed cells, per level, for a warp and a margin */
+      fieldCells: async (warp = 0.45, margin = 0, crossedToo = true) => {
+        const fs = await import('./fieldsel');
+        const snap = await this.nest.readAll();
+        const out = [];
+        for (let m = 0; m < this.nest.live; m++) {
+          const w = this.nest.wins[m]!;
+          const lv = (L: number, ww: { gx: number; gy: number; n: number }) => {
+            const cache = new Map<number, ReturnType<typeof fs.runsOf>>();
+            return {
+              ...ww,
+              runs: (X: number, Y: number) => {
+                const key = (Y - ww.gy) * ww.n + (X - ww.gx);
+                let r = cache.get(key);
+                if (!r) cache.set(key, (r = fs.runsOf(snap.records(L, X, Y), fs.solidInside)));
+                return r;
+              },
+            };
+          };
+          const spec: import('./fieldsel').FieldSpec = { own: lv(m, w), warp, fade: 4, parent: m > 0 ? { lv: lv(m - 1, this.nest.wins[m - 1]!), k: this.k, zo: snap.zOrigin(m) } : undefined };
+          let cols = 0;
+          let sel = 0;
+          let cr = 0;
+          let maxSel = 0;
+          for (let Y = w.gy; Y < w.gy + w.n - 1; Y++)
+            for (let X = w.gx; X < w.gx + w.n - 1; X++) {
+              cols++;
+              let c = 0;
+              for (const [a, b] of fs.candidates(spec, X, Y, margin)) {
+                c += b - a + 1;
+                if (crossedToo) for (let K = a; K <= b; K++) if (fs.crossed(spec, X, Y, K)) cr++;
+              }
+              sel += c;
+              maxSel = Math.max(maxSel, c);
+            }
+          out.push({ level: m, cols, selected: sel, perCol: sel / cols, crossed: cr, crossedPerCol: cr / cols, maxSel });
+        }
+        return out;
+      },
       /** (measurement) the draw alone, uncapped: n draws of the current levels back to back, ms each (GPU done) */
       benchDraw: async (n = 20, depth?: number) => {
         // (round 20: depth, one level drawn alone: its pixels are then all its own, so the time is its cost alone)

@@ -27858,3 +27858,29 @@ oddity).** Wrong, plainly: (1) materials come in 128 m squares at every level: s
 up the default fog washes most of the view to grey (`?fog=`); (4) the 0.25 m level adds nothing of its own (NS-189).
 Reads well: dune and badland relief at levels 2 and 3, distant crystal spires and ridgelines through the fog in the
 cruise view, no seams between levels.
+
+## 2026-11-20 — Nested scales lab, round 26, step A: the field mesh's sparse selection, proved against a brute walk
+
+The owner ruled for a trial of surface nets on the lab's columns ("use the column data intelligently so we aren't
+walking every cube ... as long as it is fast"; "it only needs to be visually watertight"). Plan in NESTED_SCALES.md
+"Round 26 plan". Step A is the riskiest idea in plain TypeScript (src/nested/fieldsel.ts): the field (fortress's
+vertical column distance, bilinear over the 4 nearest column centres at a warped lookup point, a child fading into its
+parent near its window edge) and the selection of the cells the surface can cross from the columns alone: one merge
+sweep over the boundaries of the columns a cell's samples can read (its support) gives the heights where they disagree
+plus the boundaries; a cell is a candidate when its z range meets that set.
+
+**Exact with no margin.** test/unit/nested-field.test.ts walks every cube of random stacks (air gaps, a 30-unit cliff, a
+one-column spike, a column of air all the way down), with the warp at 0 and 0.45, on one level and on a child (k 4)
+fading into its parent including the cells past its window: 0 crossed cells missed in every case, with margin 0 and 1.
+Margin 0 is exact by the argument in the plan (a z range where the support agrees and holds no boundary has one sign
+everywhere), so the default is 0 (departure from the brief's "plus one cell of margin": it cost about two cells a
+column on gentle ground, 1.19 -> 3.19; `?fmargin=` keeps the dial). Extra cells (selected - crossed): random stacks no
+warp 124 of 11,092; with warp 12,251 of 8,751 (the 4 x 4 support); child in parent 120,834 of 41,202 (a parent column's
+boundaries reach k child cell columns: NS-201); gentle ground 5 of 1,134 (no warp), 340 (warp).
+
+**Cells a cell column on the generated terrain** (scripts/nested-r26-cells.mjs, the CPU reference over every live
+window, four levels open, candidate / crossed): at the root window's centre, no warp: L0 1.06 / 1.06, L1 1.68 / 1.54, L2
+1.69 / 1.53, L3 1.36 / 1.21; warp 0.45: 1.16, 2.52, 2.62, 1.72 candidates. At the steepest step (208 m over one root
+column), no warp: 1.05 / 1.05, 1.37 / 1.30, 4.42 / 3.57, 8.16 / 5.46; warp 0.45: 1.14, 1.86, 8.99, 16.17. So gentle
+ground costs about a cell and a half a column; steep ground at the fine levels is where the cells are, and the warp
+doubles the candidates there (NS-201).

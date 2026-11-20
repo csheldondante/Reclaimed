@@ -1423,6 +1423,46 @@ multiple materials by normal ... Make dirt on the stone or plants over that mayb
   `?detail=` (the toy seeded noise; 0 with the generator), `?a.<key>=` (any atlas parameter).
 - *Not built:* water as a material; detail under 2 m (the atlas has none); the generator's materials at finer levels.
 
+**Round 26 plan (written before the code): a field mesh, on trial behind `?field=`.** The owner: "Literally I just want
+it to look good and be fast ... I'm happy to do surface nets (but please use the column data intelligently so we aren't
+walking every cube) as long as it is fast"; "It only needs to be visually watertight because the field is represented
+by intervals." This supersedes "layered sheets, not surface nets" for this trial only; sheets stay the default.
+- *Switch.* `?field=<levels>` (e.g. `?field=3`, `?field=1,3`) or `?field=finest` (the ladder's last level, `?depth`);
+  default off. A level is drawn entirely by sheets/boxes or entirely by the field mesh. Levels 1 and up only (the root
+  is baked in the first frame, before the field's pipelines exist: a limit). With `?field` off nothing of it is
+  compiled, allocated or run.
+- *The field* (level-local units, after fortress fieldmesh.wgsl): a column's vertical signed distance to its solid runs
+  (consecutive records the inside test calls inside are one run; negative inside; clamped to +-FAR = 3); which records
+  are inside is a parameter (`sel`: 0 = matSolid; water later). Blended bilinearly over the 4 nearest column centres at
+  the WARPED lookup point (fortress terrainWarp in column units, `?warp=`, default 0.45, 0 off). Samples at column
+  centres, one column apart, one local unit apart in z (cubic cells). A cell is the box between 2 x 2 sample columns.
+- *Selection (no walk of every cube).* A cell's corner samples read only its SUPPORT: the columns their warped points
+  can touch (2 x 2 with no warp, 4 x 4 with warp < 1), and the parent's where the fade is under 1. Where all support
+  columns are in the same state and none has a boundary between two heights, every sample in between has that state's
+  sign, so the cell cannot be crossed. So per cell column one merge sweep over the support's boundaries gives the
+  candidate set: the heights where the support columns disagree, and the boundaries themselves; a cell is selected when
+  its closed z range meets it (+ a margin, `?fmargin=`, default 1 as briefed; measured against 0). A column with no
+  solid under it is cut FAR + 1 under the support's lowest boundary (bottomless walls are not meshed: a limit). Proof by
+  test against a brute walk of every cube (step A).
+- *GPU (nest.wgsl's pattern).* `fieldBake`: a workgroup a chunk; count (candidate cells per cell column), workgroup scan,
+  pages, vertices (one a crossed cell, the mean of its edge crossings, the normal from the field's gradient) into
+  scratch pages (level id 56 + L, let go at the end), count quads, scan, emit. Quads are self-contained (4 vertices x
+  (x, y chunk-local, z, octahedral normal)), 783 a page, in pages of level id 24 + L (the chunk's stack; header in page
+  0: hash, counts, key). The same region rule (bakeChanged) and hash skip as the sheets; a field level's bakes run
+  `fieldBake` instead of the sheet or face pass. `fieldRelease` runs beside every `release`; `fieldDir*` build the
+  field's own page list and draw arguments (separate buffers) after every directory. No workgroup-memory atomics, no
+  readback, nothing per frame.
+- *Draw.* Its own module (draw.wgsl + fielddraw.wgsl), layout (pages visible to the fragment stage) and pipelines: an
+  instance a quad page, 6 vertices a quad slot. Material per pixel: the column's record at a point 0.3 columns inside
+  the surface, jittered by up to 0.35 columns (never the normal or the slope).
+- *The join, visually watertight only.* (a) The fine level's field is (1 - w) parent + w own, w = 0 within 1 column of
+  its window edge rising smoothly to 1 at 1 + FADE (`?ffade=`, default 4 columns): applied when sampled for drawing, the
+  stored columns untouched. (b) The fine mesh goes OVER columns past its window edge (2 beyond a sheet or box parent,
+  which stops at the footprint; k/2 + 2 beyond a field parent, which leaves out every cell that reaches into its field
+  child's footprint and keeps the straddling cell under a sheet child). (c) A skirt hangs from the mesh's outer edge, 3
+  columns inward along the vertex normal. No stitching, no vertex matching.
+- *Not this round:* textures beyond wiring the existing textured shading, water, the 128 m material squares.
+
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.
