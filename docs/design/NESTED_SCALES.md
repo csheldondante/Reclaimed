@@ -1499,6 +1499,41 @@ polish (steps C-E), with the numbers below.
   evaluated once a chunk into scratch and shared; each column's runs read once into workgroup memory (as the sheet
   bake's bFillRecs); fewer support columns for the sweep (NS-201).
 
+**As built (round 26, continued: B2, B3, C-E; the trial goes on).** The coordinator kept the trial (draw and frame were
+good) and set the build's targets per frame: opening a level and sliding must not hitch.
+- *B2, the build (field.wgsl fieldBake), in the order given, measured after each (DEVLOG):* (1) the candidates listed per
+  cell column after the count's scan (K, column) and evaluated a thread a candidate; (2) samples evaluated once a chunk:
+  per sample column the z hull of the candidates of the 4 cell columns touching it, scanned into a table (offset, lo),
+  the values evaluated a thread a sample (the table's offsets ascend with the sample column: a thread takes a contiguous
+  run, so a binary search finds a sample's column), each cell reading its 8 corners from it; (3) every column the chunk
+  reads (own: the computing area - 1 .. + 2; the parent's under it) turned into its runs once (boundaries, counted,
+  scanned, written into the scratch's first pages) and read from there by the sweeps and the field. Scratch layout: run
+  region, candidate entries (6 words: K, offset, z, normal, mask, column), sample table and values.
+- *B3, spread over frames (two banks and a flip).* A chunk's quad pages are two banks (page 0 the header; bank b at cz 1 +
+  b x 4096); a build writes the bank not drawn. Edits and other ops flip at once. A field level's promote or slide queues
+  its chunks (the window; or the entering strips grown by a chunk and the new edge ring) and builds a 2 x 2 block a
+  frame (`?fbudget=`), the block holding the queued chunk nearest the eye, deferred; the level's old meshes and the
+  parent as it was stay drawn; when the queue is empty one op runs fieldFlip (every pending chunk of the level drawn
+  together, its old bank let go), lets the leaving meshes go and bakes the parent's footprint chunks (own chunks only).
+  Levels and edits wait meanwhile (`switching`). NS-209, NS-210.
+- *C, the join:* as planned (fade, OVER, skirt). The visual-closure check (scripts/nested-r26-stills.mjs: hole pixels
+  under the horizon, a cave pose every pixel): 0 at all 10 level-3 poses and the level-1 and level-2 ones, once a job's
+  flip bakes the parent through the region rule (its own chunks and the grandparent's rim chunks; only the field child's
+  ring left out: `fieldFlipping`). Without the grandparent's part, level 2's sheets beside a slid level 3 stood as walls
+  with sky under them (3,988 pixels at the cliff pose).
+- *An edit at the window edge:* stored columns are untouched; within 1 + FADE columns of the edge the drawn surface is
+  (1 - w) parent + w child, so a carve there shows faded toward its restricted copy in the parent, fully only once the
+  window has slid it inside; past the edge (OVER) the parent's restricted version is drawn.
+- *D:* warp, gradient normals (6 field evaluations a vertex), material per pixel, the textured shading (fsFieldT), as
+  planned, with one change: the material is the inside record at the column's surface within half a column of the pixel
+  (the generator's soil is 0.03 columns thick at the 16 m level; the mesh follows the columns to about half a cell, so
+  "the record 0.3 columns in" read the stone under it and whole hills came out bare), and the record holding the point
+  deeper in (strata on walls). Diagnostics `?fdbg=1` normal, 2 material unlit, 3 slope.
+- *The dark crease along ground steps (r26-bench-field-L3-centre):* geometry, not shading. With `?fdbg=2` the material is
+  one colour across it; with `?fdbg=3` it is a thin near-vertical strip: the step in the columns (enhance's staircase of
+  the parent's cells and the generator's steps) drawn as the thin wall it is; the textured shading darkens a steep face
+  away from the sun.
+
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

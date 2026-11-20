@@ -198,6 +198,7 @@ export class App {
       if (q.has('fskirt')) fo.skirt = Math.max(0, Number(q.get('fskirt')));
       this.render.fieldOpt.warp = fo.warp;
       this.render.fieldOpt.skirt = fo.skirt;
+      if (q.has('fdbg')) this.render.fieldOpt.dbg = Number(q.get('fdbg'));
       if (q.has('fjitter')) this.render.fieldOpt.jitter = Math.max(0, Number(q.get('fjitter')));
       this.nest.enableField(mask);
       this.fieldDone = false;

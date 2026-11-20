@@ -27980,3 +27980,47 @@ field level (scripts/nested-cruise.mjs `--q "&field=2"`): 100 m/s, 7 level-2 sli
 38-47 frames (0.5-1.0 s): median 10.0, p95 16.2, worst 66.4 ms; the sheets in the same hour at 200 m/s with 18 level-2
 slides: p95 20.1, worst 55.0. At 200 m/s the field run's level 2 was promoted and its job had not finished in 8 s (2
 refusals: the job waits for the pool; NS-209).
+
+## 2026-11-20 — Nested scales lab, round 26, steps C-E: the join checked, the look, the 16 m level
+
+**Visual closure (scripts/nested-r26-stills.mjs, level 3, a bowl, a pocket under its rim and a closed cave carved at the
+field level; hole pixels under the horizon, the cave pose every pixel).** First full run: 4,036 for the field (cliff
+3,988, border-out 48), 0 for the sheets. The cliff's holes came only after the bowl pose had slid level 3: level 2's
+sheets beside the footprint stood as tall walls with sky under them. The job's flip baked the parent round the old and
+new footprints without the region rule's partners (to spare the field level's ring, just built); the sheets' slide
+bakes the grandparent's rim chunks there too. The flip now goes through the rule with only the field child's part left
+out (`fieldFlipping`): the field after the fix 0 at every pose (bowl, cliff, overhang, cave, above, above300, grazing,
+border-in, border-out); level 1 (zoom, cliff, above300) 0; level 2 (above300) 0.
+
+**Material per pixel, a fault found at the 16 m level.** "The record 0.3 columns inside" read the stone under the
+generator's half-metre soil (0.03 columns at 16 m): whole hills drew bare (r26E stills, first run). Now the inside record
+at the column's surface within half a column of the pixel, the record holding the point deeper in (fielddraw.wgsl
+fdMatOf; NS-207).
+
+**The dark crease along ground steps (the coordinator's question): geometry.** `?fdbg=2` (material unlit) is one colour
+across it; `?fdbg=3` (slope) shows a thin near-vertical strip: a step in the columns drawn as the thin wall it is, dark
+because the textured shading darkens a steep face turned from the sun. From above at 30 m (r26-above-field) these steps
+are a grid of straight creases along level 2's 2 m cells: enhance's staircase (NS-211).
+
+**Material borders.** At 30 m over level 3 (r26-above-field) no border in view (sand). From 300 m (r26E-above300,
+r26L2-above300 with the field at levels 1 and 2) the borders are the root's 128 m material squares (NS-188); the jitter
+(0.35 columns) makes their edges ragged by a few metres at level 1 and centimetres at level 3: square from afar, a frayed
+edge up close.
+
+**Stills, sheets against field, same pose (local/nested/r26-<pose>-sheets|field.png; the eye may sit a little higher in
+the field pages where the camera lifts it out of the field's surface).** Bowl: the sheets' rim is a ring of fangs, the
+field's a smooth round rim (a thin crease where the pocket meets the bowl). Overhang: the sheets' pocket is a jagged
+mouth of teeth, the field's a clean round mouth. Cave: the sheets show a bright sliver spike, the field a plain wall.
+Cliff and grazing: rolling ground in both; the field shows thin dark dashes on some slopes (NS-212). Border: no seam at
+the level edge in either; the field's border pages show the step creases (NS-211).
+
+**E, the 16 m level (`?field=1`) at r25-zoom-L1's fang spot (r26E-zoom-sheets|field).** The sheets' row of triangular
+fangs becomes a ragged, layered wall following the same stairs of root cells: the fangs are gone, the staircase stays
+(NS-198, NS-211). Cost at level 1 (scripts/nested-r26-bench.mjs `--level 1`, back to back): whole window a row a submit
+139-141 ms against the sheets' 21-26, in one dispatch 44-49 against 13-19; a chunk at the eye 5.3-5.4 ms of a frame
+against 1.5-1.6 (both with the measurement's directory pass); carve 12.1-12.2 with bakes against 10.2-11.3; frame 7.5
+against 9.7.
+
+**Gates (`?field` off: byte-identical modules).** typecheck; nested unit tests 77 of 77; compile gate passed (fieldBake
+2,584 ms, budget 5,600; fieldFlip 118; the field draws 283 / 441; total 24.5 s of 40); boot gate passed (cold 1,177 /
+9,013 / 1,530 ms; 512 MB reload 9,339 / 17,393 / 13,493; 256 MB 8,279 / 15,948 / 12,001); full self-test 47 of 47.

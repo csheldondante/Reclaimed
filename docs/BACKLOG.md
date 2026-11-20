@@ -738,19 +738,31 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   2-3 x a whole sheet bake. Cause and directions in NESTED_SCALES.md "As built (round 26)": a thread a cell column
   walking its candidates serially (one column up to 134), each sample evaluated for each of the 4 cell columns that share
   it, columns walked through the pages again for every sample. Not tuned this round (the brief: stop and report).
-- NS-204 (not built, round 26: steps C-E) The field mesh's join, look and the 16 m level were built in their first form
-  with step B (fade, OVER, skirt; warp, gradient normals, material per pixel, the textured shading) but not checked: no
-  visual-closure check over the poses, no stills side by side, no `?field=1` run. Picked up only if the build cost is
-  solved.
+- NS-204 (done, round 26 C-E) The join, the look and the 16 m level checked: visual closure 0 hole pixels over 10 poses
+  (after the flip fix), stills side by side (local/nested/r26-*, r26E-*), `?field=1` at the r25 fang spot.
+- NS-211 (look, round 26) Steps in the columns (the parent cells' staircase that enhance passes down, the generator's
+  steps) read in the field mesh as straight thin walls, from above a grid of creases along the parent's cells
+  (r26-above-field: 2 m cells at the 0.25 m level); at the 16 m level the r25 fangs become a ragged layered wall. The mesh
+  is faithful to the data: the fix is in enhance (NS-170, NS-198), not the mesher.
+- NS-212 (look, round 26) Thin dark dashes along some silhouettes and slopes in the field draw (r26-cliff-field,
+  r26-grazing-field): thin near-vertical strips seen edge-on; not holes (the closure count is 0). Not examined further.
 - NS-205 (limit, round 26) A field bake's pages are reserved at 2 x (1 + max(2, deepest so far)) + 2 a chunk; a first bake
   that needs more leaves that chunk undrawn (counted as refused) until it is baked again, as the sheets do.
 - NS-206 (limit, round 26) Corners of the field mesh's drawn region: a skirt or a triangle only at straight edges and the
   footprint's inner corners; at the window's outer corners the skirts meet at one vertex (no corner piece).
-- NS-207 (hack, round 26) The field draw's material: the record holding the point 0.3 columns inside, else the column's
-  nearest inside record; a column with none gives MAT_AIR, which draws magenta (left visible on purpose, not seen in the
-  runs). The OVER cells past a child's window read the parent's column at the converted height.
+- NS-207 (hack, round 26) The field draw's material: within half a column of one of the jittered column's surfaces the
+  inside record at that surface, deeper the record holding the point 0.02 columns inside; a column with nothing inside
+  gives MAT_AIR, which draws magenta (left visible on purpose, not seen in the runs). Half a column is a tolerance for
+  the mesh's distance from the columns, picked, not derived. The OVER cells past a child's window read the parent's
+  column at the converted height.
 - NS-208 (limit, round 26) `?field` is set at load only (no button), levels 1 and up; its pipelines are made after every
   other one (4.4-4.6 s more on the desktop) and levels wait for them.
+- NS-209 (perf, round 26 B3) A field job builds a 2 x 2 block a frame and only in frames whose pool header came back, so
+  opening a level takes about 2 s and a slide 0.5-1 s, during which levels and edits wait: at cruise the next slide waits
+  for the last; in one 200 m/s run the open's job stalled behind pool grows for the whole 8 s. A steep chunk alone costs
+  about 5 ms of a frame (over the 4 ms target). Not tuned.
+- NS-210 (limit, round 26 B3) While a field job runs, the level's old meshes are drawn: a slide's staying chunks keep their
+  old fade and OVER cells until the flip, and the entering strip is the parent's until then.
 - NS-197 (perf, round 25) Time to the generated terrain in Chrome (desktop): the atlas's kernels and genFill start after
   every boot pipeline (13.4-14.8 s) and the atlas is built at 43-45 s after the page opened (its kernels 15.6-17.3 s,
   genFill 29.5-31 s compiling beside them). The owner's "startup time not yet" ruling: logged, not optimised.

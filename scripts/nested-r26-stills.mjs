@@ -66,6 +66,15 @@ await run({ name: 'r26-stills', kind: 'behaviour', size: '960x640', dpr: 1, echo
     const yaw0 = Math.atan2(spot.dir[1], spot.dir[0]) + 0.5;
     await page.evaluate((v) => nested.setView(v), { tx: zx, ty: zy, d: dz[L], pitch: 0.95, yaw: yaw0 });
     await settle(L + 1);
+    // (the r25 zoom pose itself, before any carve: r25-zoom-L1's fang location at --level 1 --below 200)
+    if (!only.length || only.includes('zoom')) {
+      await page.evaluate(() => (nested.app.frozen = true));
+      await sleep(400);
+      const file = `local/nested/${tag}-zoom-${variant.replace(/[^a-z0-9]+/gi, '_')}.png`;
+      await page.screenshot({ path: file });
+      await page.evaluate(() => (nested.app.frozen = false));
+      console.log(`${variant} zoom: ${file}`);
+    }
     // the scene at level L: positions from its window and its columns (world = root columns; level L's global column / k^L)
     const scene = await page.evaluate(async (L) => {
       const a = nested.app;
@@ -122,6 +131,8 @@ await run({ name: 'r26-stills', kind: 'behaviour', size: '960x640', dpr: 1, echo
       overhang: look(toWorld(b[0] - 2, b[1], b[2] - 6), toWorld(b[0] + 13, b[1], b[2] - 9)),
       cave: look(toWorld(c[0], c[1], c[2] - 14), toWorld(c[0] + 5, c[1] + 2, c[2] - 15)),
       above: look(toWorld(n / 2, n / 2 + 1, b[2] + c30), toWorld(n / 2, n / 2, b[2])),
+      // (300 m up, 30 degrees down: the material borders from afar)
+      above300: look(toWorld(n / 2 - 10 * c30 * 0.87, n / 2, b[2] + 10 * c30 * 0.5), toWorld(n / 2, n / 2, b[2])),
       grazing: look(toWorld(n * 0.3, n * 0.3, b[2] + 6), toWorld(n * 0.7, n * 0.7, b[2])),
       'border-in': look(toWorld(n * 0.5, n - c30 * 0.6, b[2] + c30 * 0.5), toWorld(n * 0.5, n + c30 * 0.4, b[2])),
       'border-out': look(toWorld(n * 0.5, n + c30 * 0.6, b[2] + c30 * 0.5), toWorld(n * 0.5, n - c30 * 0.4, b[2])),

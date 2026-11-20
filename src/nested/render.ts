@@ -225,7 +225,7 @@ export class Renderer {
   private fieldBg: GPUBindGroup | null = null;
   private fieldBgFor: GPUBuffer[] = [];
   /** (round 26) the field draw's dials: the lookup's warp and the material's jitter (columns), the skirt (columns) */
-  fieldOpt = { warp: 0.45, jitter: 0.35, skirt: 3 };
+  fieldOpt = { warp: 0.45, jitter: 0.35, skirt: 3, dbg: 0 };
   /** (round 26) the field draw's pipelines' creation time, ms */
   fieldCompileMs = 0;
   /** (round 26) start making the field draw (its pipelines asynchronously, both flat and textured) */
@@ -243,7 +243,7 @@ export class Renderer {
     });
     const pl = this.device.createPipelineLayout({ bindGroupLayouts: [layout] });
     const module = this.device.createShaderModule({ label: 'nest field draw', code: fieldDrawCode(this.nest.S, this.nest.segP) });
-    const ubuf = this.device.createBuffer({ label: 'nest field draw uniforms', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    const ubuf = this.device.createBuffer({ label: 'nest field draw uniforms', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const t0 = performance.now();
     const f: NonNullable<Renderer['field']> = { layout, pl, module, ubuf, ready: Promise.resolve() };
     f.ready = Promise.all([this.device.createRenderPipelineAsync(fieldDesc(pl, module, this.format, 'fsField')), this.device.createRenderPipelineAsync(fieldDesc(pl, module, this.format, 'fsFieldT'))]).then(([a, b]) => {
@@ -278,7 +278,7 @@ export class Renderer {
       this.fieldBgFor = want;
     }
     const o = this.fieldOpt;
-    this.device.queue.writeBuffer(f.ubuf, 0, new Float32Array([o.warp, o.jitter, o.skirt, 0]));
+    this.device.queue.writeBuffer(f.ubuf, 0, new Float32Array([o.warp, o.jitter, o.skirt, 0, o.dbg, 0, 0, 0]));
     return this.fieldBg;
   }
 

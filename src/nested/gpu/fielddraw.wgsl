@@ -7,6 +7,8 @@
 struct FieldDU {
   /** x warp (columns), y the material lookup's jitter (columns), z skirt (columns), w the inside test (0 solid) */
   p: vec4<f32>,
+  /** x (diagnostics, ?fdbg=): 1 the lit normal as colour, 2 the material's colour unlit, 3 the slope (white = vertical) */
+  dbg: vec4<f32>,
 }
 @group(0) @binding(2) var<uniform> fdu: FieldDU;
 
@@ -91,36 +93,50 @@ fn fdWarp(I: vec2<i32>, f: vec3<f32>) -> vec2<f32> {
   let t = vec3<f32>(fr, zq - floor(zq));
   return (vec2<f32>(fdNoise(vec3<i32>(lat, iz), t), fdNoise(vec3<i32>(lat + vec2<i32>(17, 5), iz + 9), t)) - 0.5) * (2.0 * W);
 }
-/** the material of column (lv, X, Y) at height z: the record holding z if inside, else the nearest inside record (by
- *  height); MAT_AIR when the column has none */
+/** the material of column (lv, X, Y) at height z: within half a column of one of the column's surfaces (an inside /
+ *  outside boundary) the inside record at that surface, so a thin top layer (the generator's soil, 0.03 columns at the
+ *  16 m level) reads as itself wherever the mesh, which follows the columns only to about half a cell, puts the pixel;
+ *  deeper in, the record holding z (strata on a wall); MAT_AIR when the column has nothing inside */
 fn fdMatOf(lv: u32, X: i32, Y: i32, z: f32) -> u32 {
   let n = recCount(lv, X, Y);
-  var best = MAT_AIR;
+  var bm = MAT_AIR;
   var bd = 1e30;
+  var held = MAT_AIR;
+  var pIn = false;
+  var pMat = MAT_AIR;
   var below = -1e30;
   for (var j = 0u; j < n; j++) {
     let r = recAt(lv, X, Y, j);
     let t = bitcast<f32>(r.x);
-    if (fdInside(r.y)) {
-      // (the record spans below .. t)
-      if (z >= below && z < t) { return r.y & 0xffu; }
-      let dd = select(below - z, z - t, z >= t);
+    let inside = fdInside(r.y);
+    // (a surface at `below`, between record j - 1 and j: its inside side's material)
+    if (j > 0u && inside != pIn) {
+      let dd = abs(z - below);
       if (dd < bd) {
         bd = dd;
-        best = r.y & 0xffu;
+        bm = select(pMat, r.y & 0xffu, inside);
       }
     }
+    if (inside && z >= below && z < t) { held = r.y & 0xffu; }
+    pIn = inside;
+    pMat = r.y & 0xffu;
     below = t;
-    if (below > z + bd) { break; }
   }
-  return best;
+  // (the last record's top, with air above it)
+  if (pIn && abs(z - below) < bd) {
+    bd = abs(z - below);
+    bm = pMat;
+  }
+  if (bd <= 0.5 || held == MAT_AIR) { return bm; }
+  return held;
 }
-/** the material at window-relative point q of the drawn level: q moved 0.3 columns inside along n, warped as the field
+/** the material at window-relative point q of the drawn level: q moved 0.02 columns inside along n, warped as the field
  *  was looked up, jittered by up to fdu.p.y columns (borders read ragged, not as the column squares); outside the window
- *  (the cells past its edge, where the field is the parent's) the parent's column */
+ *  (the cells past its edge, where the field is the parent's) the parent's column. (0.3 columns at first: at the 16 m
+ *  level that is 4.8 m, under the generator's half-metre soil, so whole hills read as their stone) */
 fn fdMat(q: vec3<f32>, n: vec3<f32>) -> u32 {
   let L = u32(d.lvl.w);
-  let p = q - n * 0.3;
+  let p = q - n * 0.02;
   let pi = vec2<i32>(floor(p.xy));
   let I = d.lvl.xy + pi;
   let f = vec3<f32>(p.xy - vec2<f32>(pi), p.z);
@@ -169,5 +185,15 @@ fn fsField(v: VOutF) -> FOut {
 fn fsFieldT(v: VOutF) -> FOut {
   let pxL = footprint(dpdx(v.q), dpdy(v.q));
   let n = fdNormal(v);
-  return texOut(v.q, v.zo, n, fdMat(v.q, n), pxL, v.toEye, v.dEye);
+  let mat = fdMat(v.q, n);
+  if (fdu.dbg.x > 0.5) {
+    var o: FOut;
+    var c = n * 0.5 + 0.5;
+    if (fdu.dbg.x > 1.5) { c = matColor(mat); }
+    if (fdu.dbg.x > 2.5) { c = vec3<f32>(1.0 - abs(n.z)); }
+    o.color = vec4<f32>(c, 1.0);
+    o.info = vec4<f32>(1.0, f32(d.lvl.w) / 8.0, 0.0, 1.0);
+    return o;
+  }
+  return texOut(v.q, v.zo, n, mat, pxL, v.toEye, v.dEye);
 }

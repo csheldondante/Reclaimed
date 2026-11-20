@@ -431,6 +431,7 @@ export class GpuNest {
   /** (B3, measurement) each finished field job: level, kind, chunks, frames, ms */
   readonly fieldLog: { L: number; chunks: number; frames: number; ms: number }[] = [];
   private fieldDefer = false;
+  private fieldFlipping = false;
   /** (B3) queue level L's chunks of these rects (clipped to its window) for the job, no repeats */
   private fieldQueue(L: number, rects: { x0: number; y0: number; x1: number; y1: number }[], flip: () => void): void {
     const seen = new Set<string>();
@@ -829,7 +830,9 @@ export class GpuNest {
     this.bake(M, slots, grow, rows, 0, how === 'window', rowsPer);
     // (measurement only: skip 'partner' leaves parts 2 and 3 out, the result then wrong)
     if (this.skip.has('partner')) return;
-    if (M + 1 < this.live) this.bake(M + 1, slots, true, undefined, 1);
+    // (round 26 B3: a field job's flip bakes the parent's footprint through this rule but not the field child's ring,
+    // which the job has just built)
+    if (M + 1 < this.live && !this.fieldFlipping) this.bake(M + 1, slots, true, undefined, 1);
     if (M > 0) this.bake(M - 1, slots, true, undefined, 2);
   }
   /** bake level L's faces over region slots, their chunks grown by one (a column's walls depend on its neighbours).
@@ -1255,7 +1258,9 @@ export class GpuNest {
       this.fieldQueue(L, [wr], () => {
         this.run('fieldFlip', this.uni(({ a }) => (a[3] = L)), TCAP / 64);
         this.mergeFrees();
-        this.bakeRects(L - 1, [fc], 1, false);
+        this.fieldFlipping = true;
+        this.bakeRects(L - 1, [fc], 1, true);
+        this.fieldFlipping = false;
         this.directory();
         this.mergeFrees();
         this.submit();
@@ -1389,7 +1394,11 @@ export class GpuNest {
         this.run('fieldFlip', this.uni(({ a }) => (a[3] = L)), TCAP / 64);
         this.run('fieldRelease', this.uni(({ a, e }) => ((a[3] = L), e.set([nc.x0, nc.y0, nc.x1, nc.y1]))), TCAP / 64);
         this.mergeFrees();
-        if (fp && fn) this.bakeRects(L - 1, [fp, fn], 4, false);
+        // (the parent round both footprints through the region rule, as the sheets' slide does: its own chunks and its
+        // parent's rim chunks; not this level's ring)
+        this.fieldFlipping = true;
+        if (fp && fn) this.bakeRects(L - 1, [fp, fn], 4, true);
+        this.fieldFlipping = false;
         this.directory();
         this.mergeFrees();
         this.submit();
