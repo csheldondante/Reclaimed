@@ -177,6 +177,18 @@ Round 32, the real thing:
   that is "all up" stops descending unless notches are on; the step-cap fallback draws a bare coarse block.
   The builder's next brief should be written from this sentence, not from the settings accumulated so far.
 
+- **On cost (the owner, last):** "doing the fine march with just columns is fine if notches are too expensive."
+  and "I would not expect them to be much more expensive since every pixel can walk in column space I would
+  assume it walks bigger column subtraction first and so is logarithmic in steps * const for number of steps
+  per level which I think we kept small like <5". The owner's expectation is the right design and the current
+  notch march does NOT do it: it descends to the distance-chosen finest level first and then crosses a notch's
+  air node by node at that level (hence 50+ steps and the cap). NS-307 should be done as: test notches
+  coarse-first inside the hierarchy. A node at level l whose ray segment lies, in z, wholly inside a level-l (or
+  coarser) notch that covers the node is EMPTY and is crossed in one step, like a node with nothing up; only a
+  node the notch covers partly (in plan or in z) is descended. Steps then stay about (levels) x (a few), as for
+  plain columns (measured 4-11 mean). Fallback if it still costs too much: fine columns without notches, which
+  the owner accepts.
+
 ## Open decisions for the owner
 1. Threshold default: 2 or 4.
 2. Notches: port coarse ones to the shader, or drop (orchestrator's view from the CPU pictures: drop for now).
