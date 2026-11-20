@@ -189,6 +189,21 @@ Round 32, the real thing:
   plain columns (measured 4-11 mean). Fallback if it still costs too much: fine columns without notches, which
   the owner accepts.
 
+- **The depth rule the owner agreed to try (2026-11-20, last):** their model: "columns are volumetric and
+  fractal subtraction of less than .5 depth along surfaces should always leave contiguous material. So any gaps
+  are I assume rendering only." Current settings break it (columns move up to a full cell per level; notches
+  cut up to 4 cells deep, which can cut a thin column through and leave its top hanging). Agreed next step
+  after the notch cost fix: at every level, subtraction from a stone surface is less than half a cell of that
+  level deep. The owner had assumed 8x8 levels ("so 4 was exactly half") and prefers "4 distinct depths per
+  level (0,1,2,3)" over two (0,1), "but let's see what it looks like". Orchestrator's proposal: define the
+  rule on the REAL 8x levels (16 m -> 2 m -> 0.25 m -> finer), with a hashed depth of 0..3 child cells per
+  level from every stone face, for columns (plan) and notches (height) alike; the march may still traverse a
+  binary tree for skipping. This also makes step C simpler (one rule step per real level). Show side by side:
+  8x levels with depths 0..3, binary levels with depths 0..1, and today's deeper notches.
+- Also the owner: "if the march uses the fractal it will be fast enough" and, below 0.25 m, "I'm ok seeing
+  flat walls but I do think it would look better to just keep rendering deeper columns so that things look
+  rough. And like they have basically infinite voxel detail." So: keep subdividing below 0.25 m to pixel size.
+
 ## Open decisions for the owner
 1. Threshold default: 2 or 4.
 2. Notches: port coarse ones to the shader, or drop (orchestrator's view from the CPU pictures: drop for now).
