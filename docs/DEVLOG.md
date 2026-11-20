@@ -28510,7 +28510,8 @@ march and the level's derive can both evaluate it, and draws it on the CPU befor
 - Invariants: tops in a split cell only H or L; the bound never under on 1.17 M nodes (erosion on and off); determinism;
   the up level meets a sheet hi neighbour exactly at the edge midpoint (worst 4.5 m along a sloped edge, NS-264).
 - Children mean vs h (215 split cells): no residual RMS 330 units / worst 24.5 m; independent offsets 487 / 26.0 m; the
-  closed form alone 94 units; dTheta mean 79 / max 396 w units (~20 / ~99 fine columns); with dTheta RMS 0.27 / worst 2.07
+  closed form alone 94 units; dTheta mean 79 / max 396 w units (9.9 / 49.5 fine columns; first written ~20 / ~99, a wrong
+  unit corrected in round 3); with dTheta RMS 0.27 / worst 2.07
   units; with erosion 5.2 / 10.2.
 - March nodes a pixel (960 x 640): near 21.8 (max 87), far 19.7 (77), above 12.7, bowl 14.9, trench 21.0; shadow rays
   13-24 mean (max 114). No ray hit the 6000 cap. 1.2-4.9 s a picture on the CPU.
@@ -28518,3 +28519,31 @@ march and the level's derive can both evaluate it, and draws it on the CPU befor
   (NS-267) and the coarse ones almost never fit (NS-268), so dramatic = tame. Round 1's far-view bottom strip was the
   map's south border cut, aimed out of frame.
 - Typecheck clean; test/unit/nested-cliffrule.test.ts 7/7 (only this file run).
+
+## 2026-11-20 — Nested scales lab, round 32 (step A, round 3): notch slots, coarse notches that fit, an O(1) depth test
+
+**Why.** Round 2's notches read as pocks (one cell wide), the 8 / 4 m ones almost never fitted a face, and their depth
+test sampled up to 8 neighbour tops a level (too heavy for a shader). The stored residual was large. A shader port is
+next, so the rule also gets port notes (NESTED_SCALES "As built (round 32, step A)", *Port notes*).
+
+**What.** cliffrule.ts: a notch key spans 4 cells of its level along the face (the axis more perpendicular to hi -> lo),
+one per coarse cell across it, height 1-2 cells; z-segments anchored at L and sized to the face's usable band; the depth
+tested by the column's own margin over the threshold (marginOf), no neighbour tops. Defaults "tame" (8 m 5 % / depth 1,
+4 m 10 % / 2, finer 15 % / 4). Round 2's rule stays reachable by parameters. The test reports the margin test against
+the sampled one, air per level, and the 8 m amplitude at half a cell; pictures rA3-* (near, far, trench, the bowl from
+further back; tame, dramatic15, coarse50, amp8half).
+
+**Measured.**
+- Margin vs sampled depth: agreement on air 49 % (tame) / 61 % (dramatic); most disagreements are sampled-only (faces
+  toward neighbouring cells or inside a 2 m w-block). Air per level over the probes, 8 m .. 0.25 m: tame 40 / 1564 /
+  1726 / 942 / 515 / 331, dramatic 1312 / 3180 / 1726 / 942 / 515 / 331.
+- Notch test cost: ~25 hashes once (the score) plus ~6 a level (2 + a 4-hash mask), no top lookups (round 2: up to 8 top
+  lookups a level, each ~25 hashes).
+- Residual: dTheta mean 9.9 / max 49.5 fine columns (2.5 / 12.4 m); the 8 m amplitude at half a cell 6.7 / 33.9, no
+  residual RMS 233 units / worst 20.3 m (from 330 / 24.5). Default unchanged.
+- March nodes a pixel: near 21.2 (max 69), far 19.7 (76), trench 21.0 (109), bowl from further back 12.0 (64); shadow
+  rays 11-24 mean (max 64-93).
+- Look: notches read as short horizontal slots; tame and dramatic15 differ in 1,322 pixels of the near view (coarse
+  slots are rare at 15 %); coarse50 shows 8 / 4 m stepped recesses with overhangs, lit, not dark caves; amp8half gives
+  broader, calmer slabs.
+- Typecheck clean; test/unit/nested-cliffrule.test.ts 8/8 (only this file run).

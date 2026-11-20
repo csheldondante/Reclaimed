@@ -1847,22 +1847,67 @@ port needs floor helpers: `/` and `%` truncate there). Coarse cells 16 m; fine c
   offsets, plus the remaining levels' largest amplitude (the mask at its per-cell maximum: the cell lies in one lattice
   cell). Max top = H if any descendant could be up, else L; min top mirrored, less the erosion maximum. Tested on 1.17 M
   nodes, erosion on and off: never under; 0.5 % of nodes (9.7 % with erosion) over-promise.
-- *Notches* (round 2: every level). Level l (8 m .. 0.25 m) cuts its own notches in its own cells, keyed on its own
-  cell: z-segments of 5 cells (hashed offset per key), a hashed share `notchPctL[l]` x the mask, height 1..3 cells, depth
-  1..`notchDepthL[l]` cells; open only where a column within that depth toward lo (sampled every half cell) has its top
-  at or below the notch floor. Air is the union over levels (finer only adds air); each level's top cell stays solid, so
-  tops and the top bound are untouched; a march's leaf tests every level up to the level it reached.
+- *Notches* (round 3; round 2's rule behind `slotLog 0, segFit false, notchMargin false, notchHMax 3`). Every level l
+  (8 m .. 0.25 m, the owner: "notches at each level below the current for a carve") cuts its own, in its own cells
+  (c = 1024 >> l units), only in up columns of split cells:
+  - z-segments anchored at L, segCells = min(notchSeg 5, floor((H - c - erosionMax - L) / c)) (`segFit`: sized to the
+    face's usable band; none if under 1 cell); j = floor((z - L) / (segCells c));
+  - key = (the column's along-face index >> (6 - l + slotLog 2), the coarse cell index across the face, j, level): a slot
+    4 cells of its level wide along the face (along x when |a| < |b|, else along y), one per coarse cell across it;
+  - air when hash % 25600 < notchPctL[l] x mask (the mask at the column's level-l cell centre); height 1..notchHMax (2)
+    cells, start hashed in the segment, hi <= H - c - erosionMax (the level's top cell stays solid);
+  - depth 1..notchDepthL[l] cells, tested O(1) by the column's own margin over the threshold: open when margin <
+    depth x (cells in fine columns) x 2A x 4096 (one fine column along the dominant axis is 2A in w). Close to, not
+    identical with, "a column within that depth toward lo is lower": they agree on 49 % (tame) / 61 % (dramatic) of air
+    probes; the margin cannot see faces toward neighbouring cells or inside a 2 m w-block.
+  Air is the union over levels 1..(the level reached), merged with overlapping intervals; tops and the top bound are
+  untouched. Defaults "tame": share 5 / 10 / 15 / 15 / 15 / 15 %, depth <= 1 / 2 / 4 / 4 / 4 / 4 (8 m .. 0.25 m);
+  "dramatic" 15 % and 4 everywhere; `coarse50` (test parameter set) 50 / 40 / 15 ... with depth 4.
 - *Mask.* Value noise on a 4-coarse-cell lattice of hashed bytes, integer smoothstep, remapped by smoothstep(0.38, 0.62);
   evaluated at each level cell's (parent's) centre in fine half-cells.
 - *Erosion* (default off). Up columns within 2 m of a lower column toward lo drop 0, 0.5 or 1 m, hashed per 1 m block.
 Numbers (synthetic field: plateau with a curved 80 m cliff, bay and bump corners, a 70 deg slope over 4 cells, a ridge
 with a col, a pit, rolling ground, a sphere bowl r 40 m and a 48 x 40 m trench at 27 deg; 215 split cells): the mean of
 the children against h with no residual RMS 330 units (5.2 m), worst 24.5 m (38 % of H - L; independent offsets 487 /
-26.0 m; the closed form alone, no raggedness, 94 units); dTheta mean 79, max 396 w units (~20 / ~99 fine columns); with
-it RMS 0.27, worst 2.07 units. March: near view 21.8 nodes a pixel (max 87), shadow rays 23.3 (max 97); far 19.7 / 16.8.
+26.0 m; the closed form alone, no raggedness, 94 units); dTheta mean 9.9, max 49.5 fine columns along the dominant axis
+(2.5 m / 12.4 m; round 2's commit said ~20 / ~99: a wrong unit, one fine column is 2A in w); with it RMS 0.27, worst 2.07
+units. With the 8 m amplitude at half a cell (`ampL[1]` 128, not the default): no residual RMS 233 / worst 20.3 m, dTheta
+mean 6.7 / max 33.9 fine columns. March: near view ~21 nodes a pixel (max 69-109), shadow rays ~23 (max 64-97); far
+19.7 / 16.8; trench 21.0 / 13.4; bowl from further back 12.0 / 11.1.
 Pictures: round 1 (rA-*) a straight boundary with 0.25 m pin-stripes, notches 1-2 px specks, coarse squares on tops
 coloured by kind; round 2 (rA2-*) blocks of 8 / 4 / 2 m, tops ground-coloured, shadows; notches read as pocks, and the
-8 / 4 m notches almost never fit a 20-40 m face, so "dramatic" and "tame" look the same. Open items NS-264..NS-275.
+8 / 4 m notches almost never fit a 20-40 m face. Round 3 (rA3-*): notches read as short horizontal slots crossing
+neighbouring columns; coarse notches occur but at 15 % a slot they are rare in a view (tame and dramatic15 differ in
+1,322 pixels of the near view); `coarse50` shows 8 / 4 m stepped recesses with overhangs, lit (no dark caves); amp8half
+reads as broader, calmer slabs. Open items NS-264..NS-282.
+
+*Port notes* (for the WGSL port; the TS is the reference):
+- Geometry definition, port bit-exactly (cliffrule.ts): `mix`, `hash3`, `salt`, `ism`, `fdiv` / `fmod`, `isqrt`,
+  `hAt`, `kindOf`, `joined`, `cornerValue` / the sheet's `ctrl` (deriveCell's sheet branch), `sheetAt` (integer sheet
+  heights), `deriveCell` (H, L, F, the direction a / b / A / B and the saddle fallback, theta via `thetaOf`), `maskAt`,
+  `maskRemap`, `maskMaxOf`, `ampOf`, `remAmp`, `levelOff` (zero-sum pairing), `wCentre` / `wShift`, `tieOf`, `thetaUsed`,
+  `marginOf` / `isUp`, `isUpLod` (the LOD representative, used by any march), `scoreRange` and `cellBound` (the bound),
+  `preTop`, `erosion` / `fineTop` / `erodeMaxU` / `unitU` / `unitCols`, `notchLevel` (margin mode) and `notchAt` (the
+  union merge, up to 8 extensions each way).
+- Derive-time only (the stored residual): `scores`, `bestDTheta`; dTheta is one i32 stored per split cell beside its
+  height (the shader reads it, never computes it). It uses `Math.round` for the target count: port as floor((2 x + 1) /
+  2) on integers (JS rounds ties up, WGSL `round` to even). `deriveRules` is a CPU convenience (per-cell rules cached).
+- Renderer only (cliffview.ts, not the definition): the DDA and quadtree march, `sheetAtF` (the float sheet surface the
+  march intersects), shading, shadow rays, `occlusion` / `solidAt`, `levelFor`. Reference-only paths: the sampled notch
+  depth (`notchMargin: false`) and `loSteps` sampling in `erosion` (erosion still samples up to 2 x 8 neighbour tops toward
+  lo: not O(1), NS-281).
+- Where TS and WGSL differ: (1) `fdiv` / `fmod` are floor division / modulo; WGSL i32 `/` and `%` truncate toward zero:
+  needed wherever an operand can be negative (corner and edge means of negative heights, the direction rounding
+  fdiv(8 gx + m, 2 m), mask lattice indices, notch segment index j = fdiv(z - L, Sz) below L, global fine indices).
+  (2) `>>` on negative i32 is arithmetic in both (floor), so `gx >> k` ports as is; `>>>` (u32 shift) means u32 in WGSL.
+  (3) Hashes: `Math.imul` and `^` wrap to 32 bits as u32 multiply / xor do; inputs are i32 bitcast to u32; every `%` on a
+  hash is u32 % u32 (the JS value is non-negative after `>>> 0`). (4) `isqrt`: an f32 sqrt guess corrected by integer
+  checks; f32 loses up to ~16 on n near 2^28, so 2 bounded correction steps each way suffice (the TS `while` must become
+  bounded loops). (5) No 64-bit intermediates: the largest are A B F N^2 in thetaOf (2.7e8), scores x 4096 (~4e6 plus
+  theta), sheet bilinear sums (height x N^2, ~5e7 at 200 m; i32 overflows past ~2,000 m of height at N = 64), ampOf
+  (1.7e7), F's 4096 (h - L) (overflows past 8,000 m of H - L); global fine half-cell coordinates stay in i32 for worlds
+  under 2^17 coarse cells. (6) `Math.sign` / `Math.abs` / `min` / `max` are integer-safe. (7) The ±2147483647 sentinels in
+  `kindOf` and `cellBound` are i32-safe.
  (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
 SUPERSEDED by "The box draw" (round 6); kept for the history.

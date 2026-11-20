@@ -938,16 +938,19 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   only at the edge midpoint (worst 4.5 m along the edge, carve rims). Fix: up tops follow the hi sheet's edge height,
   the share solved over that surface, the rest in the residual.
 - NS-265 (hack, round 32 A) dTheta (the cliff rule's stored residual) is derived by sorting a split cell's 4096 scores:
-  a derive-time cost, not O(1); with round 2's amplitudes it is large (mean ~20, max ~99 fine columns), so the stored
-  number, not the rule, places much of the edge.
+  a derive-time cost, not O(1); with round 2's amplitudes it is large (mean 9.9, max 49.5 fine columns: 2.5 / 12.4 m;
+  first written as ~20 / ~99, a wrong unit), so the stored number, not the rule, places much of the edge. Round 3: the
+  8 m amplitude at half a cell gives 6.7 / 33.9 (a parameter, not the default).
 - NS-266 (hack, round 32 A) Scores carry a 12-bit per-column tie-break hash so a threshold can split ties; collisions
   still leave an exact-mode error of up to 2 columns' worth (worst 2.07 units).
 - NS-267 (limit, round 32 A) Notches are keyed on one cell of their level (1 cell wide, 1-3 tall): they read as pocks,
-  not horizontal slots.
+  not horizontal slots. (Round 3: keys span 4 cells along the face, height 1-2: short slots. Done in round 32 A3.)
 - NS-268 (limit, round 32 A) Coarse (8 m, 4 m) notches almost never fit: a fixed 5-cell z-segment and the top-cell rule
-  on 20-40 m faces; "dramatic" and "tame" render the same.
+  on 20-40 m faces; "dramatic" and "tame" render the same. (Round 3: segments sized to the face; they occur, but see
+  NS-278.)
 - NS-269 (perf, round 32 A) The notch's depth test samples columns toward lo every half cell (can miss a face) and costs
-  up to 8 top lookups per level per test, 6 levels: too heavy for a shader as is.
+  up to 8 top lookups per level per test, 6 levels: too heavy for a shader as is. (Round 3: O(1) by the column's margin,
+  ~25 hashes once plus ~6 a level, no top lookups; close, not identical: NS-276.)
 - NS-270 (limit, round 32 A) Notches open only from faces toward lo along the two axes; enclosed (invisible) air can
   exist behind them.
 - NS-271 (limit, round 32 A) At LOD (a leaf coarser than 0.25 m) the march takes the leaf's centre column's notches and
@@ -958,6 +961,21 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
 - NS-274 (limit, round 32 A) A split cell's tops take only two levels: depth comes from plan steps of whole blocks, not
   staggered column tops like round 31's stills.
 - NS-275 (limit, round 32 A) The map border clamps neighbours (kinds and sheets at the edge read clamped heights).
+- NS-276 (limit, round 32 A3) The O(1) notch depth (the column's margin over the threshold) only sees the cell's own
+  up/down boundary: faces toward neighbouring cells or inside a 2 m w-block get no notches; it agrees with the sampled
+  test on 49 % (tame) / 61 % (dramatic) of air probes.
+- NS-277 (limit, round 32 A3) Notch slots are keyed per coarse cell across the face, so a slot breaks at coarse cell
+  boundaries; segments anchored at each cell's L do not line up between cells.
+- NS-278 (look, round 32 A3) At 15 % a slot, coarse notches are rare in a view (tame vs dramatic15: 1,322 pixels of the
+  near view); whether "dramatic" means a higher coarse share (the `coarse50` set: 50 / 40 %) is the owner's call.
+- NS-279 (limit, round 32 A3) Notch back walls are lit: big (8 m) recesses read as blocky lit cut-outs, not dark caves;
+  the renderer's occlusion is a 0.75 m 4-tap test, too small for 8-32 m recesses.
+- NS-280 (look, round 32 A3) Sheets inside the bowl carve show creases where the bilinear quadrants change slope; a
+  40 m bowl stored at 16 m is ~5 cells and reads as a gorge from the rim.
+- NS-281 (perf, round 32 A3) Erosion still samples up to 2 x 8 neighbour tops toward lo (not O(1)); give it the margin
+  test like the notches before the port, or keep it off.
+- NS-282 (hack, round 32 A3) bestDTheta uses JS Math.round for the target count (ties up); a WGSL or CPU port must use
+  floor((2x + 1) / 2) to match.
 - NS-253 (test, round 31) Compile times swing 1.5-2.5x between runs on this machine (drawFieldTex 295-820 ms with no
   change); version 3's textured variants (drawBoxesTexV3 / drawSheetsTexV3) got a 600 ms budget from 341-457 / 401-535 ms.
 - NS-254 (hack, round 31) The pixel's size per unit of distance (draw uniform cl.x) is written by the app each frame

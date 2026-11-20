@@ -26,9 +26,10 @@
 //  4. A conservative bound of any cell's descendants' tops at any level: from the cell's w range, its ancestors' known
 //     offsets and the remaining levels' largest amplitude.
 //  6. Notches at every level 1..fineLevel (8 m .. 0.25 m): local air(column, z) = the union over levels of that level's
-//     notch, each in its own cells and keyed on its own cell: z segments of notchSeg cells, a hashed share notchPctL[l],
-//     height 1..notchHMax cells, depth 1..notchDepthL[l] cells in from a lower column toward lo. Finer levels only add
-//     air (a union), tops are never cut (each level's top cell stays solid), so the top bound is unchanged.
+//     notch, each in its own cells: z segments anchored at L and sized to the face (segFit), keyed on a slot of
+//     2^slotLog cells along the face, a hashed share notchPctL[l], height 1..notchHMax cells, depth 1..notchDepthL[l]
+//     cells tested O(1) by the column's own margin over the threshold (notchMargin). Finer levels only add air (a
+//     union), tops are never cut (each level's top cell stays solid), so the top bound is unchanged.
 //  7. A slow mask (value noise on a lattice of maskP coarse cells) scales levels >= maskFrom and the notch share.
 //  8. Erosion (default off): up columns within 2 units of a lower column drop a hashed 0..erodeSteps half-units,
 //     keyed on the unit block.
@@ -75,6 +76,12 @@ export interface CliffParams {
   notchHMax: number;
   /** the erosion unit: a cell of this level (4 = 1 m) */
   erodeUnit: number;
+  /** a notch's key spans 2^slotLog cells of its level along the face (a slot, not a pock) */
+  slotLog: number;
+  /** z-segments sized to the face: at most the usable band of the face, so coarse notches can occur */
+  segFit: boolean;
+  /** the notch depth test by the column's own margin over the threshold (O(1)); false = round 2's sampled tops */
+  notchMargin: boolean;
   /** erosion on (drops only, up columns within 2 units of a lower column) */
   erode: boolean;
   /** erosion's largest drop, half-units (default 2: 0, 0.5 or 1 m) */
@@ -93,11 +100,15 @@ export function defaultParams(): CliffParams {
     maskFrom: 4,
     wLevel: 3,
     maskP: 4,
-    notchPctL: [0, 15, 15, 15, 15, 15, 15],
-    notchDepthL: [0, 4, 4, 4, 4, 4, 4],
+    // "tame": 8 m 5 % depth <= 1, 4 m 10 % <= 2, 2 m and finer 15 % <= 4
+    notchPctL: [0, 5, 10, 15, 15, 15, 15],
+    notchDepthL: [0, 1, 2, 4, 4, 4, 4],
     notchSeg: 5,
-    notchHMax: 3,
+    notchHMax: 2,
     erodeUnit: 4,
+    slotLog: 2,
+    segFit: true,
+    notchMargin: true,
     erode: false,
     erodeSteps: 2,
     exact: true,
@@ -171,7 +182,6 @@ export function ism(t: number): number {
 
 const SALT_LEVEL = 0x100; // + level
 const SALT_MASK = 0x200;
-const SALT_NOTCH_OFF = 0x300;
 const SALT_NOTCH = 0x400;
 const SALT_ERODE = 0x500;
 function salt(p: CliffParams, s: number): number {
@@ -434,11 +444,15 @@ export function scoreRange(r: CellRule, l: number, jx: number, jy: number, known
 
 /** a fine column of a split cell is up (local fine index ix, iy) */
 export function isUp(r: CellRule, cx: number, cy: number, ix: number, iy: number, p: CliffParams): boolean {
+  return marginOf(r, cx, cy, ix, iy, p) >= 0;
+}
+/** a fine column's score less the threshold (TIE units): >= 0 up; for an up column, how far in from the face it stands */
+export function marginOf(r: CellRule, cx: number, cy: number, ix: number, iy: number, p: CliffParams): number {
   const Lf = p.fineLevel;
   const sh = wShift(p);
   let s = r.a * wCentre(ix >> sh, p) + r.b * wCentre(iy >> sh, p);
   for (let l = 1; l <= Lf; l++) s += levelOff(r, cx, cy, l, ix >> (Lf - l), iy >> (Lf - l), p);
-  return s * TIE + tieOf((cx << Lf) + ix, (cy << Lf) + iy, p) >= thetaUsed(r, p);
+  return s * TIE + tieOf((cx << Lf) + ix, (cy << Lf) + iy, p) - thetaUsed(r, p);
 }
 /** level-l cell (jx, jy) at LOD: up when its centre would be, the finer levels' offsets taken as zero */
 export function isUpLod(r: CellRule, cx: number, cy: number, l: number, jx: number, jy: number, known: number, p: CliffParams): boolean {
@@ -579,32 +593,46 @@ export function fineTop(R: Rules, gx: number, gy: number): number {
 /** level l's notch at z in fine column (gx, gy) of split cell r (already known up), or null. Units of level l: c =
  *  its cell height in units, keyed on the column's level-l cell. Open only when a column within the notch's depth toward
  *  lo has its top at or below the notch floor; the depth is sampled every half level-l cell (every column at s <= 1). */
-export function notchLevel(R: Rules, r: CellRule, gx: number, gy: number, z: number, l: number): [number, number] | null {
+export function notchLevel(R: Rules, r: CellRule, cx: number, cy: number, gx: number, gy: number, z: number, l: number, margin: number): [number, number] | null {
   const p = R.p;
   const pct = p.notchPctL[l] ?? 0;
   if (pct <= 0) return null;
   const c = COARSE_U >> l;
-  const Sz = p.notchSeg * c;
+  // the z-segments: anchored at L; with segFit their length is at most the face's usable band (L up to H less this
+  // level's top cell and the erosion band), so a face tall enough for one notch of this level gets the stated share
+  const band = r.H - c - erodeMaxU(p) - r.L;
+  const bandCells = fdiv(band, c);
+  if (bandCells < 1) return null;
+  const segCells = p.segFit ? Math.min(p.notchSeg, bandCells) : p.notchSeg;
+  const Sz = segCells * c;
+  const j = fdiv(z - r.L, Sz);
+  // the key: a slot along the face (2^slotLog cells of this level along the axis more perpendicular to hi -> lo), one
+  // per coarse cell across it
   const ksh = p.fineLevel - l;
-  const kx = gx >> ksh;
-  const ky = gy >> ksh;
-  const sl = salt(p, SALT_NOTCH + l);
-  const o = hash3(kx, ky, sl ^ SALT_NOTCH_OFF) % Sz;
-  const j = fdiv(z + o, Sz);
-  const hn = hash3(kx, ky, sl ^ Math.imul(j, 0x27d4eb2d));
+  const alongX = Math.abs(r.a) < Math.abs(r.b);
+  const ka = (alongX ? gx : gy) >> (ksh + p.slotLog);
+  const kb = alongX ? cy : cx;
+  const hn = hash3(ka, kb, salt(p, SALT_NOTCH + l) ^ Math.imul(j, 0x27d4eb2d));
   const ks = 1 << ksh;
-  const mk = maskAt(2 * kx * ks + ks, 2 * ky * ks + ks, p);
+  const mk = maskAt(2 * (gx >> ksh) * ks + ks, 2 * (gy >> ksh) * ks + ks, p);
   if (hn % 25600 >= pct * mk) return null;
   const h2 = mix(hn);
-  const len = 1 + (h2 % p.notchHMax);
-  const start = (h2 >>> 8) % Math.max(1, p.notchSeg - len + 1);
-  const lo = j * Sz - o + start * c;
+  const len = Math.min(segCells, 1 + (h2 % p.notchHMax));
+  const start = (h2 >>> 8) % (segCells - len + 1);
+  const lo = r.L + j * Sz + start * c;
   const hi = lo + len * c;
   if (z < lo || z >= hi) return null;
   // this level's top cell is never a notch (nor the erosion band under it)
   if (hi > r.H - c - erodeMaxU(p)) return null;
   const s = 1 << ksh; // the level's cell in fine columns
-  const d = (1 + ((h2 >>> 16) % Math.max(1, p.notchDepthL[l] ?? 1))) * s;
+  const dCells = 1 + ((h2 >>> 16) % Math.max(1, p.notchDepthL[l] ?? 1));
+  if (p.notchMargin) {
+    // O(1): the column's own margin over the threshold says how far it stands in from the face (one fine column along
+    // the dominant axis = 2A w units); close to, not identical with, the distance to the nearest down column
+    return margin < dCells * s * 2 * r.A * TIE ? [lo, hi] : null;
+  }
+  // round 2: sample columns toward lo every half cell for a top at or below the floor
+  const d = dCells * s;
   const step = Math.max(1, s >> 1);
   const [sx, sy] = loSteps(r);
   for (let k = step; k <= d; k += step) {
@@ -624,10 +652,11 @@ export function notchAt(R: Rules, gx: number, gy: number, z: number, maxL = R.p.
   const cy = fdiv(gy, N);
   const r = cellOf(R, cx, cy);
   if (r.kind !== KIND_SPLIT) return null;
-  if (!isUp(r, cx, cy, gx - cx * N, gy - cy * N, p)) return null;
+  const margin = marginOf(r, cx, cy, gx - cx * N, gy - cy * N, p);
+  if (margin < 0) return null;
   const any = (zz: number): [number, number] | null => {
     for (let l = 1; l <= maxL; l++) {
-      const n = notchLevel(R, r, gx, gy, zz, l);
+      const n = notchLevel(R, r, cx, cy, gx, gy, zz, l, margin);
       if (n) return n;
     }
     return null;

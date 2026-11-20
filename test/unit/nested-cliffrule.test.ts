@@ -21,6 +21,8 @@ import {
   defaultParams,
   deriveRules,
   fineTop,
+  marginOf,
+  notchLevel,
   notchAt,
   preTop,
   sheetAt,
@@ -231,6 +233,8 @@ describe('nested cliff rule (round 32 step A)', () => {
       ['no residual, mask off', { exact: false, maskP: 0 }],
       ['no residual, no raggedness (the closed form alone)', { exact: false, ampL: [0, 0, 0, 0, 0, 0, 0] }],
       ['no residual, independent (not zero-sum) offsets', { exact: false, zeroSum: false }],
+      ['no residual, the 8 m amplitude at half a cell', { exact: false, ampL: [0, 128, 256, 256, 24, 16, 8] }],
+      ['the 8 m amplitude at half a cell, with dTheta', { exact: true, ampL: [0, 128, 256, 256, 24, 16, 8] }],
     ] as [string, Partial<CliffParams>][]) {
       const Q = rules(over);
       let sum2 = 0;
@@ -248,15 +252,17 @@ describe('nested cliff rule (round 32 step A)', () => {
         sum2 += err * err;
         worst = Math.max(worst, Math.abs(err));
         worstRel = Math.max(worstRel, Math.abs(err) / (c.H - c.L));
-        dts += Math.abs(c.dTheta);
-        dtMax = Math.max(dtMax, Math.abs(c.dTheta));
+        // in fine columns along the dominant axis (one column = 2A w units, x TIE)
+        const dtc = Math.abs(c.dTheta) / (4096 * 2 * c.A);
+        dts += dtc;
+        dtMax = Math.max(dtMax, dtc);
         n++;
         // exact up to ties: columns with equal scores flip together (integer scores), so the count can overshoot
         // (the 12-bit tie-break can still collide: 2 columns' worth)
         if (over.exact && !over.erode) expect(Math.abs(err)).toBeLessThanOrEqual((2 * (c.H - c.L)) / (N * N));
       }
       rows.push(
-        `${label}: ${n} split cells, mean - h RMS ${Math.sqrt(sum2 / n).toFixed(2)} units, worst ${worst.toFixed(2)} units (${(worst / UPM).toFixed(3)} m, ${(100 * worstRel).toFixed(2)} % of H-L); |dTheta| mean ${(dts / n / 4096).toFixed(1)} max ${(dtMax / 4096).toFixed(1)} (w units = half-columns x direction; /4 = fine columns along the dominant axis)`,
+        `${label}: ${n} split cells, mean - h RMS ${Math.sqrt(sum2 / n).toFixed(2)} units, worst ${worst.toFixed(2)} units (${(worst / UPM).toFixed(3)} m, ${(100 * worstRel).toFixed(2)} % of H-L); |dTheta| mean ${(dts / n).toFixed(1)} max ${dtMax.toFixed(1)} fine columns (0.25 m) along the dominant axis`,
       );
       rels.push(worstRel);
     }
@@ -288,6 +294,51 @@ describe('nested cliff rule (round 32 step A)', () => {
       }
     }
     console.log(`notch probes ${probes}: air ${air} (${((100 * air) / probes).toFixed(2)} % of all up/down column z under H; only faces within depth of a lower column can open)`);
+  });
+
+  it('the O(1) margin depth test against round 2 sampled tops (reported)', () => {
+    for (const [label, over] of [
+      ['tame', {}],
+      ['dramatic', { notchPctL: [0, 15, 15, 15, 15, 15, 15], notchDepthL: [0, 4, 4, 4, 4, 4, 4] }],
+    ] as [string, Partial<CliffParams>][]) {
+      const A = rules({ ...over, notchMargin: true });
+      const B = rules({ ...over, notchMargin: false });
+      const cell = COARSE_U >> A.p.fineLevel;
+      let both = 0;
+      let onlyM = 0;
+      let onlyS = 0;
+      let probes = 0;
+      for (const [cx, cy] of splits(A)) {
+        const r = cellOf(A, cx, cy);
+        for (let k = 0; k < 48; k++) {
+          const gx = cx * N + ((k * 37) % N);
+          const gy = cy * N + ((k * 11) % N);
+          for (let z = r.L; z < r.H; z += 4 * cell) {
+            probes++;
+            const m = !!notchAt(A, gx, gy, z);
+            const s = !!notchAt(B, gx, gy, z);
+            if (m && s) both++;
+            else if (m) onlyM++;
+            else if (s) onlyS++;
+          }
+        }
+      }
+      console.log(`notch depth test (${label}), ${probes} probes: air by both ${both}, margin only ${onlyM}, sampled only ${onlyS} (agreement on air ${((100 * both) / Math.max(1, both + onlyM + onlyS)).toFixed(1)} %)`);
+      // air per level (margin rule), over the same probes
+      const perL = [0, 0, 0, 0, 0, 0, 0];
+      for (const [cx, cy] of splits(A)) {
+        const r = cellOf(A, cx, cy);
+        for (let k = 0; k < 48; k++) {
+          const ix = (k * 37) % N;
+          const iy = (k * 11) % N;
+          const margin = marginOf(r, cx, cy, ix, iy, A.p);
+          if (margin < 0) continue;
+          for (let z = r.L; z < r.H; z += 4 * cell)
+            for (let l = 1; l <= A.p.fineLevel; l++) if (notchLevel(A, r, cx, cy, cx * N + ix, cy * N + iy, z, l, margin)) perL[l]++;
+        }
+      }
+      console.log(`  air per level 8 m .. 0.25 m: ${perL.slice(1).join(' / ')}`);
+    }
   });
 });
 
@@ -346,6 +397,8 @@ export const VIEWS: Record<string, View> = {
   bowl: { eye: [120, 42, 34], target: [120, 110, -8], fovDeg: 60, w: 960, h: 640 },
   trench: { eye: [232, 31, 50], target: [393, 113, -10], fovDeg: 55, w: 960, h: 640 },
   carves: { eye: [210, -10, 300], target: [230, 95, 0], fovDeg: 60, w: 960, h: 640 },
+  // round 3: the bowl from further back and higher, so the whole bowl is in frame
+  bowlback: { eye: [120, -5, 85], target: [120, 95, 0], fovDeg: 50, w: 960, h: 640 },
 };
 
 const all = (x: number) => [0, x, x, x, x, x, x];
@@ -360,12 +413,25 @@ describe.skipIf(!process.env.RA_PICS)('nested cliff rule pictures', () => {
     const only = process.env.RA_ONLY;
     const jobs: [string, string, Partial<CliffParams>][] = [];
     const P = process.env.RA_PREFIX ?? 'rA2';
-    for (const v of ['far', 'near', 'above', 'bowl', 'trench', 'carves']) jobs.push([`${P}-${v}-dramatic15`, v, dramatic(15)]);
-    jobs.push([`${P}-near-dramatic30`, 'near', dramatic(30)]);
-    jobs.push([`${P}-near-tame`, 'near', tame]);
-    jobs.push([`${P}-bowl-tame`, 'bowl', tame]);
-    jobs.push([`${P}-near-nonotch`, 'near', dramatic(0)]);
-    jobs.push([`${P}-near-tame-erode`, 'near', { ...tame, erode: true }]);
+    if (P === 'rA2') {
+      // round 2 (with round 2's notch rule: sampled depth, cell keys, fixed segments)
+      const r2: Partial<CliffParams> = { slotLog: 0, segFit: false, notchMargin: false, notchHMax: 3 };
+      for (const v of ['far', 'near', 'above', 'bowl', 'trench', 'carves']) jobs.push([`${P}-${v}-dramatic15`, v, { ...r2, ...dramatic(15) }]);
+      jobs.push([`${P}-near-dramatic30`, 'near', { ...r2, ...dramatic(30) }]);
+      jobs.push([`${P}-near-tame`, 'near', { ...r2, ...tame }]);
+      jobs.push([`${P}-bowl-tame`, 'bowl', { ...r2, ...tame }]);
+    } else {
+      // round 3: slots along the face, segments sized to the face, O(1) margin depth
+      for (const v of ['near', 'far', 'trench', 'bowlback']) {
+        jobs.push([`${P}-${v}-tame`, v, tame]);
+        jobs.push([`${P}-${v}-dramatic15`, v, dramatic(15)]);
+      }
+      jobs.push([`${P}-near-tame-amp8half`, 'near', { ...tame, ampL: [0, 128, 256, 256, 24, 16, 8] }]);
+      // the coarse levels' share raised, to show what an 8 m / 4 m overhang looks like (15 % per slot is rare in a view)
+      const coarse50: Partial<CliffParams> = { notchPctL: [0, 50, 40, 15, 15, 15, 15], notchDepthL: [0, 4, 4, 4, 4, 4, 4] };
+      jobs.push([`${P}-near-coarse50`, 'near', coarse50]);
+      jobs.push([`${P}-bowlback-coarse50`, 'bowlback', coarse50]);
+    }
     const lines: string[] = [];
     for (const [name, v, over] of jobs) {
       if (only && !name.includes(only)) continue;
