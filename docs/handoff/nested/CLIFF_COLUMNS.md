@@ -167,6 +167,16 @@ Round 32, the real thing:
   a bare coarse block, and letting the march subdivide BELOW 0.25 m down to pixel size (detail that exists only
   in the picture) so nothing looks boxy until the closest zoom.
 
+- **The owner's model, stated last and overriding the orchestrator's readings above:** "My expectation was
+  that it's a fractal of column subtraction so that there are no smooth stone surfaces at all." I.e. at every
+  level, finer columns and notches are subtracted again from every stone face (including the faces and walls
+  left by coarser subtraction), recursively down to pixel size, with no mask that leaves a face plain and no
+  level at which a face is declared finished. Smooth surfaces are the non-stone sheets (tops, ground) only.
+  What in the current build breaks this: fine-level amplitudes were cut and masked (restored only by URL
+  settings); the slow mask zeroes fine detail on about a third of a wall; the march stops at 0.25 m; a node
+  that is "all up" stops descending unless notches are on; the step-cap fallback draws a bare coarse block.
+  The builder's next brief should be written from this sentence, not from the settings accumulated so far.
+
 ## Open decisions for the owner
 1. Threshold default: 2 or 4.
 2. Notches: port coarse ones to the shader, or drop (orchestrator's view from the CPU pictures: drop for now).
